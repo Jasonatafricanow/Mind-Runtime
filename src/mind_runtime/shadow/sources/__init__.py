@@ -1,0 +1,1 @@
+"""Shadow message source adapters."""

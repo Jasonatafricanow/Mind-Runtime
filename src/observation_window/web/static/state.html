@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MR Observation — Companion State</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/display_zh.js"></script>
+<script src="/static/runtime_scope.js"></script>
+<script src="/static/runtime_selector.js"></script>
+<style>
+.bundle-header-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  box-shadow: var(--shadow-soft);
+}
+.runtime-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.runtime-line1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.badge-active {
+  background: var(--green-soft);
+  color: var(--green);
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+.badge-inactive {
+  background: var(--gray-soft);
+  color: var(--dim);
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+.header-label {
+  color: var(--dim);
+  font-size: 12px;
+}
+.header-val {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.chart-tooltip {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: none;
+  display: none;
+  z-index: 100;
+  box-shadow: var(--shadow-pop);
+}
+.btn-action {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-family: var(--body);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-action:hover { filter: brightness(1.08); }
+.btn-refresh {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.btn-refresh:hover { color: var(--accent); border-color: var(--accent); }
+/* Chart toolbar: legend + factual summary + mode switch (OW-STATE-VISUAL-POLISH-V1) */
+.chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex: none;
+}
+.mode-btn {
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 14px;
+  background: var(--surface);
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.chart-legend {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--body);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s, box-shadow 0.15s;
+}
+.legend-item:hover { border-color: var(--faint); color: var(--text); }
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--legend-color, var(--accent));
+  flex: none;
+}
+.legend-item.active {
+  border-color: var(--legend-color, var(--accent));
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--legend-color, var(--accent));
+}
+.legend-item.hidden-series { opacity: 0.45; }
+.legend-item.hidden-series .legend-dot {
+  background: transparent;
+  border: 2px solid var(--legend-color, var(--accent));
+  width: 7px;
+  height: 7px;
+}
+.chart-facts {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.chart-facts b {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Selected-turn guide line: subtle, non-authoritative decoration (§5) */
+.chart-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.chart-node.selected {
+  z-index: 5;
+}
+.chart-node.selected::before {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--node-color, var(--accent)) 16%, transparent);
+}
+/* Current-value annotation (§8): factual label near the latest point */
+.chart-current-label {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--node-color, var(--accent));
+  pointer-events: none;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 #fff, 0 0 4px #fff;
+  z-index: 4;
+}
+/* Sparkline endpoint dot (§11) */
+.spark-wrap { position: relative; display: block; }
+.spark-end {
+  position: absolute;
+  right: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--spark-color, var(--accent));
+  transform: translate(50%, 50%);
+  pointer-events: none;
+}
+/* Chart→Moment sync feedback: one restrained 150ms fade (§6/§16) */
+@keyframes moment-sync-flash {
+  from { background-color: var(--accent-soft); }
+  to { background-color: var(--surface); }
+}
+.selected-moment-card.sync-flash { animation: moment-sync-flash 0.15s ease-out; }
+.origin-meta {
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* Long-term State canonical history (§14) */
+.slow-trend-box {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.slow-spark {
+  max-width: 260px;
+}
+/* Selected Moment stacks on phone; raw interaction id wraps (§14) */
+@media (max-width: 767px) {
+  .selected-moment-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+  #prev-turn-id { white-space: normal; word-break: break-all; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- Unified Navigation Bar -->
+  <div id="nav">
+    <span id="nav-title">MR Observation</span>
+    <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
+    <div id="runtime-selector" class="runtime-selector" role="group"></div>
+    <a href="/" class="nav-link active">状态</a>
+    <a href="/moments" class="nav-link">交互</a>
+    <div class="nav-dropdown">
+      <button class="nav-dropdown-toggle">调试 ▾</button>
+      <div class="nav-dropdown-menu">
+        <a href="/debug/causal" class="nav-dropdown-item">因果检查器</a>
+        <a href="/debug/ledger" class="nav-dropdown-item">状态台账</a>
+        <a href="/debug/live-trace" class="nav-dropdown-item">实时链路</a>
+      </div>
+    </div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+      <button id="btn-refresh" class="btn-refresh" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
+      <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
+      <span class="dim" id="status-text" style="font-size:12px;">live</span>
+      <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
+      <span id="live-badge">LIVE</span>
+    </div>
+  </div>
+
+  <!-- Runtime Status Strip: product-facing summary, engineering IDs secondary -->
+  <div class="bundle-header-card" id="bundle-header-area">
+    <div class="runtime-main">
+      <div class="runtime-line1">
+        <span class="runtime-title">运行时</span>
+        <span id="hdr-mr" class="badge-inactive">—</span>
+      </div>
+      <div class="runtime-subline">
+        已提交轮次 <span id="stat-committed-turns" class="header-val">—</span>
+        · 最近轮次 <span id="stat-last-committed" class="header-val">—</span>
+      </div>
+    </div>
+    <div class="runtime-secondary" style="margin-left:auto;" title="Runtime debug metadata">
+      <span>PID <span id="hdr-gw-pid">—</span></span>
+      <span>Epoch <span id="hdr-epoch">—</span></span>
+      <span>Epoch 轮次 <span id="stat-epoch-turns">—</span></span>
+    </div>
+    <input type="checkbox" id="toggle-debug-states" style="display:none;" />
+  </div>
+
+  <!-- Surface 1 Zone A: 状态 (权威快状态卡片) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title" style="margin-bottom:0;">状态</div>
+    <div class="card-subtitle" style="margin-bottom:10px;">权威快状态 · 点击卡片聚焦轨迹</div>
+    <div class="affect-cards-grid" id="affect-grid">
+      <!-- 4 Cards populated dynamically -->
+      <div class="empty">Loading affect states...</div>
+    </div>
+  </div>
+
+  <!-- Surface 1 Zone B: 动态时序 -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title" style="margin-bottom:0;">动态时序</div>
+    <div class="card-subtitle">最近 30 个已提交轮次 · 固定标度 0–1 · 直线段</div>
+    <div class="chart-toolbar">
+      <div class="chart-legend" id="chart-legend" role="group" aria-label="影响维度"></div>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <div class="chart-facts" id="chart-facts"></div>
+        <div class="mode-switch" role="group" aria-label="图表模式">
+          <button id="btn-mode-focus" class="mode-btn active" onclick="setChartMode('focus')">单维度</button>
+          <button id="btn-mode-compare" class="mode-btn" onclick="setChartMode('compare')">对比</button>
+        </div>
+      </div>
+    </div>
+    <div class="chart-subtitle" id="chart-title" style="margin-bottom:2px;">Irritation</div>
+    <div class="chart-container" id="chart-box">
+      <div class="chart-plot">
+        <svg id="trend-svg" viewBox="0 0 1200 300" preserveAspectRatio="none"></svg>
+        <div id="chart-overlay" class="chart-overlay"></div>
+      </div>
+      <div id="chart-xaxis" class="chart-xaxis"></div>
+      <div id="chart-tooltip" class="chart-tooltip"></div>
+    </div>
+  </div>
+
+  <!-- Surface 1 Zone C: Selected Moment -->
+  <div class="selected-moment-card" id="moment-preview-card">
+    <div class="selected-moment-head">
+      <div>
+        <div style="font-size:14px; font-weight:600; color:var(--text);" id="prev-turn-title">关键轮次</div>
+        <div class="mono dim" style="font-size:11px; margin-top:2px;" id="prev-turn-time">—</div>
+      </div>
+      <a id="prev-inspect-btn" href="/debug/causal" class="btn-action">查看因果链 →</a>
+    </div>
+    <div class="selected-moment-user" id="prev-user-text">用户：—</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:12.5px;">
+      <div id="prev-delta-summary" style="color:var(--text-secondary);">—</div>
+      <span class="mono dim" id="prev-turn-id" style="font-size:10px;" title="原始交互标识">—</span>
+    </div>
+  </div>
+
+  <!-- Surface 1 Zone D: Long-term State — rendered from the binding's
+       state_surface descriptor (zero hardcoded dimension membership) -->
+  <div id="slow-root"></div>
+</div>
+
+<script>
+const runtimeSelection = OWRuntimeScope.parsePageRuntime(window.location.search);
+OWRuntimeScope.propagateNavigation(runtimeSelection);
+OWRuntimeScope.renderRuntimeIndicator(document.getElementById("runtime-indicator"), runtimeSelection);
+OWRuntimeSelector.bootstrap(runtimeSelection);
+
+let isPageActive = true;
+let pollTimer = null;
+let currentTrends = null;
+let selectedDim = null;
+let selectedTurnIndex = -1;
+let fetchAbortController = null;
+
+// One coherent selection model (§1): selectedDim + selectedTurnIndex.
+// Chart mode + per-series visibility derive from and feed the same state.
+let chartMode = "focus"; // "focus" | "compare"
+
+// State surface (OW-MULTI-AGENT-BINDING-PHASE01-V1 §13): dimension
+// membership/order comes from the binding's authoritative state_surface
+// descriptor (delivered via /api/overview). This page hardcodes NO
+// dimension membership. Display goes through the central zh projection;
+// unknown canonical keys fail safe to raw.
+const DIM_PALETTE = ["#E35D63", "#C07F0A", "#2FA866", "#8067D8", "#2563EB", "#946BBD"];
+let STATE_SURFACE = { fast_dimensions: [], slow_dimensions: [] };
+let DIM_CONFIG = {};
+let compareVisible = new Set();
+
+function applyStateSurface(surface) {
+  surface = surface || { fast_dimensions: [], slow_dimensions: [] };
+  STATE_SURFACE = surface;
+  DIM_CONFIG = {};
+  (surface.fast_dimensions || []).forEach((key, i) => {
+    DIM_CONFIG[key] = {
+      label: OWDisplay.displayDimension(key),
+      color: DIM_PALETTE[i % DIM_PALETTE.length],
+    };
+  });
+  compareVisible = new Set(Object.keys(DIM_CONFIG));
+  if (!selectedDim || !DIM_CONFIG[selectedDim]) {
+    selectedDim = (surface.fast_dimensions && surface.fast_dimensions[0]) || null;
+  }
+  renderSlowShell();
+  renderLegend();
+}
+
+function formatDelta(delta) {
+  if (typeof delta !== 'number' || Math.abs(delta) < 1e-9) return '0.0000';
+  return (delta > 0 ? '+' : '') + delta.toFixed(4);
+}
+
+function getOriginClass(origin) {
+  if (!origin) return 'origin-unavailable';
+  const o = origin.toUpperCase();
+  if (o.includes('EVENT')) return 'origin-event-effect';
+  if (o.includes('DYNAMICS') || o.includes('RECOVERY')) return 'origin-dynamics-recovery';
+  if (o.includes('SLOW') || o.includes('PLASTICITY')) return 'origin-slow-plasticity';
+  if (o.includes('UNCHANGED')) return 'origin-unchanged';
+  return 'origin-unavailable';
+}
+
+function turnOffsetLabel(idx) {
+  if (!currentTrends || !currentTrends.points) return "";
+  const k = currentTrends.points.length - 1 - idx;
+  return "T-" + k;
+}
+
+function renderSparklineSvg(values, color) {
+  // Micro visualization: full-width, fixed 38px envelope, thin line, no axis/grid.
+  const w = 100, h = 38, pad = 3;
+  if (!values || values.length < 2) {
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="sparkline-box"><line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="#D1D5DB" stroke-width="1" stroke-dasharray="3,3" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+  const min = 0.0, max = 1.0;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - pad - (Math.max(0, Math.min(1, v)) / (max - min)) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const lastY = parseFloat(pts[pts.length - 1].split(",")[1]);
+  // Straight line segments only; subtle current endpoint dot (§11)
+  const pathD = "M " + pts.join(" L ");
+  return `<span class="spark-wrap">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="sparkline-box">
+      <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <span class="spark-end" style="--spark-color:${color}; bottom:${(lastY / h * 100).toFixed(1)}%;"></span>
+  </span>`;
+}
+
+function renderAffectCards(dimensions) {
+  const container = document.getElementById("affect-grid");
+  if (!STATE_SURFACE.fast_dimensions.length) {
+    container.innerHTML = '<div class="empty">当前运行时未声明状态面</div>';
+    return;
+  }
+  const emptyDim = {
+    current_value: 0.0,
+    formatted_value: "0.0000",
+    last_delta: 0.0,
+    formatted_delta: "0.0000",
+    origin: "UNAVAILABLE",
+    sparkline: [],
+  };
+  let html = "";
+  for (const dimKey of STATE_SURFACE.fast_dimensions) {
+    const cfg = DIM_CONFIG[dimKey];
+    const d = (dimensions && dimensions[dimKey]) || emptyDim;
+    const isSelected = (dimKey === selectedDim);
+    const originCls = getOriginClass(d.origin);
+    const hasDelta = Math.abs(d.last_delta) > 1e-9;
+    const deltaHtml = hasDelta
+      ? `<span style="color:${d.last_delta > 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${d.last_delta > 0 ? '↑' : '↓'} ${d.formatted_delta}</span>`
+      : `<span style="color:var(--faint);">0.0000</span>`;
+    const sparklineSvg = renderSparklineSvg(d.sparkline, cfg.color);
+
+    html += `
+      <div class="affect-card ${isSelected ? 'selected' : ''}" role="button" tabindex="0"
+        aria-pressed="${isSelected}" aria-label="${cfg.label} current ${d.formatted_value}"
+        onclick="selectDimension('${dimKey}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectDimension('${dimKey}');}">
+        <div class="affect-card-head">
+          <span class="affect-card-title">${cfg.label}</span>
+          <span class="origin-badge ${originCls}" title="${d.origin}">${OWDisplay.displayOrigin(d.origin)}</span>
+        </div>
+        <div class="affect-card-val" style="color:${cfg.color};">${d.formatted_value}</div>
+        <div class="affect-card-meta">
+          <span style="color:var(--faint); font-size:11px;">Δ</span>
+          ${deltaHtml}
+        </div>
+        ${sparklineSvg}
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+function selectDimension(dimKey) {
+  // Card/legend selection: switches to Focus on that dimension (§7)
+  selectedDim = dimKey;
+  chartMode = "focus";
+  updateModeButtons();
+  renderLegend();
+  renderAll();
+}
+
+function setChartMode(mode) {
+  chartMode = mode;
+  if (mode === 'compare' && !compareVisible.has(selectedDim)) {
+    compareVisible.add(selectedDim);
+  }
+  updateModeButtons();
+  renderLegend();
+  renderAll();
+}
+
+function updateModeButtons() {
+  document.getElementById('btn-mode-focus').classList.toggle('active', chartMode === 'focus');
+  document.getElementById('btn-mode-compare').classList.toggle('active', chartMode === 'compare');
+}
+
+function legendClick(dimKey) {
+  if (chartMode === 'compare') {
+    // Legend is a visibility control in Compare mode (§3)
+    if (compareVisible.has(dimKey)) {
+      if (compareVisible.size > 1) compareVisible.delete(dimKey);
+    } else {
+      compareVisible.add(dimKey);
+    }
+    renderLegend();
+    renderChart(currentTrends ? currentTrends.points : []);
+  } else {
+    selectDimension(dimKey);
+  }
+}
+
+function renderLegend() {
+  const el = document.getElementById('chart-legend');
+  el.innerHTML = Object.entries(DIM_CONFIG).map(([dimKey, cfg]) => {
+    const active = (dimKey === selectedDim);
+    const hidden = (chartMode === 'compare' && !compareVisible.has(dimKey));
+    return `<button class="legend-item ${active ? 'active' : ''} ${hidden ? 'hidden-series' : ''}"
+      style="--legend-color:${cfg.color};" aria-pressed="${active}"
+      title="${chartMode === 'compare' ? 'Toggle visibility' : 'Focus ' + cfg.label}"
+      onclick="legendClick('${dimKey}')"><span class="legend-dot"></span>${cfg.label}</button>`;
+  }).join('');
+}
+
+function toggleCompareMode() {
+  setChartMode(chartMode === 'compare' ? 'focus' : 'compare');
+}
+
+function renderAll() {
+  if (!currentTrends) return;
+  renderAffectCards(currentTrends.dimensions);
+  renderChart(currentTrends.points);
+}
+
+function renderChart(points) {
+  const svg = document.getElementById("trend-svg");
+  const overlay = document.getElementById("chart-overlay");
+  const xaxis = document.getElementById("chart-xaxis");
+  const factsEl = document.getElementById("chart-facts");
+  const title = document.getElementById("chart-title");
+  if (chartMode === 'compare') {
+    title.textContent = "全部维度（对比）";
+  } else {
+    const cfg = DIM_CONFIG[selectedDim];
+    title.textContent = cfg ? cfg.label : selectedDim;
+  }
+
+  if (!points || points.length === 0) {
+    svg.innerHTML = "";
+    overlay.innerHTML = '<div class="empty" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">暂无已提交轮次</div>';
+    xaxis.innerHTML = "";
+    factsEl.innerHTML = "";
+    return;
+  }
+
+  // Stable SVG coordinate space: data maps into a fixed 1200x300 viewBox.
+  // Only the plot WIDTH is fluid; heights, strokes and markers stay constant.
+  const VB_W = 1200, VB_H = 300;
+  const padT = 8, padB = 8;
+  const plotH = VB_H - padT - padB;
+
+  const yv = (v) => padT + (1 - Math.max(0, Math.min(1, v))) * plotH;
+  const xv = (i, n) => (n === 1 ? VB_W / 2 : (i / (n - 1)) * VB_W);
+  const pct = (vb, total) => (vb / total) * 100;
+
+  let svgContent = "";
+  let overlayHtml = "";
+
+  // Light neutral gridlines: 5 ticks wide, 3 ticks narrow
+  const box = document.getElementById("chart-box");
+  const ticks = box.clientWidth < 760 ? [0, 0.5, 1.0] : [0.0, 0.25, 0.50, 0.75, 1.0];
+  ticks.forEach(v => {
+    const y = yv(v);
+    svgContent += `<line x1="0" y1="${y}" x2="${VB_W}" y2="${y}" stroke="#EEF1F4" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    overlayHtml += `<span class="chart-tick" style="top:${pct(y, VB_H)}%;">${v.toFixed(2)}</span>`;
+  });
+
+  const n = points.length;
+  const dimsToPlot = (chartMode === 'compare')
+    ? Object.keys(DIM_CONFIG).filter(k => compareVisible.has(k))
+    : [selectedDim];
+
+  // Factual summary for the focused dimension (§9): deterministic values only
+  if (chartMode === 'focus' && points[n - 1].values && points[n - 1].values[selectedDim] !== undefined) {
+    const series = points.map(p => (p.values && p.values[selectedDim] !== undefined) ? p.values[selectedDim] : 0);
+    const cur = series[series.length - 1];
+    const lastD = points[n - 1].deltas ? (points[n - 1].deltas[selectedDim] || 0) : 0;
+    const sMin = Math.min(...series), sMax = Math.max(...series);
+    factsEl.innerHTML =
+      `当前 <b>${cur.toFixed(4)}</b>` +
+      `<span>最近变化 <b>${formatDelta(lastD)}</b></span>` +
+      `<span>范围 <b>${sMin.toFixed(4)}–${sMax.toFixed(4)}</b></span>`;
+    factsEl.style.display = "";
+  } else {
+    factsEl.style.display = "none";
+  }
+
+  // Selected-turn guide line (§5): aligned exactly with the committed node x
+  if (selectedTurnIndex >= 0 && selectedTurnIndex < n) {
+    const gx = pct(xv(selectedTurnIndex, n), VB_W);
+    overlayHtml += `<div class="chart-guide" style="left:${gx.toFixed(2)}%;"></div>`;
+  }
+
+  dimsToPlot.forEach(dimKey => {
+    const cfg = DIM_CONFIG[dimKey];
+    const color = cfg ? cfg.color : "#2563EB";
+    const emphasized = (chartMode === 'focus') || (dimKey === selectedDim);
+    const linePts = [];
+
+    points.forEach((pt, idx) => {
+      const val = (pt.values && pt.values[dimKey] !== undefined) ? pt.values[dimKey] : 0.0;
+      linePts.push({ x: xv(idx, n), y: yv(val), val, pt, idx, dimKey });
+    });
+
+    // Straight line segments only; quiet series are slightly de-emphasized (§3)
+    if (linePts.length > 1) {
+      const d = "M " + linePts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L ");
+      svgContent += `<path d="${d}" fill="none" stroke="${color}"
+        stroke-width="${emphasized ? 2 : 1.75}" vector-effect="non-scaling-stroke"
+        stroke-linejoin="round" stroke-linecap="round"
+        style="opacity:${emphasized ? 1 : 0.4}; transition: opacity 0.15s;"/>`;
+    }
+
+    // Point markers as fixed-size HTML nodes; hover tooltip + click select (§4/§5)
+    linePts.forEach(p => {
+      const isSelected = (p.idx === selectedTurnIndex);
+      overlayHtml += `
+        <div class="chart-node ${isSelected ? 'selected' : ''}" role="button" tabindex="0"
+          style="left:${pct(p.x, VB_W).toFixed(2)}%; top:${pct(p.y, VB_H).toFixed(2)}%; --node-color:${color};"
+          aria-label="${(DIM_CONFIG[dimKey] || { label: OWDisplay.shortDimension(dimKey) }).label} ${p.val.toFixed(4)} ${turnOffsetLabel(p.idx)}"
+          onmouseover="showTooltip(event, '${p.dimKey}', ${p.val}, '${p.pt.interaction_id}', '${p.pt.committed_at}', ${p.pt.deltas[p.dimKey] || 0}, '${p.pt.origins[p.dimKey] || 'UNCHANGED'}', ${p.idx})"
+          onmouseout="hideTooltip()"
+          onfocus="showTooltip(null, '${p.dimKey}', ${p.val}, '${p.pt.interaction_id}', '${p.pt.committed_at}', ${p.pt.deltas[p.dimKey] || 0}, '${p.pt.origins[p.dimKey] || 'UNCHANGED'}', ${p.idx})"
+          onblur="hideTooltip()"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectTurnPoint(${p.idx});}"
+          onclick="selectTurnPoint(${p.idx})"></div>`;
+    });
+
+    // Current-value annotation at the latest point, Focus mode only (§8)
+    if (chartMode === 'focus' && dimKey === selectedDim && linePts.length > 0) {
+      const last = linePts[linePts.length - 1];
+      const lx = pct(last.x, VB_W), ly = pct(last.y, VB_H);
+      const transform = ly < 16 ? "translate(-50%, 40%)" : (lx > 88 ? "translate(-118%, -55%)" : "translate(-50%, -130%)");
+      overlayHtml += `<span class="chart-current-label" style="left:${lx.toFixed(2)}%; top:${ly.toFixed(2)}%; transform:${transform}; --node-color:${color};">${last.val.toFixed(4)}</span>`;
+    }
+  });
+
+  svg.innerHTML = svgContent;
+  overlay.innerHTML = overlayHtml;
+
+  // Sparse X labels (§10 of RESPONSIVE-SCALE): T-{n-1} ... T0
+  const k = n - 1;
+  const parts = [`<span>T-${k}</span>`];
+  if (k >= 6) {
+    parts.push(`<span>T-${Math.round(k * 2 / 3)}</span>`);
+    parts.push(`<span>T-${Math.round(k / 3)}</span>`);
+  }
+  parts.push(`<span>T0</span>`);
+  xaxis.innerHTML = parts.join("");
+}
+
+function showTooltip(evt, dimKey, val, ixId, commAt, delta, origin, idx) {
+  const tt = document.getElementById("chart-tooltip");
+  const cfg = DIM_CONFIG[dimKey] || { label: dimKey, color: 'var(--accent)' };
+  const dStr = formatDelta(delta);
+  const tLabel = (typeof idx === 'number') ? turnOffsetLabel(idx) : "";
+  tt.innerHTML = `
+    <div style="font-weight:600; color:${cfg.color}">${cfg.label}</div>
+    <div style="font-family:var(--mono); font-size:13px; font-weight:600; margin:1px 0;">${val.toFixed(4)}</div>
+    <div style="font-size:11px;">变化 <span style="color:${Math.abs(delta) > 1e-9 ? (delta > 0 ? 'var(--green)' : 'var(--red)') : 'var(--dim)'}; font-weight:600;">${dStr}</span></div>
+    <div style="font-size:11px; color:var(--dim); margin-top:2px;">${OWDisplay.fmtTime(commAt)}${tLabel ? ' · ' + tLabel : ''}</div>
+    <div class="mono" style="font-size:10px; color:var(--faint); margin-top:1px;">${ixId.slice(-20)}</div>
+  `;
+  tt.style.display = "block";
+  const box = document.getElementById("chart-box").getBoundingClientRect();
+  // Keep the tooltip inside the chart viewport bounds (§4)
+  const tw = tt.offsetWidth, th = tt.offsetHeight;
+  let left = (evt ? evt.clientX - box.left + 14 : box.width / 2);
+  let top = (evt ? evt.clientY - box.top - 12 : box.height / 2);
+  if (left + tw > box.width - 4) left = box.width - tw - 4;
+  if (left < 4) left = 4;
+  if (top + th > box.height - 4) top = box.height - th - 4;
+  if (top < 4) top = 4;
+  tt.style.left = left + "px";
+  tt.style.top = top + "px";
+}
+
+function hideTooltip() {
+  document.getElementById("chart-tooltip").style.display = "none";
+}
+
+function selectTurnPoint(index) {
+  if (!currentTrends || !currentTrends.points || index < 0 || index >= currentTrends.points.length) return;
+  selectedTurnIndex = index;
+  const pt = currentTrends.points[index];
+  updateMomentPreview(pt);
+  renderChart(currentTrends.points);
+  // Chart→Moment sync feedback: one restrained flash (§6/§16)
+  const card = document.getElementById("moment-preview-card");
+  card.classList.remove("sync-flash");
+  void card.offsetWidth;
+  card.classList.add("sync-flash");
+}
+
+function updateMomentPreview(pt) {
+  if (!pt) {
+    document.getElementById("prev-turn-title").textContent = "关键轮次";
+    document.getElementById("prev-turn-time").textContent = "—";
+    document.getElementById("prev-user-text").textContent = "用户：—";
+    document.getElementById("prev-delta-summary").textContent = "暂无数据";
+    document.getElementById("prev-turn-id").textContent = "—";
+    return;
+  }
+  const ix = pt.interaction_id || "";
+  document.getElementById("prev-turn-title").textContent = "关键轮次";
+  const tLabel = turnOffsetLabel(selectedTurnIndex);
+  document.getElementById("prev-turn-time").textContent =
+    `${OWDisplay.fmtTime(pt.committed_at)}${tLabel ? " · " + tLabel : ""}`;
+  document.getElementById("prev-user-text").textContent = `用户："${pt.user_preview || '—'}"`;
+
+  const deltaEl = document.getElementById("prev-delta-summary");
+  const changes = Object.entries(pt.deltas || {})
+    .filter(([_, diff]) => Math.abs(diff) > 1e-9);
+  if (changes.length === 0) {
+    deltaEl.innerHTML = '<span style="color:var(--faint);">本轮无状态变化</span>';
+  } else {
+    deltaEl.innerHTML = changes.map(([dim, diff]) => {
+      const cfg = DIM_CONFIG[dim] || { label: OWDisplay.shortDimension(dim), color: 'var(--accent)' };
+      const after = (pt.values && pt.values[dim] !== undefined) ? pt.values[dim] : null;
+      const before = (after !== null && typeof diff === 'number') ? after - diff : null;
+      const fmt = (v) => (v === null || v === undefined) ? '—' : v.toFixed(4);
+      const origin = (pt.origins && pt.origins[dim]) || 'UNAVAILABLE';
+      const originCls = getOriginClass(origin);
+      return `<span style="font-weight:600; color:${cfg.color};">${cfg.label}</span>
+        <span class="mono" style="margin:0 4px;">${fmt(before)} → ${fmt(after)}</span>
+        <span style="color:${diff > 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${formatDelta(diff)}</span>
+        <span class="origin-badge ${originCls}" style="margin-left:6px;" title="${origin}">${OWDisplay.displayOrigin(origin)}</span>`;
+    }).join('<span style="margin-left:16px;"></span>');
+  }
+  // Raw interaction reference stays secondary/meta (§12)
+  document.getElementById("prev-turn-id").textContent = ix;
+  document.getElementById("prev-inspect-btn").href = OWRuntimeScope.withRuntime(`/debug/causal?turn_id=${encodeURIComponent(ix)}`, runtimeSelection);
+}
+
+// Long-term State card is rendered from the declared slow dimension (§13);
+// with no declared slow dimension the whole card is absent — never a
+// fabricated zero baseline.
+function renderSlowShell() {
+  const root = document.getElementById("slow-root");
+  if (!root) return;
+  const slowDims = STATE_SURFACE.slow_dimensions || [];
+  if (!slowDims.length) {
+    root.innerHTML = "";
+    return;
+  }
+  const dim = slowDims[0]; // V1: primary declared slow dimension
+  const label = OWDisplay.displayDimension(dim);
+  root.innerHTML = `
+  <div class="accumulated-card">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+      <div>
+        <div class="accumulated-title">长期状态</div>
+        <div class="card-subtitle" style="margin-bottom:0;">累积自我 · 权威慢状态</div>
+      </div>
+      <span class="origin-badge origin-slow-plasticity" title="Canonical Slow State">权威慢状态</span>
+    </div>
+    <div style="display:flex; align-items:baseline; gap:6px 12px; margin:12px 0 2px; flex-wrap:wrap;">
+      <span style="font-size:15px; font-weight:600; color:var(--text);">${label}</span>
+      <span class="mono dim" style="font-size:11px; word-break:break-all;">${dim}</span>
+    </div>
+    <div style="display:flex; align-items:baseline; gap:14px; margin:4px 0 6px;">
+      <div class="accumulated-val" id="slow-val">尚未建立</div>
+      <div class="runtime-subline" id="slow-meta">版本：— · 更新于 —</div>
+    </div>
+    <div style="font-size:13px; color:var(--text-secondary); line-height:1.6;" id="slow-desc">
+      目前尚未形成 canonical 长期状态。
+    </div>
+    <div id="slow-trend-box" class="slow-trend-box" style="display:none;">
+      <div class="dim mono" style="font-size:10.5px; text-transform:uppercase; margin-bottom:4px;">权威版本历史</div>
+      <div id="slow-spark" class="slow-spark"></div>
+      <div class="runtime-subline" id="slow-last-change" style="margin-top:6px;"></div>
+    </div>
+    <div id="slow-history-box" style="margin-top:10px; display:none;">
+      <div class="dim mono" style="font-size:10.5px; text-transform:uppercase; margin-bottom:4px;">版本记录</div>
+      <div id="slow-history-items" class="mono" style="font-size:11.5px;"></div>
+    </div>
+  </div>`;
+}
+
+function renderAccumulatedSelf(acc) {
+  const valEl = document.getElementById("slow-val");
+  if (!valEl) return; // no declared slow dimension → no card
+  const metaEl = document.getElementById("slow-meta");
+  const descEl = document.getElementById("slow-desc");
+  const trendBox = document.getElementById("slow-trend-box");
+  const trendSpark = document.getElementById("slow-spark");
+  const lastChangeEl = document.getElementById("slow-last-change");
+  const histBox = document.getElementById("slow-history-box");
+  const histItems = document.getElementById("slow-history-items");
+
+  if (acc.status === "ESTABLISHED" && acc.current_value !== null) {
+    valEl.textContent = acc.formatted_value;
+    valEl.style.color = "var(--purple)";
+    metaEl.textContent = `版本：${acc.version || 1} · 更新于 ${OWDisplay.fmtTime(acc.updated_at)}`;
+    descEl.textContent = "关系安全感刻画跨长期交互的慢速心理适应。已持久化版本是 states 表中严格权威的记录。";
+    // Small canonical version-history trend (§14): canonical RuntimeState only
+    const history = acc.history || [];
+    if (history.length >= 2) {
+      const vals = history.map(h => h.value);
+      trendSpark.innerHTML = renderSparklineSvg(vals, "#8067D8");
+      const last = vals[vals.length - 1], prev = vals[vals.length - 2];
+      const d = last - prev;
+      const at = OWDisplay.fmtTime(acc.updated_at);
+      lastChangeEl.innerHTML = `最近权威变化：<b style="color:${d >= 0 ? 'var(--green)' : 'var(--red)'};">${d >= 0 ? '+' : ''}${d.toFixed(4)}</b> · ${at}`;
+      trendBox.style.display = "block";
+    } else {
+      trendBox.style.display = "none";
+    }
+    if (history.length > 0) {
+      histBox.style.display = "block";
+      histItems.innerHTML = history.map(h => `
+        <div style="padding:3px 0; border-bottom:1px solid var(--border-soft); display:flex; justify-content:space-between;">
+          <span style="color:var(--dim);">v${h.version} [${h.status}]</span>
+          <span style="font-weight:600; color:var(--purple);">${h.value.toFixed(4)}</span>
+          <span style="color:var(--faint);">${OWDisplay.fmtTime(h.updated_at) !== '—' ? OWDisplay.fmtTime(h.updated_at).slice(6) : '—'}</span>
+        </div>
+      `).join("");
+    } else {
+      histBox.style.display = "none";
+    }
+  } else {
+    // Intentional empty state (§13): truthful, no fake zero baseline
+    valEl.textContent = "尚未建立";
+    valEl.style.color = "var(--faint)";
+    metaEl.textContent = "版本：— · 未初始化";
+    descEl.textContent = "目前尚未形成 canonical 长期状态。";
+    trendBox.style.display = "none";
+    histBox.style.display = "none";
+  }
+}
+
+async function loadHeader() {
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, "/api/overview", { signal: fetchAbortController.signal });
+    const h = data.bundle_header || {};
+    const s = data.turn_stats || {};
+
+    // Descriptor first: cards/legend/slow card derive their membership from it.
+    applyStateSurface(data.state_surface);
+
+    document.getElementById("hdr-gw-pid").textContent = h.gateway_pid || "—";
+    const mrBadge = document.getElementById("hdr-mr");
+    mrBadge.textContent = h.mr_status === "ACTIVE" ? "运行中" : (h.mr_status || "UNKNOWN");
+    mrBadge.className = h.mr_status === "ACTIVE" ? "badge-active" : "badge-inactive";
+    document.getElementById("hdr-epoch").textContent = h.epoch_id || "—";
+
+    document.getElementById("stat-epoch-turns").textContent = s.current_epoch_turns !== undefined ? s.current_epoch_turns : "—";
+    document.getElementById("stat-committed-turns").textContent = s.persisted_committed_turns !== undefined ? s.persisted_committed_turns : "—";
+    if (s.last_committed_turn) {
+      const at = OWDisplay.fmtTime(s.last_committed_turn.committed_at);
+      document.getElementById("stat-last-committed").textContent = at;
+    }
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    if (runtimeSelection.mode === "SCOPED" && (e.code === "UNKNOWN_BINDING" || e.code === "BINDING_REGISTRY_UNAVAILABLE" || e.code === "BINDING_UNAVAILABLE" || e.code === "RUNTIME_IDENTITY_MISMATCH")) {
+      stopPolling();
+      OWRuntimeScope.renderRuntimeError(document.querySelector(".layout"), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    console.debug("Header load failed", e);
+  }
+}
+
+async function loadTrends() {
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, "/api/trends?limit=30", { signal: fetchAbortController.signal });
+    currentTrends = data;
+
+    renderAffectCards(data.dimensions);
+    if (data.points && data.points.length > 0) {
+      if (selectedTurnIndex === -1 || selectedTurnIndex >= data.points.length) {
+        selectedTurnIndex = data.points.length - 1;
+      }
+      renderChart(data.points);
+      updateMomentPreview(data.points[selectedTurnIndex]);
+    } else {
+      renderChart([]);
+      updateMomentPreview(null);
+    }
+
+    renderAccumulatedSelf(data.accumulated_self);
+    document.getElementById("dot").className = "conn-dot ok";
+    document.getElementById("live-badge").className = "";
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    if (runtimeSelection.mode === "SCOPED" && (e.code === "UNKNOWN_BINDING" || e.code === "BINDING_REGISTRY_UNAVAILABLE" || e.code === "BINDING_UNAVAILABLE" || e.code === "RUNTIME_IDENTITY_MISMATCH")) {
+      stopPolling();
+      OWRuntimeScope.renderRuntimeError(document.querySelector(".layout"), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    document.getElementById("dot").className = "conn-dot err";
+    document.getElementById("live-badge").className = "disconnected";
+    document.getElementById("live-badge").textContent = "DISCONNECTED";
+  }
+}
+
+async function refreshAll() {
+  if (!isPageActive || runtimeSelection.mode === "INVALID") return;
+  if (fetchAbortController) {
+    fetchAbortController.abort();
+  }
+  fetchAbortController = new AbortController();
+  await loadHeader();
+  await loadTrends();
+}
+
+function manualRefresh() {
+  refreshAll();
+}
+
+function startPolling() {
+  stopPolling();
+  if (runtimeSelection.mode === "INVALID") return;
+  pollTimer = setInterval(() => {
+    if (isPageActive) refreshAll();
+  }, 30000); // 30-second interval
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+// Clock tick
+setInterval(() => {
+  const d = new Date();
+  document.getElementById("clock").textContent = d.toISOString().slice(11, 19);
+}, 1000);
+
+// Page lifecycle hygiene
+window.addEventListener("pagehide", () => {
+  isPageActive = false;
+  stopPolling();
+  if (fetchAbortController) fetchAbortController.abort();
+});
+window.addEventListener("beforeunload", () => {
+  isPageActive = false;
+  stopPolling();
+  if (fetchAbortController) fetchAbortController.abort();
+});
+window.addEventListener("pageshow", () => {
+  isPageActive = true;
+  if (runtimeSelection.mode !== "INVALID") {
+    refreshAll();
+    startPolling();
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (currentTrends && currentTrends.points) {
+    renderChart(currentTrends.points);
+  }
+});
+
+// Debug dropdown: click toggles, outside click / Escape closes (hover also works via CSS)
+(function () {
+  const dd = document.querySelector(".nav-dropdown");
+  if (!dd) return;
+  dd.querySelector(".nav-dropdown-toggle").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dd.classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!dd.contains(e.target)) dd.classList.remove("open");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") dd.classList.remove("open");
+  });
+})();
+
+// Initial boot
+if (runtimeSelection.mode === "INVALID") {
+  OWRuntimeScope.renderRuntimeError(document.querySelector(".layout"), "INVALID", runtimeSelection.detail, null);
+} else {
+  renderLegend();
+  updateModeButtons();
+  refreshAll();
+  startPolling();
+}
+</script>
+</body>
+</html>

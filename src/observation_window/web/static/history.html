@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MR Observation — Dimension History</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+.history-row { display: grid; grid-template-columns: 70px 80px 60px 60px 60px 1fr; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #1c2128; font-family: var(--mono); font-size: 12px; align-items: center; }
+.history-row:hover { background: #1c2128; }
+.history-row:last-child { border-bottom: none; }
+.history-header { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--mono); padding: 4px 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.version { color: var(--dim); }
+.value { font-weight: 600; }
+.delta { font-family: var(--mono); }
+.delta-positive { color: var(--green); }
+.delta-negative { color: var(--red); }
+.delta-neutral  { color: var(--dim); }
+.evidence-link { font-size: 11px; color: var(--accent); cursor: pointer; }
+.evidence-link:hover { text-decoration: underline; }
+.evidence-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; margin-top: 8px; font-family: var(--mono); font-size: 11px; }
+.ev-row { display: grid; grid-template-columns: 80px 60px 1fr; gap: 8px; padding: 3px 0; }
+.ev-key { color: var(--dim); }
+</style>
+</head>
+<body class="theme-dark">
+
+<div id="nav">
+  <span id="nav-title">MR OBSERVATION</span>
+  <a href="/" class="nav-link">Overview</a>
+  <a href="/timeline" class="nav-link">Timeline</a>
+  <a href="/causal" class="nav-link">Causal</a>
+  <a href="/history" class="nav-link active">History</a>
+  <a href="/live-trace" class="nav-link">Live Trace</a>
+  <span id="live-badge">LIVE</span>
+</div>
+
+<div class="card">
+  <div class="card-title">Durable States (all dimensions)</div>
+  <div style="margin-bottom:8px">
+    <label class="dim" style="font-size:11px">
+      Dimension:
+      <select id="dim-filter" style="margin-left:4px">
+        <option value="">all</option>
+      </select>
+    </label>
+  </div>
+  <div class="history-header">
+    <div>version</div><div>status</div><div>value</div><div>delta</div><div>updated_at</div><div>evidence / transitions</div>
+  </div>
+  <div id="history-list">
+    <div class="empty">Loading…</div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let allStates = [];
+
+async function load() {
+  try {
+    const r = await fetch(API + '/api/states');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    allStates = data.states || [];
+    buildDimOptions();
+    render();
+    document.getElementById('live-badge').className = '';
+  } catch (e) {
+    document.getElementById('live-badge').className = 'disconnected';
+    document.getElementById('live-badge').textContent = 'DISCONNECTED';
+  }
+}
+
+function buildDimOptions() {
+  const dims = [...new Set(allStates.map(s => s.dimension))].sort();
+  const sel = document.getElementById('dim-filter');
+  dims.forEach(d => sel.add(new Option(d, d)));
+}
+
+function render() {
+  const dim = document.getElementById('dim-filter').value;
+  const rows = allStates.filter(s => !dim || s.dimension === dim)
+                        .sort((a, b) => a.dimension.localeCompare(b.dimension) || a.version - b.version);
+  const el = document.getElementById('history-list');
+  if (rows.length === 0) {
+    el.innerHTML = '<div class="empty">NO DATA</div>';
+    return;
+  }
+  // For each dimension, compute delta from previous version
+  const byDim = {};
+  rows.forEach(r => {
+    if (!byDim[r.dimension]) byDim[r.dimension] = [];
+    byDim[r.dimension].push(r);
+  });
+  const deltas = {};
+  Object.values(byDim).forEach(arr => {
+    arr.sort((a, b) => a.version - b.version);
+    deltas[arr[0].state_id] = null;
+    for (let i = 1; i < arr.length; i++) {
+      deltas[arr[i].state_id] = parseFloat(arr[i].value) - parseFloat(arr[i - 1].value);
+    }
+  });
+
+  el.innerHTML = rows.map(r => {
+    const delta = deltas[r.state_id];
+    const deltaStr = delta != null ? (delta >= 0 ? '+' : '') + delta.toFixed(4) : '—';
+    const deltaCls = delta == null ? 'delta-neutral' : delta > 0 ? 'delta-positive' : delta < 0 ? 'delta-negative' : 'delta-neutral';
+    const evRefs = (r.evidence_refs || []).map(id =>
+      `<span class="evidence-link" onclick="showEvidence('${esc(id)}')">${esc(id)}</span>`
+    ).join(' ');
+    const trRefs = (r.transition_refs || []).map(id =>
+      `<span class="dim">${esc(id)}</span>`
+    ).join(' ');
+    const evidence_section = evRefs ? `<div>ev: ${evRefs}</div>` : '';
+    const transition_section = trRefs ? `<div>tr: ${trRefs}</div>` : '';
+    return `<div class="history-row">
+      <div class="version">v${r.version}</div>
+      <div><span class="badge badge-${r.status === 'active' ? 'applied' : 'abstained'}">${esc(r.status)}</span></div>
+      <div class="value">${esc(String(r.value))}</div>
+      <div class="delta ${deltaCls}">${deltaStr}</div>
+      <div class="dim">${formatTs(r.updated_at)}</div>
+      <div>${evidence_section}${transition_section}</div>
+    </div>`;
+  }).join('');
+}
+
+async function showEvidence(id) {
+  // Remove existing panel
+  const existing = document.getElementById('ev-panel-' + id);
+  if (existing) { existing.remove(); return; }
+  try {
+    const r = await fetch(API + '/api/evidence/' + encodeURIComponent(id));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const ev = await r.json();
+    const rows = Object.entries({
+      evidence_id: ev.evidence_id,
+      source_kind: ev.source_kind,
+      source_type: ev.source_type,
+      occurred_at: ev.occurred_at,
+      received_at: ev.received_at,
+      payload: ev.payload,
+      origin_runtime_id: ev.origin_runtime_id,
+    }).map(([k, v]) => `<div class="ev-row"><div class="ev-key">${esc(k)}</div><div class="ev-value">${esc(String(v ?? '—'))}</div></div>`).join('');
+    const panel = document.createElement('div');
+    panel.id = 'ev-panel-' + id;
+    panel.className = 'evidence-panel';
+    panel.innerHTML = `<div style="margin-bottom:6px; font-weight:600; color:var(--accent)">Evidence: ${esc(id)}</div>${rows}`;
+    document.querySelector('.history-row') ? document.getElementById('history-list').prepend(panel) : null;
+  } catch (e) {
+    // ignore
+  }
+}
+
+function formatTs(s) {
+  if (!s) return '—';
+  try { return new Date(s).toLocaleString(); } catch (_) { return s; }
+}
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.getElementById('dim-filter').addEventListener('change', render);
+load();
+</script>
+</body>
+</html>

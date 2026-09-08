@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mind-runtime"
+version = "0.0.0"
+description = "External mind runtime for companion agents"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+memory-vector = ["qdrant-client==1.19.0", "fastembed==0.8.0"]
+test = ["pytest>=8.3,<10"]
+dev = [
+  "coverage>=7.6,<8",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<10",
+  "ruff>=0.12,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["live: Live integration test that makes real external API calls; skipped by default via -m 'not live'"]
+addopts = ["--strict-config", "--strict-markers"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+exclude = [".pytest_cache", ".pytest-tmp", "pt*", "sb-copy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+mypy_path = ["src"]
+strict = true
+warn_unused_configs = true
+
+[tool.coverage.run]
+branch = true
+source = ["mind_runtime"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+# C1.5.3: only the standard process-entrypoint shell is exempt. Every CLI
+# main() body itself stays behavior-tested via argv injection.
+exclude_also = ['^if __name__ == "__main__":$']

@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MR Observation — Human Causal Trace</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/display_zh.js"></script>
+<script src="/static/runtime_scope.js"></script>
+<script src="/static/runtime_selector.js"></script>
+<style>
+.turn-item {
+  cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  transition: border-color 0.15s, background 0.15s;
+}
+.turn-item:hover { border-color: var(--accent); }
+.turn-item.selected {
+  border-color: var(--accent);
+  background: #1c2738;
+}
+.turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.turn-preview {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-delta-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #2a200a;
+  color: var(--yellow);
+  border: 1px solid #5a4010;
+}
+.turn-delta-badge.no-delta {
+  background: transparent;
+  color: var(--dim);
+  border-color: var(--border);
+}
+
+/* Causal Flow Layout */
+.causal-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.flow-step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  position: relative;
+}
+.flow-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.flow-step-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flow-connector {
+  text-align: center;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1;
+  margin: -4px 0;
+}
+
+/* User & Assistant Text Boxes */
+.text-box-user {
+  background: #101a26;
+  border: 1px solid #1f3a5f;
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #e6edf3;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.text-box-asst {
+  background: #142018;
+  border: 1px solid #23482d;
+  border-left: 4px solid var(--green);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #e6edf3;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Provenance Tags */
+.prov-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+.prov-tag {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+.prov-tag .k { color: var(--dim); margin-right: 4px; }
+.prov-tag .v { color: var(--text); }
+
+/* Provenance Badges */
+.prov-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.prov-canonical {
+  background: #0d2238;
+  color: #58a6ff;
+  border: 1px solid #1f4b7a;
+}
+.prov-telemetry {
+  background: #27153b;
+  color: #d2a8ff;
+  border: 1px solid #5a3084;
+}
+.prov-unavail {
+  background: #161b22;
+  color: #8b949e;
+  border: 1px solid #30363d;
+}
+
+/* Abort Banner */
+.abort-banner {
+  background: #3c1418;
+  border: 1px solid #f85149;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #ff7b72;
+}
+
+/* Origin Badges */
+.origin-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.origin-event {
+  background: #0f2742;
+  color: #58a6ff;
+  border: 1px solid #1f4b7a;
+}
+.origin-dynamics {
+  background: #2d1d07;
+  color: #d29922;
+  border: 1px solid #5a3a0e;
+}
+.origin-slow {
+  background: #1e1333;
+  color: #bc8cff;
+  border: 1px solid #3e266b;
+}
+.origin-unchanged {
+  background: #161b22;
+  color: var(--dim);
+  border: 1px solid var(--border);
+}
+
+/* Unpersisted Stage Badge */
+.badge-unavail {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: #161b22;
+  color: var(--dim);
+  border: 1px dashed var(--border);
+}
+
+/* Delta Grid */
+.delta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.delta-card {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+.delta-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.delta-dim {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.delta-values {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+}
+.delta-diff {
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+/* Collapsible Unchanged States */
+.unchanged-details {
+  margin-top: 10px;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+.unchanged-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+.unchanged-summary:hover { color: var(--text); }
+.unchanged-table {
+  width: 100%;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Slow State Card */
+.slow-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+@media (max-width: 768px) {
+  .slow-grid { grid-template-columns: 1fr 1fr; }
+}
+.slow-col .lbl { color: var(--dim); font-size: 9px; text-transform: uppercase; margin-bottom: 2px; }
+.slow-col .val { color: var(--text); font-weight: 500; font-size: 12px; }
+
+/* Raw Inspector Details */
+.raw-details {
+  margin-top: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: #0a0d12;
+  padding: 10px 14px;
+}
+.raw-summary {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+}
+.raw-summary:hover { color: var(--text); }
+
+/* OW-RESPONSIVE-I18N-ZH-V1 §17: phone recomposition — turn selector collapses
+   to a top list, causal chain occupies full width, long IDs wrap. */
+@media (max-width: 767px) {
+  .content { flex-direction: column !important; }
+  .content aside { width: 100% !important; flex-shrink: 1 !important; }
+  .content #turns-list { max-height: 220px !important; }
+  .prov-row { word-break: break-all; }
+  .flow-step { padding: 12px 14px; }
+}
+</style>
+</head>
+<body class="theme-dark">
+<div class="layout">
+  <div id="nav">
+    <span id="nav-title">MR OBSERVATION</span>
+    <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
+    <div id="runtime-selector" class="runtime-selector" role="group"></div>
+    <a href="/" class="nav-link">状态</a>
+    <a href="/moments" class="nav-link">交互</a>
+    <div class="nav-dropdown">
+      <button class="nav-dropdown-toggle active">调试 ▾</button>
+      <div class="nav-dropdown-menu">
+        <a href="/debug/causal" class="nav-dropdown-item active">因果检查器</a>
+        <a href="/debug/ledger" class="nav-dropdown-item">状态台账</a>
+        <a href="/debug/live-trace" class="nav-dropdown-item">实时链路</a>
+      </div>
+    </div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+      <button id="btn-refresh" class="btn" style="background:#161b22; border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer;" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
+      <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
+      <span class="mono dim" id="status-text" style="font-size:11px;">live</span>
+      <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
+      <span id="live-badge">LIVE</span>
+    </div>
+    <!-- Backwards compatibility nav targets -->
+    <div style="display:none"><a href="/" class="nav-link">Overview</a><a href="/timeline" class="nav-link">Timeline</a><a href="/causal" class="nav-link active">Causal</a><a href="/history" class="nav-link">History</a><a href="/live-trace" class="nav-link">Live Trace</a></div>
+  </div>
+
+  <div class="content" style="display: flex; gap: 16px; align-items: flex-start;">
+    <!-- LEFT SIDE: Committed Interaction Selector -->
+    <aside style="width: 280px; flex-shrink: 0;">
+      <div class="card" style="padding: 10px 12px;">
+        <div class="card-title" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+          <span>已提交轮次</span>
+          <span class="mono dim" style="font-size:10px;" id="turns-count">0</span>
+        </div>
+        <div id="turns-list" style="max-height: calc(100vh - 160px); overflow-y: auto;">
+          <div id="turns-items"><div class="empty">正在加载轮次…</div></div>
+          <div id="turns-pagination" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- RIGHT SIDE: Human Causal Flow & Inspector -->
+    <main style="flex: 1; min-width: 0;" id="detail-area">
+      <div class="card">
+        <div class="empty">从列表中选择一个交互，查看其人类可读因果链。</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+const runtimeSelection = OWRuntimeScope.parsePageRuntime(window.location.search);
+OWRuntimeScope.propagateNavigation(runtimeSelection);
+OWRuntimeScope.renderRuntimeIndicator(document.getElementById("runtime-indicator"), runtimeSelection);
+OWRuntimeSelector.bootstrap(runtimeSelection);
+
+let isPageActive = true;
+let headPollTimer = null;
+let clockTimer = null;
+let turnsAbortController = null;
+let causalAbortController = null;
+let headAbortController = null;
+let olderAbortController = null;
+
+let turnsData = [];
+let selectedTurnId = null;
+let nextCursor = null;
+let currentHeadId = null;
+let isPollingHead = false;
+let isLoadingMore = false;
+let currentInspectorData = null;
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatTs(iso) {
+  return OWDisplay.fmtTime(iso);
+}
+
+function originClass(origin) {
+  if (origin === 'EVENT EFFECT') return 'origin-event';
+  if (origin === 'DYNAMICS / RECOVERY') return 'origin-dynamics';
+  if (origin === 'SLOW PLASTICITY') return 'origin-slow';
+  return 'origin-unchanged';
+}
+
+function provBadge(prov) {
+  const raw = prov || 'UNAVAILABLE';
+  const cls = raw === 'UNAVAILABLE' ? 'prov-unavail'
+    : (raw.toUpperCase().startsWith('CANONICAL') ? 'prov-canonical'
+      : (raw.toUpperCase().startsWith('OBSERVER TELEMETRY') ? 'prov-telemetry' : 'prov-unavail'));
+  return `<span class="prov-badge ${cls}" style="text-transform:none;" title="${esc(raw)}">${esc(OWDisplay.displayProvenance(raw))}</span>`;
+}
+
+/* Reason projection helper (§6): zh primary + raw secondary; unknown reasons
+   fail safe to the raw value only. */
+function reasonPair(raw) {
+  if (raw == null || raw === '') return '';
+  const zh = OWDisplay.displayReason(raw);
+  return zh === String(raw) ? esc(raw) : `${esc(zh)} <span class="mono">${esc(raw)}</span>`;
+}
+
+function formatSlowVal(val) {
+  if (val == null) return '—';
+  if (val === 'not established' || val === 'UNAVAILABLE / NOT PERSISTED') {
+    return `<span title="${esc(val)}">${esc(OWDisplay.displayStatus(val))}</span>`;
+  }
+  const n = parseFloat(val);
+  return isNaN(n) ? esc(String(val)) : n.toFixed(4);
+}
+
+async function checkHead() {
+  if (!isPageActive || isPollingHead || runtimeSelection.mode === 'INVALID') return;
+  isPollingHead = true;
+  if (headAbortController) headAbortController.abort();
+  headAbortController = new AbortController();
+  const signal = headAbortController.signal;
+
+  try {
+    const head = await OWRuntimeScope.runtimeFetch(runtimeSelection, '/api/turns/head', { signal });
+    if (!isPageActive || signal.aborted) return;
+
+    const dot = document.getElementById('dot');
+    if (dot) dot.className = 'conn-dot ok';
+    const st = document.getElementById('status-text');
+    if (st) st.textContent = 'live';
+
+    if (head.latest_interaction_id && head.latest_interaction_id !== currentHeadId) {
+      currentHeadId = head.latest_interaction_id;
+      // Refresh selector, but NEVER auto-reload the currently selected historical trace!
+      await fetchTurns(true);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' || !isPageActive) return;
+    if (runtimeSelection.mode === 'SCOPED' && (e.code === 'UNKNOWN_BINDING' || e.code === 'BINDING_REGISTRY_UNAVAILABLE' || e.code === 'BINDING_UNAVAILABLE' || e.code === 'RUNTIME_IDENTITY_MISMATCH')) {
+      cleanupLifecycle();
+      OWRuntimeScope.renderRuntimeError(document.querySelector('.layout'), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    const dot = document.getElementById('dot');
+    if (dot) dot.className = 'conn-dot warn';
+    const st = document.getElementById('status-text');
+    if (st) st.textContent = 'offline';
+  } finally {
+    isPollingHead = false;
+  }
+}
+
+async function manualRefresh() {
+  const btn = document.getElementById('btn-refresh');
+  if (btn) btn.textContent = '...';
+  try {
+    await fetchTurns(true);
+    await checkHead();
+  } finally {
+    if (btn) btn.textContent = '⟳ Refresh';
+  }
+}
+
+async function fetchTurns(preserveSelection = false) {
+  if (!isPageActive || runtimeSelection.mode === 'INVALID') return;
+  if (turnsAbortController) turnsAbortController.abort();
+  turnsAbortController = new AbortController();
+  const signal = turnsAbortController.signal;
+
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, '/api/turns?limit=20', { signal });
+    if (!isPageActive || signal.aborted) return;
+
+    turnsData = data.turns || [];
+    nextCursor = data.next_cursor || null;
+
+    if (turnsData.length > 0 && !currentHeadId) {
+      currentHeadId = turnsData[0].interaction_id;
+    }
+
+    renderSelector();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramTurnId = urlParams.get('turn_id') || urlParams.get('interaction_id');
+    if (paramTurnId && !preserveSelection) {
+      selectTurn(paramTurnId);
+    } else if (!preserveSelection && !selectedTurnId && turnsData.length > 0) {
+      selectTurn(turnsData[0].interaction_id);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError' || !isPageActive) return;
+    if (runtimeSelection.mode === 'SCOPED' && (e.code === 'UNKNOWN_BINDING' || e.code === 'BINDING_REGISTRY_UNAVAILABLE' || e.code === 'BINDING_UNAVAILABLE' || e.code === 'RUNTIME_IDENTITY_MISMATCH')) {
+      cleanupLifecycle();
+      OWRuntimeScope.renderRuntimeError(document.querySelector('.layout'), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    const el = document.getElementById('turns-items');
+    if (el) el.innerHTML = `<div class="empty">Failed loading turns: ${esc(e.message)}</div>`;
+  }
+}
+
+async function loadOlderTurns() {
+  if (!isPageActive || !nextCursor || isLoadingMore || runtimeSelection.mode === 'INVALID') return;
+  isLoadingMore = true;
+  const btn = document.getElementById('btn-load-more');
+  if (btn) btn.textContent = 'Loading older...';
+
+  if (olderAbortController) olderAbortController.abort();
+  olderAbortController = new AbortController();
+  const signal = olderAbortController.signal;
+
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, '/api/turns?limit=20&before=' + encodeURIComponent(nextCursor), { signal });
+    if (!isPageActive || signal.aborted) return;
+
+    const older = data.turns || [];
+    nextCursor = data.next_cursor || null;
+
+    const existingIds = new Set(turnsData.map(t => t.interaction_id));
+    for (const t of older) {
+      if (!existingIds.has(t.interaction_id)) {
+        turnsData.push(t);
+        existingIds.add(t.interaction_id);
+      }
+    }
+    renderSelector();
+  } catch (e) {
+    if (e.name === 'AbortError' || !isPageActive) return;
+    if (runtimeSelection.mode === 'SCOPED' && (e.code === 'UNKNOWN_BINDING' || e.code === 'BINDING_REGISTRY_UNAVAILABLE' || e.code === 'BINDING_UNAVAILABLE' || e.code === 'RUNTIME_IDENTITY_MISMATCH')) {
+      cleanupLifecycle();
+      OWRuntimeScope.renderRuntimeError(document.querySelector('.layout'), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    console.error('Failed loading older turns:', e);
+    if (btn) btn.textContent = 'Failed to load';
+  } finally {
+    isLoadingMore = false;
+  }
+}
+
+function renderSelector() {
+  const itemsContainer = document.getElementById('turns-items');
+  const pagContainer = document.getElementById('turns-pagination');
+  document.getElementById('turns-count').textContent = turnsData.length;
+
+  if (!turnsData || turnsData.length === 0) {
+    itemsContainer.innerHTML = '<div class="empty">No committed interactions found.</div>';
+    pagContainer.innerHTML = '';
+    return;
+  }
+
+  itemsContainer.innerHTML = turnsData.map(t => {
+    const isSel = t.interaction_id === selectedTurnId;
+    const compClass = t.composition === 'ON' ? 'comp-on' : 'comp-off';
+    const deltaBadge = t.has_delta
+      ? `<span class="turn-delta-badge">Δ ${esc(OWDisplay.displayDimensionText(t.delta_summary || 'changed'))}</span>`
+      : `<span class="turn-delta-badge no-delta">无变化</span>`;
+    const preview = t.user_preview && t.user_preview !== '—'
+      ? esc(t.user_preview)
+      : esc(t.interaction_id);
+
+    return `
+      <div class="turn-item ${isSel ? 'selected' : ''}" onclick="selectTurn('${esc(t.interaction_id)}')">
+        <div class="turn-meta">
+          <span>${formatTs(t.committed_at || t.created_at)}</span>
+          <span class="turn-comp ${compClass}" title="composition: ${esc(t.composition || 'OFF')}">${esc(OWDisplay.displayStatus(t.composition || 'OFF'))}</span>
+          ${deltaBadge}
+          <span class="dim" style="margin-left:auto; font-size:10px;">${esc(t.interaction_id)}</span>
+        </div>
+        <div class="turn-preview">${preview}</div>
+      </div>
+    `;
+  }).join('');
+
+  if (nextCursor) {
+    pagContainer.innerHTML = `
+      <button id="btn-load-more" class="btn" style="width:100%; background:#161b22; border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:6px; border-radius:4px; cursor:pointer;" onclick="loadOlderTurns()">
+        Load older turns ↓
+      </button>
+    `;
+  } else {
+    pagContainer.innerHTML = `<div class="dim mono" style="text-align:center; font-size:10px; padding:4px 0;">All committed turns loaded</div>`;
+  }
+}
+
+function selectTurn(id) {
+  selectedTurnId = id;
+  try {
+    const url = new URL(window.location);
+    url.searchParams.set('turn_id', id);
+    if (runtimeSelection.mode === 'SCOPED') {
+      url.searchParams.set('runtime', runtimeSelection.bindingId);
+    }
+    window.history.replaceState(null, '', url.toString());
+  } catch (e) {}
+  renderSelector();
+  loadCausal(id);
+}
+
+async function loadCausal(interactionId) {
+  if (!isPageActive || runtimeSelection.mode === 'INVALID') return;
+  if (causalAbortController) causalAbortController.abort();
+  causalAbortController = new AbortController();
+  const signal = causalAbortController.signal;
+
+  const area = document.getElementById('detail-area');
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, '/api/turns/' + encodeURIComponent(interactionId) + '/causal', { signal });
+    if (!isPageActive || signal.aborted) return;
+    renderCausal(data);
+  } catch (e) {
+    if (e.name === 'AbortError' || !isPageActive) return;
+    if (runtimeSelection.mode === 'SCOPED' && (e.code === 'UNKNOWN_BINDING' || e.code === 'BINDING_REGISTRY_UNAVAILABLE' || e.code === 'BINDING_UNAVAILABLE' || e.code === 'RUNTIME_IDENTITY_MISMATCH')) {
+      cleanupLifecycle();
+      OWRuntimeScope.renderRuntimeError(document.querySelector('.layout'), e.code, e.message, runtimeSelection.bindingId);
+      return;
+    }
+    area.innerHTML = `<div class="card"><div class="empty">Load failed for ${esc(interactionId)}: ${esc(e.message)}</div></div>`;
+  }
+}
+
+function renderCausal(data) {
+  const ht = data.human_trace;
+  const chains = data.chains || [];
+
+  if (!ht && (!chains || chains.length === 0)) {
+    document.getElementById('detail-area').innerHTML = '<div class="card"><div class="empty">NO CAUSAL DATA for this turn</div></div>';
+    return;
+  }
+
+  let html = '';
+  if (ht) {
+    html += renderHumanCard(ht);
+  }
+
+  // Raw Inspector section
+  html += renderRawInspector(data);
+
+  document.getElementById('detail-area').innerHTML = html;
+}
+
+function renderHumanCard(ht) {
+  const u = ht.user_input || {};
+  const sem = ht.semantic_interpretation || {};
+  const app = ht.appraisal || {};
+  const eff = ht.effect || {};
+  const homeo = ht.homeostasis || {};
+  const changed = ht.changed_states || [];
+  const unchanged = ht.unchanged_states || [];
+  const slow = ht.slow_state || {};
+  const asst = ht.assistant_response || {};
+
+  return `
+    <div class="card" style="margin-bottom: 12px;">
+      <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>因果链 <span class='mono dim' style='font-size:10px;'>Human Causal Trace</span></span>
+        <span class="mono dim" style="font-size:10px;">ix: ${esc(ht.interaction_id)}</span>
+      </div>
+
+      ${ht.is_aborted ? `
+        <div class="abort-banner">
+          <span>⚠️ <strong>轮次已中止：</strong>${reasonPair(ht.abort_reason || 'Turn was aborted before commit')}</span>
+        </div>
+      ` : ''}
+
+      <div class="causal-flow">
+
+        <!-- STEP 1: USER INPUT -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="USER INPUT">1. 用户输入</span>
+              ${provBadge(u.provenance)}
+            </div>
+            <span class="mono dim" style="font-size:10px;">${formatTs(u.occurred_at || ht.committed_at)}</span>
+          </div>
+          ${u.status === 'AVAILABLE' && u.text ? `
+            <div class="text-box-user">${esc(u.text)}</div>
+          ` : `
+            <div class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</div>
+          `}
+          <div class="prov-row">
+            <span class="prov-tag"><span class="k">evidence_id:</span><span class="v">${esc(u.evidence_id || '—')}</span></span>
+            <span class="prov-tag"><span class="k">observation_id:</span><span class="v">${esc(u.observation_id || '—')}</span></span>
+            <span class="prov-tag"><span class="k">interaction_id:</span><span class="v">${esc(u.interaction_id || ht.interaction_id)}</span></span>
+          </div>
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 2: SEMANTIC INTERPRETATION -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="SEMANTIC INTERPRETATION">2. 语义识别</span>
+              ${provBadge(sem.provenance)}
+            </div>
+          </div>
+          ${sem.status === 'AVAILABLE' ? `
+            <div style="display:flex; gap:12px; align-items:center;">
+              <span class="mono" style="font-weight:600; color:var(--purple);">${esc(sem.event_kind || '—')}</span>
+              <span class="mono dim">confidence: ${sem.confidence != null ? sem.confidence.toFixed(3) : '—'}</span>
+              ${sem.summary ? `<span class="dim" style="font-size:12px;">(${esc(sem.summary)})</span>` : ''}
+            </div>
+          ` : (sem.status === 'ABSTAINED' ? `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-unavail" style="color:var(--yellow);" title="ABSTAINED">已弃权</span>
+              <span class="dim mono" style="font-size:11px;">(${reasonPair(sem.abstention_reason || 'valid semantic abstention')})</span>
+            </div>
+          ` : `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</span>
+              <span class="dim mono" style="font-size:11px;">(${reasonPair(sem.reason || 'not persisted to durable schema')})</span>
+            </div>
+          `)}
+          ${sem.candidate_id ? `
+            <div class="prov-row"><span class="prov-tag"><span class="k">candidate_id:</span><span class="v">${esc(sem.candidate_id)}</span></span></div>
+          ` : ''}
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 3: APPRAISAL -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="APPRAISAL">3. 认知评估</span>
+              ${provBadge(app.provenance)}
+            </div>
+          </div>
+          ${app.status === 'AVAILABLE' ? `
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-family:var(--mono); font-size:12px;">
+              <span>valence: <span style="color:${app.valence >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${app.valence >= 0 ? '+' : ''}${app.valence}</span></span>
+              <span>salience: <span>${esc(app.salience != null ? app.salience : '—')}</span></span>
+              <span>confidence: <span>${esc(app.appraisal_confidence != null ? app.appraisal_confidence : '—')}</span></span>
+              ${app.meanings && app.meanings.length ? `<span>meanings: <span class="dim">${esc(app.meanings.join(', '))}</span></span>` : ''}
+            </div>
+          ` : `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</span>
+              <span class="dim mono" style="font-size:11px;">(${reasonPair(app.reason || 'not persisted to durable schema')})</span>
+            </div>
+          `}
+          ${app.appraisal_id ? `
+            <div class="prov-row"><span class="prov-tag"><span class="k">appraisal_id:</span><span class="v">${esc(app.appraisal_id)}</span></span></div>
+          ` : ''}
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 4: EFFECT / IMPULSE -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="EFFECT / IMPULSES">4. 效应 / 冲量</span>
+              ${provBadge(eff.provenance)}
+            </div>
+          </div>
+          ${eff.status === 'AVAILABLE' && eff.impulses && eff.impulses.length > 0 ? `
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              ${eff.impulses.map(imp => `
+                <div class="mono" style="font-size:12px; display:flex; gap:10px; align-items:center;">
+                  <span style="font-weight:600; color:var(--accent);" title="${esc(imp.dimension)}">${esc(OWDisplay.shortDimension(imp.dimension))}</span>
+                  <span>amount: ${imp.amount >= 0 ? '+' : ''}${imp.amount.toFixed(4)}</span>
+                  <span class="dim">source: ${esc(imp.source_ref)}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</span>
+              <span class="dim mono" style="font-size:11px;">(${reasonPair(eff.reason || 'no impulses generated or not persisted')})</span>
+            </div>
+          `}
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 5: HOMEOSTASIS GATE -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="HOMEOSTASIS GATE">5. 稳态门控</span>
+              ${provBadge(homeo.provenance)}
+            </div>
+          </div>
+          ${homeo.status === 'AVAILABLE' ? `
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-family:var(--mono); font-size:12px; align-items:center;">
+              <span>裁定: <span style="font-weight:600; color:var(--accent);" title="${esc(homeo.disposition)}">${esc(OWDisplay.displayDisposition(homeo.disposition))}</span></span>
+              ${homeo.target_dimension ? `<span>target: <span class="dim">${esc(homeo.target_dimension)}</span></span>` : ''}
+              ${homeo.salience != null ? `<span>salience: <span>${homeo.salience}</span></span>` : ''}
+              ${homeo.reason ? `<span class="dim">(${reasonPair(homeo.reason)})</span>` : ''}
+            </div>
+          ` : `
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</span>
+              <span class="dim mono" style="font-size:11px;">(${reasonPair(homeo.reason || 'homeostasis disposition not persisted')})</span>
+            </div>
+          `}
+          ${homeo.decision_id ? `
+            <div class="prov-row"><span class="prov-tag"><span class="k">decision_id:</span><span class="v">${esc(homeo.decision_id)}</span></span></div>
+          ` : ''}
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 6: STATE DELTAS & ORIGIN -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="STATE DELTAS">6. 状态变化</span>
+              <span class="prov-badge prov-canonical">CANONICAL — cognition_state.sqlite</span>
+            </div>
+            <span class="mono dim" style="font-size:10px;">${changed.length} 个状态变化</span>
+          </div>
+
+          ${changed.length > 0 ? `
+            <div class="delta-grid">
+              ${changed.map(c => `
+                <div class="delta-card">
+                  <div class="delta-card-head">
+                    <span class="delta-dim" title="${esc(c.dimension || c.short_label)}">${esc(OWDisplay.shortDimension(c.short_label))}</span>
+                    <span class="origin-badge ${originClass(c.change_origin)}" title="${esc(c.change_origin)}">${esc(OWDisplay.displayOrigin(c.change_origin))}</span>
+                  </div>
+                  <div class="delta-values">
+                    <span>${c.before.toFixed(4)} → ${c.after.toFixed(4)}</span>
+                    <span class="delta-diff ${c.delta >= 0 ? 'delta-positive' : 'delta-negative'}">(${c.formatted_delta})</span>
+                  </div>
+                  <div class="prov-row" style="margin-top:6px;">
+                    <span class="prov-tag"><span class="k">ver:</span><span class="v">v${c.from_version ?? '—'}→v${c.to_version ?? '—'}</span></span>
+                    <span class="prov-tag"><span class="k">tr_id:</span><span class="v">${esc(c.transition_id || '—')}</span></span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div class="dim mono" style="font-size:12px; padding:4px 0;">本轮无影响维度变化。</div>
+          `}
+
+          <!-- Collapsed Unchanged States (Requirement 4) -->
+          ${unchanged.length > 0 ? `
+            <details class="unchanged-details">
+              <summary class="unchanged-summary">▶ ${unchanged.length} 个未变化状态</summary>
+              <table class="unchanged-table">
+                <thead><tr><th>Dimension</th><th>Value</th><th>Version</th></tr></thead>
+                <tbody>
+                  ${unchanged.map(u => `
+                    <tr>
+                      <td style="color:var(--dim);">${esc(u.short_label)}</td>
+                      <td>${u.after.toFixed(4)}</td>
+                      <td>v${u.to_version ?? '—'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </details>
+          ` : ''}
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 7: SLOW DECISION (ACCUMULATED SELF) -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="SLOW STATE DECISION">7. 慢状态决策（${slow.dimension ? esc(OWDisplay.displayDimension(slow.dimension)) : '—'}）</span>
+              ${provBadge(slow.provenance)}
+            </div>
+          </div>
+          <div class="slow-grid">
+            <div class="slow-col">
+              <div class="lbl">变化前</div>
+              <div class="val">${formatSlowVal(slow.before)}</div>
+            </div>
+            <div class="slow-col">
+              <div class="lbl">提议目标</div>
+              <div class="val">${formatSlowVal(slow.proposed_target)}</div>
+            </div>
+            <div class="slow-col">
+              <div class="lbl">稳态门控结果</div>
+              <div class="val">${formatSlowVal(slow.homeostasis_disposition)}</div>
+            </div>
+            <div class="slow-col">
+              <div class="lbl">变化后</div>
+              <div class="val">${formatSlowVal(slow.after)}</div>
+            </div>
+          </div>
+          <div class="prov-row">
+            <span class="prov-tag"><span class="k">slow_contribution_id:</span><span class="v">${esc(slow.slow_contribution_id || '—')}</span></span>
+            <span class="prov-tag"><span class="k">source_decision_id:</span><span class="v">${esc(slow.source_decision_id || '—')}</span></span>
+            ${slow.write_status ? `<span class="prov-tag"><span class="k">write_status:</span><span class="v">${esc(slow.write_status)}</span></span>` : ''}
+          </div>
+        </div>
+
+        <div class="flow-connector">↓</div>
+
+        <!-- STEP 8: ASSISTANT RESPONSE -->
+        <div class="flow-step">
+          <div class="flow-step-header">
+            <div class="flow-step-title">
+              <span title="ASSISTANT RESPONSE">8. 助手回复</span>
+              ${provBadge(asst.provenance)}
+            </div>
+            <span class="mono dim" style="font-size:10px;">${formatTs(asst.timestamp || ht.committed_at)}</span>
+          </div>
+          ${asst.status === 'AVAILABLE' && asst.text ? `
+            <div class="text-box-asst">${esc(asst.text)}</div>
+          ` : `
+            <div class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</div>
+          `}
+          <div class="prov-row">
+            <span class="prov-tag"><span class="k">message_id:</span><span class="v">${esc(asst.message_id || '—')}</span></span>
+            <span class="prov-tag"><span class="k">timestamp:</span><span class="v">${esc(asst.timestamp || '—')}</span></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  `;
+}
+
+function renderRawInspector(data) {
+  currentInspectorData = data;
+  const chains = data.chains || [];
+  return `
+    <details class="raw-details" ontoggle="onToggleRawInspector(this)">
+      <summary class="raw-summary">▶ 机器层原始数据检查（Raw Inspector · ${chains.length} 条因果链）</summary>
+      <div id="raw-inspector-content" style="margin-top: 10px;">
+        <div class="dim mono" style="font-size:11px; padding:4px 0;">(Expand to load machine-level chains and raw JSON)</div>
+      </div>
+    </details>
+  `;
+}
+
+function onToggleRawInspector(detailsEl) {
+  if (!detailsEl.open || !currentInspectorData) return;
+  const contentEl = detailsEl.querySelector('#raw-inspector-content');
+  if (!contentEl || contentEl.getAttribute('data-rendered') === 'true') return;
+
+  const data = currentInspectorData;
+  const chains = data.chains || [];
+  let chainRows = '';
+  if (chains.length > 0) {
+    chainRows = chains.map(chain => {
+      const rows = [];
+      rows.push(['dimension', chain.dimension]);
+      rows.push(['state_before', chain.state_before.toFixed(6)]);
+      rows.push(['state_after',  chain.state_after.toFixed(6)]);
+      rows.push(['delta', (chain.delta >= 0 ? '+' : '') + chain.delta.toFixed(6)]);
+      rows.push(['has_appraisal', chain.has_appraisal]);
+      rows.push(['has_applied_decision', chain.has_applied_decision]);
+      rows.push(['has_abstention', chain.has_abstention]);
+      if (chain.abstention_reasons && chain.abstention_reasons.length) {
+        rows.push(['abstention_reasons', chain.abstention_reasons.join(', ')]);
+      }
+
+      let linkRows = '';
+      if (chain.chain && chain.chain.length) {
+        linkRows = chain.chain.map((l, i) => `
+          <tr>
+            <td class="dim mono">[${i}] ${esc(l.kind)}</td>
+            <td class="mono">${esc(l.label || l.identifier)}</td>
+            <td class="mono">${l.amount != null ? l.amount.toFixed(4) : '—'}</td>
+            <td class="mono">${l.confidence != null ? l.confidence.toFixed(3) : '—'}</td>
+            <td class="mono">${l.applied ? '<span style="color:var(--green)">YES</span>' : '<span style="color:var(--red)">NO</span>'}</td>
+            <td class="dim mono">${esc(l.reason_code || '—')}</td>
+          </tr>
+        `).join('');
+      }
+
+      return `
+        <div style="margin-bottom: 12px; background:#0d1117; padding:8px 12px; border:1px solid var(--border); border-radius:4px;">
+          <div class="mono" style="font-weight:600; color:var(--accent); margin-bottom:6px;">${esc(chain.dimension)}</div>
+          <table style="width:100%; font-size:11px; margin-bottom:8px;">
+            ${rows.map(r => `<tr><td class="dim mono" style="width:180px;">${esc(r[0])}</td><td class="mono">${esc(String(r[1]))}</td></tr>`).join('')}
+          </table>
+          ${linkRows ? `
+            <div class="dim mono" style="font-size:10px; margin-bottom:4px; text-transform:uppercase;">Contribution Chain:</div>
+            <table style="width:100%; font-size:11px;">
+              <thead><tr><th style="text-align:left;">Kind</th><th style="text-align:left;">Source</th><th style="text-align:left;">Amount</th><th style="text-align:left;">Conf</th><th style="text-align:left;">Applied</th><th style="text-align:left;">Reason</th></tr></thead>
+              <tbody>${linkRows}</tbody>
+            </table>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  const rawJson = esc(JSON.stringify(data, null, 2));
+
+  contentEl.innerHTML = `
+    ${chainRows || '<div class="dim mono" style="font-size:11px; margin-bottom:8px;">No structured causal chains generated.</div>'}
+    <div class="dim mono" style="font-size:10px; text-transform:uppercase; margin-bottom:4px;">Raw JSON:</div>
+    <pre class="mono" style="font-size:11px; background:#05070a; padding:10px; border-radius:4px; max-height:400px; overflow:auto;">${rawJson}</pre>
+  `;
+  contentEl.setAttribute('data-rendered', 'true');
+}
+
+// Clock tick
+function tickClock() {
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const d = new Date();
+  el.textContent = d.toISOString().substring(11, 19) + ' UTC';
+}
+
+function cleanupLifecycle() {
+  isPageActive = false;
+  if (headPollTimer) {
+    clearInterval(headPollTimer);
+    headPollTimer = null;
+  }
+  if (clockTimer) {
+    clearInterval(clockTimer);
+    clockTimer = null;
+  }
+  if (turnsAbortController) {
+    turnsAbortController.abort();
+    turnsAbortController = null;
+  }
+  if (causalAbortController) {
+    causalAbortController.abort();
+    causalAbortController = null;
+  }
+  if (headAbortController) {
+    headAbortController.abort();
+    headAbortController = null;
+  }
+  if (olderAbortController) {
+    olderAbortController.abort();
+    olderAbortController = null;
+  }
+}
+
+window.addEventListener('pagehide', cleanupLifecycle);
+window.addEventListener('beforeunload', cleanupLifecycle);
+
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    startLifecycle();
+  }
+});
+
+function startLifecycle() {
+  if (runtimeSelection.mode === "INVALID") {
+    cleanupLifecycle();
+    OWRuntimeScope.renderRuntimeError(document.querySelector(".layout"), "INVALID", runtimeSelection.detail, null);
+    return;
+  }
+  isPageActive = true;
+  tickClock();
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(tickClock, 1000);
+
+  fetchTurns();
+  checkHead();
+  if (headPollTimer) clearInterval(headPollTimer);
+  headPollTimer = setInterval(checkHead, 30000);
+
+  const dot = document.getElementById('dot');
+  if (dot) dot.className = 'conn-dot ok';
+  const st = document.getElementById('status-text');
+  if (st) st.textContent = 'live';
+}
+
+startLifecycle();
+</script>
+</body>
+</html>

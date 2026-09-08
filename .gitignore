@@ -1,0 +1,48 @@
+.worktrees/
+.artifacts/
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+pt*/
+.coverage
+.coverage-*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.mimosa/
+.openclaw/
+.zcode/
+
+# Local credentials and operator configuration.
+.env
+.env.*
+!.env.example
+
+# Runtime logs and durable/private state.
+*.log
+*.sqlite
+*.sqlite3
+*.db
+/runtime/
+/state/
+/data/
+/artifacts/
+/outputs/
+/reports/
+
+# Derived model and vector artifacts.
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.faiss
+
+# Local Python tooling and coverage output.
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage-*

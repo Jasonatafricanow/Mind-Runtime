@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MR Observation — State Ledger</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/display_zh.js"></script>
+<script src="/static/runtime_scope.js"></script>
+<script src="/static/runtime_selector.js"></script>
+<style>
+.history-row { display: grid; grid-template-columns: 70px 140px 70px 70px 70px 130px 1fr; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #1c2128; font-family: var(--mono); font-size: 12px; align-items: center; }
+.history-row:hover { background: #1c2128; }
+.history-row:last-child { border-bottom: none; }
+.history-header { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-family: var(--mono); padding: 6px 8px; border-bottom: 1px solid var(--border); font-weight: 600; display: grid; grid-template-columns: 70px 140px 70px 70px 70px 130px 1fr; gap: 8px; }
+.version { color: var(--dim); }
+.value { font-weight: 600; }
+.delta { font-family: var(--mono); }
+.delta-positive { color: var(--green); }
+.delta-negative { color: var(--red); }
+.delta-neutral  { color: var(--dim); }
+.evidence-link { font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: none; }
+.evidence-link:hover { text-decoration: underline; }
+.evidence-panel { background: #0d1117; border: 1px solid var(--border); border-radius: 4px; padding: 8px 12px; margin-top: 6px; font-family: var(--mono); font-size: 11px; grid-column: 1 / -1; }
+.ev-row { display: grid; grid-template-columns: 100px 70px 1fr; gap: 8px; padding: 3px 0; }
+.ev-key { color: var(--dim); }
+/* OW-RESPONSIVE-I18N-ZH-V1 §18: phone keeps all DB columns via horizontal
+   scroll (Option A); row-detail cards deferred to a later ticket. */
+@media (max-width: 767px) {
+  .ledger-scroll { overflow-x: auto; }
+  .ledger-scroll .history-header, .ledger-scroll .history-row { min-width: 720px; }
+}
+</style>
+</head>
+<body class="theme-dark">
+<div class="layout">
+  <!-- Unified Navigation Bar -->
+  <div id="nav">
+    <span id="nav-title">MR OBSERVATION</span>
+    <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
+    <div id="runtime-selector" class="runtime-selector" role="group"></div>
+    <a href="/" class="nav-link">状态</a>
+    <a href="/moments" class="nav-link">交互</a>
+    <div class="nav-dropdown">
+      <button class="nav-dropdown-toggle active">调试 ▾</button>
+      <div class="nav-dropdown-menu">
+        <a href="/debug/causal" class="nav-dropdown-item">因果检查器</a>
+        <a href="/debug/ledger" class="nav-dropdown-item active">状态台账</a>
+        <a href="/debug/live-trace" class="nav-dropdown-item">实时链路</a>
+      </div>
+    </div>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+      <button id="btn-refresh" class="btn" style="background:#161b22; border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer;" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
+      <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
+      <span class="mono dim" id="status-text" style="font-size:11px;">live</span>
+      <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
+      <span id="live-badge">LIVE</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>状态台账 — 规范化状态表</span>
+      <span class="mono dim" style="font-size:11px;" id="total-rows-badge">0 rows</span>
+    </div>
+    <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
+      <label class="dim mono" style="font-size:11px;">
+        按维度筛选:
+        <select id="dim-filter" style="margin-left:6px; font-family:var(--mono);" onchange="render()">
+          <option value="">全部维度</option>
+        </select>
+      </label>
+    </div>
+    <div class="ledger-scroll">
+    <div class="history-header">
+      <div>version</div><div>dimension</div><div>status</div><div>value</div><div>delta</div><div>updated_at</div><div>evidence / transitions</div>
+    </div>
+    <div id="history-list">
+      <div class="empty">正在加载状态台账…</div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const runtimeSelection = OWRuntimeScope.parsePageRuntime(window.location.search);
+OWRuntimeScope.propagateNavigation(runtimeSelection);
+OWRuntimeScope.renderRuntimeIndicator(document.getElementById("runtime-indicator"), runtimeSelection);
+OWRuntimeSelector.bootstrap(runtimeSelection);
+
+function esc(s) { if (s == null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+let allStates = [];
+let isPageActive = true;
+let fetchAbortController = null;
+
+async function load() {
+  if (runtimeSelection.mode === 'INVALID') return;
+  if (fetchAbortController) fetchAbortController.abort();
+  fetchAbortController = new AbortController();
+
+  try {
+    const data = await OWRuntimeScope.runtimeFetch(runtimeSelection, '/api/states', { signal: fetchAbortController.signal });
+    allStates = data.states || [];
+    buildDimOptions();
+    render();
+    document.getElementById('live-badge').className = '';
+    document.getElementById('dot').className = 'conn-dot ok';
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      if (runtimeSelection.mode === 'SCOPED' && (e.code === 'UNKNOWN_BINDING' || e.code === 'BINDING_REGISTRY_UNAVAILABLE' || e.code === 'BINDING_UNAVAILABLE' || e.code === 'RUNTIME_IDENTITY_MISMATCH')) {
+        OWRuntimeScope.renderRuntimeError(document.querySelector('.layout'), e.code, e.message, runtimeSelection.bindingId);
+        return;
+      }
+      document.getElementById('live-badge').className = 'disconnected';
+      document.getElementById('live-badge').textContent = 'DISCONNECTED';
+      document.getElementById('dot').className = 'conn-dot err';
+    }
+  }
+}
+
+function buildDimOptions() {
+  const dims = [...new Set(allStates.map(s => s.dimension))].sort();
+  const sel = document.getElementById('dim-filter');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">全部维度</option>';
+  dims.forEach(d => {
+    const opt = new Option(d, d);
+    if (d === current) opt.selected = true;
+    sel.add(opt);
+  });
+}
+
+function render() {
+  const dim = document.getElementById('dim-filter').value;
+  const rows = allStates.filter(s => !dim || s.dimension === dim)
+                        .sort((a, b) => a.dimension.localeCompare(b.dimension) || a.version - b.version);
+  const el = document.getElementById('history-list');
+  document.getElementById('total-rows-badge').textContent = `${rows.length} 行`;
+
+  if (rows.length === 0) {
+    el.innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+
+  // Compute delta from previous version for each dimension
+  const byDim = {};
+  rows.forEach(r => {
+    if (!byDim[r.dimension]) byDim[r.dimension] = [];
+    byDim[r.dimension].push(r);
+  });
+  const deltas = {};
+  Object.values(byDim).forEach(arr => {
+    arr.sort((a, b) => a.version - b.version);
+    deltas[arr[0].state_id] = null;
+    for (let i = 1; i < arr.length; i++) {
+      deltas[arr[i].state_id] = arr[i].value - arr[i - 1].value;
+    }
+  });
+
+  el.innerHTML = rows.map(r => {
+    const d = deltas[r.state_id];
+    let deltaClass = 'delta-neutral';
+    let deltaStr = '—';
+    if (d !== null && d !== undefined) {
+      if (Math.abs(d) > 1e-9) {
+        deltaClass = d > 0 ? 'delta-positive' : 'delta-negative';
+        deltaStr = (d > 0 ? '+' : '') + d.toFixed(4);
+      } else {
+        deltaStr = '0.0000';
+      }
+    }
+
+    const shortDim = r.dimension.split('.').slice(-2).join('.');
+    const timeStr = OWDisplay.fmtTime(r.updated_at);
+    const evCount = (r.evidence_refs || []).length;
+    const trCount = (r.transition_refs || []).length;
+    const hasEv = evCount > 0 || trCount > 0;
+
+    return `
+      <div class="history-row" id="row-${r.state_id}">
+        <div class="version">v${r.version}</div>
+        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.dimension}">${OWDisplay.shortDimension(r.dimension)}</div>
+        <div class="dim" style="font-size:10px;" title="${esc(r.status)}">${OWDisplay.displayStatus(r.status)}</div>
+        <div class="value">${typeof r.value === 'number' ? r.value.toFixed(4) : r.value}</div>
+        <div class="delta ${deltaClass}">${deltaStr}</div>
+        <div class="dim">${timeStr}</div>
+        <div>
+          ${hasEv
+            ? `<a class="evidence-link" onclick="toggleEvidence('${r.state_id}')">ev:${evCount} tr:${trCount} ▾</a>`
+            : '<span class="dim">—</span>'}
+        </div>
+      </div>
+      <div id="ev-panel-${r.state_id}" class="evidence-panel" style="display:none">
+        <div class="dim" style="margin-bottom:4px">STATE ID: ${r.state_id}</div>
+        <div class="dim">EVIDENCE REFS: ${JSON.stringify(r.evidence_refs || [])}</div>
+        <div class="dim">TRANSITION REFS: ${JSON.stringify(r.transition_refs || [])}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleEvidence(stateId) {
+  const p = document.getElementById('ev-panel-' + stateId);
+  if (!p) return;
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+function manualRefresh() {
+  load();
+}
+
+// Clock tick
+setInterval(() => {
+  const d = new Date();
+  document.getElementById("clock").textContent = d.toISOString().slice(11, 19);
+}, 1000);
+
+// Page lifecycle
+window.addEventListener("pagehide", () => {
+  isPageActive = false;
+  if (fetchAbortController) fetchAbortController.abort();
+});
+window.addEventListener("beforeunload", () => {
+  isPageActive = false;
+  if (fetchAbortController) fetchAbortController.abort();
+});
+window.addEventListener("pageshow", () => {
+  isPageActive = true;
+  if (runtimeSelection.mode !== "INVALID") {
+    load();
+  }
+});
+
+if (runtimeSelection.mode === "INVALID") {
+  OWRuntimeScope.renderRuntimeError(document.querySelector(".layout"), "INVALID", runtimeSelection.detail, null);
+} else {
+  load();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+{
+  "fixture_id": "g27-stable-history",
+  "retrieval_count": 3,
+  "bundle": {
+    "bundle_id": "history-g27-bundle",
+    "scope": {"domain":"user","user_id":"user-1","agent_id":null,"persona_id":null,"relationship_id":null,"world_id":null,"interaction_id":null},
+    "origin_runtime_id": "runtime-1",
+    "episodes": [
+      {
+        "item_id": "history-g27-item-1",
+        "scope": {"domain":"user","user_id":"user-1","agent_id":null,"persona_id":null,"relationship_id":null,"world_id":null,"interaction_id":null},
+        "external_id": "history-provider-episode-1",
+        "kind": "episode",
+        "proposition": "The user cancelled one earlier plan.",
+        "source_refs": ["external-history-1"],
+        "confidence": 1.0,
+        "relevance_hint": 0.8
+      }
+    ],
+    "stable_facts": [],
+    "relationship_events": [],
+    "pattern_summaries": [
+      {
+        "summary_id": "history-g27-summary-1",
+        "scope": {"domain":"user","user_id":"user-1","agent_id":null,"persona_id":null,"relationship_id":null,"world_id":null,"interaction_id":null},
+        "origin_runtime_id": "runtime-1",
+        "match_count": 1,
+        "first_seen_at": "2025-12-20T08:00:00Z",
+        "last_seen_at": "2025-12-20T08:00:00Z",
+        "matched_refs": ["history-g27-item-1"],
+        "confidence": 1.0
+      }
+    ],
+    "source_refs": ["history-g27-item-1"],
+    "provider_trace": "manifest-fixture-read-only"
+  }
+}

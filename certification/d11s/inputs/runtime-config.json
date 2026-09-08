@@ -1,0 +1,473 @@
+{
+  "components": [
+    {
+      "component_id": "state_definitions",
+      "payload": {
+        "definitions": [
+          {
+            "bounds": [
+              0.0,
+              1.0
+            ],
+            "default_validity_policy": null,
+            "domain": "agent",
+            "dynamics_policy": "deterministic_affect",
+            "key": "agent.affect.longing",
+            "value_type": "scalar"
+          },
+          {
+            "bounds": [
+              0.0,
+              1.0
+            ],
+            "default_validity_policy": null,
+            "domain": "agent",
+            "dynamics_policy": "deterministic_affect",
+            "key": "agent.affect.irritation",
+            "value_type": "scalar"
+          },
+          {
+            "bounds": [
+              0.0,
+              1.0
+            ],
+            "default_validity_policy": null,
+            "domain": "agent",
+            "dynamics_policy": "deterministic_affect",
+            "key": "agent.affect.anxiety",
+            "value_type": "scalar"
+          },
+          {
+            "bounds": [
+              0.0,
+              1.0
+            ],
+            "default_validity_policy": null,
+            "domain": "agent",
+            "dynamics_policy": "deterministic_affect",
+            "key": "agent.affect.excitement",
+            "value_type": "scalar"
+          },
+          {
+            "bounds": [
+              0.0,
+              1.0
+            ],
+            "default_validity_policy": null,
+            "domain": "agent",
+            "dynamics_policy": "accumulator",
+            "key": "agent.longitudinal.relationship_security",
+            "value_type": "scalar"
+          }
+        ]
+      },
+      "payload_sha256": "9185b1d224222f28b152a310350ab38e10402677f9444a7ff9b7bd1163cb0e5a",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "persona_profile",
+      "payload": {
+        "dimensions": [
+          {
+            "baseline": 0.3,
+            "ceiling": 1.0,
+            "coupling_profile": [],
+            "dimension": "agent.affect.longing",
+            "floor": 0.0,
+            "growth_profile": [],
+            "initial_value": 0.3,
+            "recovery_rate": 0.15,
+            "sensitivity": 0.8
+          },
+          {
+            "baseline": 0.2,
+            "ceiling": 1.0,
+            "coupling_profile": [],
+            "dimension": "agent.affect.irritation",
+            "floor": 0.0,
+            "growth_profile": [],
+            "initial_value": 0.2,
+            "recovery_rate": 0.25,
+            "sensitivity": 0.6
+          },
+          {
+            "baseline": 0.25,
+            "ceiling": 1.0,
+            "coupling_profile": [],
+            "dimension": "agent.affect.anxiety",
+            "floor": 0.0,
+            "growth_profile": [],
+            "initial_value": 0.25,
+            "recovery_rate": 0.3,
+            "sensitivity": 0.7
+          },
+          {
+            "baseline": 0.3,
+            "ceiling": 1.0,
+            "coupling_profile": [],
+            "dimension": "agent.affect.excitement",
+            "floor": 0.0,
+            "growth_profile": [],
+            "initial_value": 0.3,
+            "recovery_rate": 0.4,
+            "sensitivity": 0.9
+          }
+        ],
+        "persona_id": "kayla_v0",
+        "version": 1
+      },
+      "payload_sha256": "7cf3c6f2a6c79f5abb43eca2b54e1991bd3b514f7c09941a9547853abe579373",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "fact_ingest",
+      "payload": {
+        "backend": "sqlite",
+        "certification_channel": "d11s-fixed-clock",
+        "certification_scope": {
+          "agent_id": null,
+          "domain": "user",
+          "interaction_id": null,
+          "persona_id": null,
+          "relationship_id": null,
+          "user_id": "user-1",
+          "world_id": null
+        },
+        "clock": "simulation"
+      },
+      "payload_sha256": "ca6f9c9d406d79063b5de481855a1ea3763ea65f3b6a223af24ced32747304f4",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "effective_state",
+      "payload": {
+        "definitions_component": "state_definitions",
+        "state_backend": "sqlite"
+      },
+      "payload_sha256": "12606dda1ab1ae733379114ac8f5260cb7dccdf1a400e3101618966aa8007e63",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "situation",
+      "payload": {
+        "conversation_idle_window": 300000000,
+        "interaction_recent_window": 3600000000,
+        "recently_awake_window": 1800000000,
+        "runtime_id": "runtime-1"
+      },
+      "payload_sha256": "e7b67ecf25cdab6b8b13cadc8fb6aa190ce81c309eecc6ed1fda69834dc9bd16",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "emotional_effects",
+      "payload": {
+        "rules": [
+          {
+            "base_amount": 0.2,
+            "dimension": "agent.affect.anxiety",
+            "event_kind": "plan_cancelled",
+            "history_amount_cap": 0.05,
+            "history_amount_per_match": 0.03,
+            "minimum_history_confidence": 0.5,
+            "longitudinal_target_dimension": "agent.longitudinal.relationship_security",
+            "longitudinal_proposed_value": 0.3
+          },
+          {
+            "base_amount": 0.2,
+            "dimension": "agent.affect.excitement",
+            "event_kind": "plan_confirmed",
+            "history_amount_cap": 0.0,
+            "history_amount_per_match": 0.0,
+            "minimum_history_confidence": 0.5,
+            "longitudinal_target_dimension": "agent.longitudinal.relationship_security",
+            "longitudinal_proposed_value": 0.8
+          },
+          {
+            "base_amount": 0.18,
+            "dimension": "agent.affect.irritation",
+            "event_kind": "harsh_message",
+            "history_amount_cap": 0.0,
+            "history_amount_per_match": 0.0,
+            "minimum_history_confidence": 0.5,
+            "longitudinal_target_dimension": "agent.longitudinal.relationship_security",
+            "longitudinal_proposed_value": 0.2
+          },
+          {
+            "base_amount": -0.12,
+            "dimension": "agent.affect.longing",
+            "event_kind": "warm_reunion",
+            "history_amount_cap": 0.0,
+            "history_amount_per_match": 0.0,
+            "minimum_history_confidence": 0.5,
+            "longitudinal_target_dimension": "agent.longitudinal.relationship_security",
+            "longitudinal_proposed_value": 0.9
+          }
+        ]
+      },
+      "payload_sha256": "c0a7c77c282f06956ee701b31fa7aaed2ae55f6da0f249e522df4a645b17f8d6",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "historical_context",
+      "payload": {
+        "budget": 8,
+        "mode": "bounded_read_only",
+        "provider_mode": "manifest_fixture"
+      },
+      "payload_sha256": "3b3733442db0d28a98978fa84e33a56d3dabbcf18b2ab957f6ac900777f90efe",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "intent_engine",
+      "payload": {
+        "rules": [
+          {
+            "base_strength": 0.7,
+            "dimension_weights": [],
+            "due_at_attribute": null,
+            "event_bonus": 0.0,
+            "event_kind": null,
+            "expires_after": null,
+            "kind": "respond",
+            "minimum_strength": 0.5,
+            "reconsideration_policy": "on_context_change",
+            "rule_id": "g14"
+          },
+          {
+            "base_strength": 0.2,
+            "dimension_weights": [],
+            "due_at_attribute": "due_at",
+            "event_bonus": 0.4,
+            "event_kind": "follow_up_due",
+            "expires_after": 14400000000,
+            "kind": "scheduled_follow_up",
+            "minimum_strength": 0.5,
+            "reconsideration_policy": "on_due",
+            "rule_id": "scheduled-follow-up"
+          }
+        ],
+        "runtime_id": "runtime-1"
+      },
+      "payload_sha256": "7a84aa216af52036674bfbddc7dbde200b583f945f1536581706e2f516571688",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "intent_lifecycle",
+      "payload": {
+        "backend": "sqlite"
+      },
+      "payload_sha256": "c2ff4b68cf2808fd96aae2782b7c97287687bf0bc2d23f55210831168fa6c3c6",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "action_policy",
+      "payload": {
+        "proactive_cooldown": 1800000000,
+        "rules": [
+          {
+            "action_type": "text_message",
+            "intent_kind": "respond",
+            "interrupts_active_conversation": false,
+            "media_counter_fact": null,
+            "media_limit": null,
+            "proactive": false,
+            "required_resource": null
+          },
+          {
+            "action_type": "text_message",
+            "intent_kind": "scheduled_follow_up",
+            "interrupts_active_conversation": false,
+            "media_counter_fact": null,
+            "media_limit": null,
+            "proactive": false,
+            "required_resource": null
+          }
+        ]
+      },
+      "payload_sha256": "5a0fdc4e5dc0aae0eaef8c7a7b23886e37af62908faba32d9f5e96b1ff858b75",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "policy_resources",
+      "payload": {
+        "available_actions": [
+          "text_message"
+        ]
+      },
+      "payload_sha256": "0cd32fe8b620df74e574544f6e722b7e1241a85704b45125a205a7b92ebafa69",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "decision_context",
+      "payload": {
+        "affect_rules": [],
+        "allowed_history_kinds": [],
+        "allowed_situation_facts": [],
+        "max_history_items": 1,
+        "max_item_chars": 160,
+        "max_items": 16,
+        "max_prior_expression_chars": 32,
+        "max_render_chars": 2048,
+        "persona_style_constraints": []
+      },
+      "payload_sha256": "8ab34ba3038ece3d195c3ce937f41074a9f9e8e2cad15e1aaed5257842a30c2a",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "context_renderer",
+      "payload": {
+        "config_component": "decision_context"
+      },
+      "payload_sha256": "a1d166a706d512511eb11c84cdf6436f09464f5fb941e5606c3df6c2f6be6ff9",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "expression_guard",
+      "payload": {
+        "banned_openings": [
+          "刚忙完",
+          "刚闲下来",
+          "刚闲了",
+          "忙完了没",
+          "在干嘛"
+        ],
+        "prefix_length": 8,
+        "temporal_rules": [],
+        "transport_markers": [
+          "【助手】"
+        ]
+      },
+      "payload_sha256": "592a428e720a7ebd7d1ef2ba146af2d6c8428f9f8e68604d39392c99f1f35aeb",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "expression_coordinator",
+      "payload": {
+        "max_rewrites": 2
+      },
+      "payload_sha256": "2fe0c4123751d6a6e96a93ecb72559e0730a52db4869b04bfffb11fa770192b1",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "previous_expression",
+      "payload": {
+        "expression": {
+          "action_type": "respond",
+          "delivery_status": "sent",
+          "expression_id": "d11s-previous-expression",
+          "origin_runtime_id": "runtime-1",
+          "receipt_ref": "d11s-prior-receipt-1",
+          "scope": {
+            "agent_id": null,
+            "domain": "relationship",
+            "interaction_id": null,
+            "persona_id": "kayla_v0",
+            "relationship_id": "relationship-user-1-kayla",
+            "user_id": null,
+            "world_id": null
+          },
+          "sent_at": "2026-01-01T08:00:00Z",
+          "text": "今天真的很想和你聊聊"
+        },
+        "mode": "fixed"
+      },
+      "payload_sha256": "b845b7aaf19fbcbd91aaa9c7c9e08a03b8a2954a12547ded9edeb12172d5afdc",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "checkpoint_policy",
+      "payload": {
+        "backend": "sqlite",
+        "interval": 86400000000
+      },
+      "payload_sha256": "a38313252642e8e03187d2ec4d7322747cfd4a5aae3f9fd0b852e7489326c79b",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "semantic_provider",
+      "payload": {
+        "conflict_margin": 0.1,
+        "minimum_confidence": 0.75,
+        "mode": "enabled"
+      },
+      "payload_sha256": "9e22ce09282bfe92be35412f7619b8c6454d80dbd005d17c44e59ab7b150828b",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "receipt_registry",
+      "payload": {
+        "mode": "in_memory"
+      },
+      "payload_sha256": "ca56fecc28d0456b576eba1db1fa0312f6b8184b743f437704a563c791b9e30d",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "slow_plasticity",
+      "payload": {
+        "window_size": 8
+      },
+      "payload_sha256": "3ab05b19f5786ecfcab15c7a40da8840fdf205f62f56850770fe1bca4228d748",
+      "schema_version": "v1"
+    },
+    {
+      "component_id": "appraisal_producer_strategy",
+      "schema_version": "v1",
+      "payload": {
+        "strategy": "model_backed",
+        "model": "model-appraisal-v1",
+        "endpoint_url": "https://api.deepseek.com/v1/chat/completions",
+        "api_key_env": "APPRAISAL_API_KEY",
+        "timeout_s": 15.0,
+        "allowed_hosts": [
+          "api.deepseek.com"
+        ]
+      },
+      "payload_sha256": "2a6babea136a0b5a82deb835819bb7ea1cc7e945cb75145cda8582f7408e0cb4"
+    },
+    {
+      "component_id": "homeostasis",
+      "schema_version": "v1",
+      "payload": {
+        "confidence_floor_slow": 0.8,
+        "salience_floor_fast_apply": 0.7,
+        "salience_floor_slow_accept": 0.6
+      },
+      "payload_sha256": "90ebe6e45aaee1023f1a38213ec0f37fdd96dcd266cf24547987ed027ea8f966"
+    }
+  ],
+  "convergence_tolerance": "0.01",
+  "fixture_artifacts": [
+    {
+      "byte_length": 9523,
+      "bytes_sha256": "8cd5d7778aacdb05da5761ab613cfbbe5d082ab5c3be5ca6c43c53f782463864",
+      "logical_path": "certification/d11s/inputs/horizon-30.json"
+    },
+    {
+      "byte_length": 9523,
+      "bytes_sha256": "5f715e34130acabd053a829770a3b8e031d3dd8e1dd8cf21701b196b4d190ef1",
+      "logical_path": "certification/d11s/inputs/horizon-90.json"
+    },
+    {
+      "byte_length": 82,
+      "bytes_sha256": "5b1d6e3ddf9ab66abddeacb869d8e632444ee8c233d292b10335e1a3437789fd",
+      "logical_path": "certification/d11s/inputs/model-swap-left.json"
+    },
+    {
+      "byte_length": 89,
+      "bytes_sha256": "e9e5bd342b768fda76434aafef4870d1a6e03d712a0468b5c73b45251b7acc0b",
+      "logical_path": "certification/d11s/inputs/model-swap-right.json"
+    },
+    {
+      "byte_length": 1421,
+      "bytes_sha256": "1b4147a40432b9afc4acc45157c67235dcbd25ee4adbc91602bbcf1f8943f110",
+      "logical_path": "certification/d11s/inputs/history-g27.json"
+    },
+    {
+      "byte_length": 14965,
+      "bytes_sha256": "72820167ee8be0f3e78ffda5a91aaeae33ea07acaa3e845a93083bb5b4305d07",
+      "logical_path": "certification/d11s/inputs/restart-g12.json"
+    }
+  ],
+  "manifest_version": "d11s-kayla-v0-g6-g14-g24-v1",
+  "recovery_horizon_days": 30
+}

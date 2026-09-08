@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MR Observation — Overview</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+.bundle-header-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.header-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header-label {
+  color: var(--dim);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.header-val {
+  font-weight: 600;
+}
+.main-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .main-grid { grid-template-columns: 1fr; }
+}
+
+/* State section and rows */
+.section-title {
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding: 6px 0 4px;
+  border-bottom: 1px dashed var(--border);
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+.state-row {
+  display: grid;
+  grid-template-columns: 140px 60px 65px 1fr 130px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-bottom: 1px solid #1c2128;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.state-row:last-child {
+  border-bottom: none;
+}
+.state-row:hover {
+  background: #1c2128;
+}
+.state-name-box {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.state-short-name {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.state-full-dim {
+  font-size: 9px;
+  color: var(--dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.state-val {
+  font-weight: 600;
+  text-align: right;
+}
+.state-delta {
+  font-size: 11px;
+  text-align: right;
+}
+.state-bar-container {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 0 4px;
+}
+.state-bar-inner {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.state-updated {
+  font-size: 10px;
+  color: var(--dim);
+  text-align: right;
+  white-space: nowrap;
+}
+.not-established {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 11px;
+  grid-column: 2 / 5;
+}
+
+/* Turn stats grid */
+.turn-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.stat-box {
+  background: #12161c;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.stat-box-title {
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--dim);
+  text-transform: uppercase;
+}
+.stat-box-val {
+  font-size: 22px;
+  font-weight: 600;
+  font-family: var(--mono);
+  margin-top: 2px;
+}
+.last-committed-box {
+  background: #12161c;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Badge helpers */
+.badge-ready { background: #0d2818; color: var(--green); border: 1px solid var(--green); }
+.badge-degraded { background: #1e1b16; color: var(--yellow); border: 1px solid var(--yellow); }
+.badge-not-ready { background: #2a1215; color: var(--red); border: 1px solid var(--red); }
+.badge-online { background: #0d2818; color: var(--green); border: 1px solid var(--green); }
+
+.states-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.debug-toggle-label {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+</style>
+</head>
+<body>
+
+<div id="nav">
+  <span id="nav-title">MR OBSERVATION</span>
+  <a href="/" class="nav-link active">Overview</a>
+  <a href="/timeline" class="nav-link">Timeline</a>
+  <a href="/causal" class="nav-link">Causal</a>
+  <a href="/history" class="nav-link">History</a>
+  <a href="/live-trace" class="nav-link">Live Trace</a>
+  <span id="live-badge">LIVE</span>
+</div>
+
+<!-- Compact Bundle Header -->
+<div class="bundle-header-card" id="bundle-header-area">
+  <div class="header-item">
+    <span class="header-label">Bundle:</span>
+    <span id="hdr-bundle-state" class="badge badge-not-ready">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">PID:</span>
+    <span id="hdr-gw-pid" class="header-val">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">MR:</span>
+    <span id="hdr-mr" class="badge badge-not-ready">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">Semantic:</span>
+    <span id="hdr-semantic" class="badge badge-not-ready">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">Appraisal:</span>
+    <span id="hdr-appraisal" class="badge badge-not-ready">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">Slow Writer:</span>
+    <span id="hdr-slow-writer" class="badge badge-not-ready">—</span>
+  </div>
+  <div class="header-item">
+    <span class="header-label">OW:</span>
+    <span id="hdr-ow" class="badge badge-online">ONLINE</span>
+  </div>
+  <div class="header-item" style="margin-left: auto;">
+    <span class="header-label">Ready At:</span>
+    <span id="hdr-ready-at" class="header-val" style="color: var(--dim); font-size: 11px;">—</span>
+  </div>
+</div>
+
+<div class="main-grid">
+  <!-- Left: current states -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div class="card">
+      <div class="states-header">
+        <div class="card-title" style="margin-bottom: 0;">Current States (Canonical)</div>
+        <label class="debug-toggle-label">
+          <input type="checkbox" id="toggle-debug-states" onchange="renderAllStates()">
+          Show debug/placeholders
+        </label>
+      </div>
+      <div id="states-area">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Last Turn Change</div>
+      <div id="last-change">—</div>
+    </div>
+  </div>
+
+  <!-- Right: Turn Stats + Last Turn Details -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div class="card">
+      <div class="card-title">Turn Statistics</div>
+      <div class="turn-stats-grid">
+        <div class="stat-box">
+          <div class="stat-box-title">Current Epoch Turns</div>
+          <div class="stat-box-val" id="stat-epoch-turns">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-box-title">Persisted / Committed</div>
+          <div class="stat-box-val" id="stat-committed-turns">—</div>
+        </div>
+      </div>
+      <div class="last-committed-box">
+        <span class="header-label">Last Committed Turn:</span>
+        <div id="stat-last-committed" style="margin-top: 4px; color: var(--text);">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Last Turn (Live)</div>
+      <div id="last-turn">
+        <div class="empty">No live turn yet</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Last Appraisal</div>
+      <div id="last-appraisal">
+        <div class="empty">—</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Last Decision</div>
+      <div id="last-decision">
+        <div class="empty">—</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let pollTimer = null;
+let cachedStates = [];
+
+async function load() {
+  await Promise.all([loadOverview()]);
+}
+
+async function loadOverview() {
+  try {
+    const r = await fetch(API + '/api/overview');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    document.getElementById('live-badge').className = '';
+    document.getElementById('live-badge').textContent = 'LIVE';
+
+    renderBundleHeader(data.bundle_header);
+    renderTurnStats(data.turn_stats);
+    cachedStates = data.current_states || [];
+    renderAllStates();
+    renderLastTurn(data.last_turn);
+  } catch (e) {
+    document.getElementById('live-badge').className = 'disconnected';
+    document.getElementById('live-badge').textContent = 'DISCONNECTED';
+  }
+}
+
+function statusBadgeClass(status) {
+  if (!status) return 'badge-not-ready';
+  const s = String(status).toUpperCase();
+  if (s === 'READY' || s === 'ACTIVE' || s === 'ONLINE') return 'badge-ready';
+  if (s === 'DEGRADED') return 'badge-degraded';
+  return 'badge-not-ready';
+}
+
+function renderBundleHeader(h) {
+  if (!h) return;
+  const bState = document.getElementById('hdr-bundle-state');
+  bState.textContent = h.bundle_state || 'UNKNOWN';
+  bState.className = 'badge ' + statusBadgeClass(h.bundle_state);
+
+  document.getElementById('hdr-gw-pid').textContent = h.gateway_pid != null ? h.gateway_pid : '—';
+
+  const mr = document.getElementById('hdr-mr');
+  mr.textContent = h.mr_status || 'UNKNOWN';
+  mr.className = 'badge ' + statusBadgeClass(h.mr_status);
+
+  const sem = document.getElementById('hdr-semantic');
+  sem.textContent = h.semantic_status || 'UNKNOWN';
+  sem.className = 'badge ' + statusBadgeClass(h.semantic_status);
+
+  const app = document.getElementById('hdr-appraisal');
+  app.textContent = h.appraisal_status || 'UNKNOWN';
+  app.className = 'badge ' + statusBadgeClass(h.appraisal_status);
+
+  const sw = document.getElementById('hdr-slow-writer');
+  sw.textContent = h.slow_writer_status || 'UNKNOWN';
+  sw.className = 'badge ' + statusBadgeClass(h.slow_writer_status);
+
+  document.getElementById('hdr-ow').textContent = h.ow_status || 'ONLINE';
+
+  let readyText = 'null';
+  if (h.runtime_ready_at) {
+    const dt = new Date(h.runtime_ready_at);
+    readyText = isNaN(dt.getTime()) ? h.runtime_ready_at : dt.toLocaleTimeString();
+  }
+  document.getElementById('hdr-ready-at').textContent = readyText;
+}
+
+function renderTurnStats(ts) {
+  if (!ts) return;
+  document.getElementById('stat-epoch-turns').textContent = ts.current_epoch_turns ?? 0;
+  document.getElementById('stat-committed-turns').textContent = ts.persisted_committed_turns ?? 0;
+
+  const lastEl = document.getElementById('stat-last-committed');
+  if (ts.last_committed_turn && ts.last_committed_turn.interaction_id) {
+    const ix = ts.last_committed_turn.interaction_id;
+    const at = ts.last_committed_turn.committed_at;
+    let atStr = at;
+    try {
+      const dt = new Date(at);
+      if (!isNaN(dt.getTime())) atStr = dt.toLocaleString();
+    } catch(e){}
+    lastEl.innerHTML = `<div><span class="dim">ix:</span> <span class="mono">${esc(ix)}</span></div>
+      <div class="dim" style="margin-top:2px;">at ${esc(atStr)}</div>`;
+  } else {
+    lastEl.innerHTML = '<span class="dim">None committed yet</span>';
+  }
+}
+
+function renderAllStates() {
+  const el = document.getElementById('states-area');
+  if (!cachedStates || cachedStates.length === 0) {
+    el.innerHTML = '<div class="empty">NO DATA</div>';
+    return;
+  }
+
+  const showDebug = document.getElementById('toggle-debug-states')?.checked || false;
+
+  const fastStates = cachedStates.filter(s => s.category === 'fast');
+  const slowStates = cachedStates.filter(s => s.category === 'slow');
+  const placeholderStates = cachedStates.filter(s => s.category === 'placeholder');
+
+  let html = '';
+
+  // 1. FAST STATE
+  if (fastStates.length > 0) {
+    html += `<div class="section-title">FAST STATE (AFFECT)</div>`;
+    html += fastStates.map(renderSingleStateRow).join('');
+  }
+
+  // 2. SLOW / ACCUMULATED SELF
+  if (slowStates.length > 0) {
+    html += `<div class="section-title">SLOW / ACCUMULATED SELF</div>`;
+    html += slowStates.map(renderSingleStateRow).join('');
+  }
+
+  // 3. DEBUG / PLACEHOLDERS (Conditional)
+  if (showDebug && placeholderStates.length > 0) {
+    html += `<div class="section-title">DEBUG / PLACEHOLDERS</div>`;
+    html += placeholderStates.map(renderSingleStateRow).join('');
+  }
+
+  el.innerHTML = html;
+}
+
+function renderSingleStateRow(s) {
+  const isNotEst = s.status === 'not established' || s.value == null;
+  const shortName = s.display_name || s.dimension.split('.').pop();
+  const verBadge = s.version != null ? `<span class="dim" style="font-size:10px;"> v${s.version}</span>` : '';
+
+  let valHtml = '';
+  let deltaHtml = '';
+  let barHtml = '';
+  let updatedHtml = '';
+
+  if (isNotEst) {
+    valHtml = `<span class="not-established">not established</span>`;
+    deltaHtml = ``;
+    barHtml = ``;
+    updatedHtml = `<span class="dim">—</span>`;
+  } else {
+    const val = typeof s.value === 'number' ? s.value.toFixed(3) : esc(String(s.value));
+    valHtml = `<span class="state-val">${val}</span>`;
+
+    if (s.delta != null) {
+      const sign = s.delta >= 0 ? '+' : '';
+      const dCls = s.delta > 0 ? 'delta-positive' : s.delta < 0 ? 'delta-negative' : 'delta-neutral';
+      deltaHtml = `<span class="state-delta ${dCls}">${sign}${s.delta.toFixed(3)}</span>`;
+    } else {
+      deltaHtml = `<span class="state-delta delta-neutral">—</span>`;
+    }
+
+    if (typeof s.value === 'number') {
+      const pct = Math.max(0, Math.min(100, Math.round(s.value * 100)));
+      barHtml = `<div class="state-bar-container"><div class="state-bar-inner" style="width:${pct}%"></div></div>`;
+    } else {
+      barHtml = `<div></div>`;
+    }
+
+    if (s.updated_at) {
+      let tStr = s.updated_at;
+      try {
+        const dt = new Date(s.updated_at);
+        if (!isNaN(dt.getTime())) {
+          tStr = dt.toLocaleTimeString();
+        }
+      } catch(e){}
+      updatedHtml = `<span class="state-updated">${esc(tStr)}</span>`;
+    } else {
+      updatedHtml = `<span class="dim">—</span>`;
+    }
+  }
+
+  return `<div class="state-row">
+    <div class="state-name-box">
+      <span class="state-short-name">${esc(shortName)}${verBadge}</span>
+      <span class="state-full-dim" title="${esc(s.dimension)}">${esc(s.dimension)}</span>
+    </div>
+    ${valHtml}
+    ${deltaHtml}
+    ${barHtml}
+    ${updatedHtml}
+  </div>`;
+}
+
+function renderLastTurn(turn) {
+  if (!turn) {
+    document.getElementById('last-turn').innerHTML = '<div class="empty">NO LIVE TURN</div>';
+    document.getElementById('last-change').innerHTML = '—';
+    document.getElementById('last-appraisal').innerHTML = '<div class="empty">—</div>';
+    document.getElementById('last-decision').innerHTML = '<div class="empty">—</div>';
+    return;
+  }
+  const comp = turn.composition;
+  const compCls = comp === 'ON' ? 'comp-ON' : 'comp-OFF';
+  document.getElementById('last-turn').innerHTML = `
+    <div class="mono" style="font-size:11px">
+      <span class="dim">ix:</span>${esc(turn.interaction_id)} &nbsp;
+      <span class="turn-comp ${compCls}">${esc(comp)}</span>
+    </div>
+    <div class="dim mt4">
+      trace:${esc(turn.trace_id)} &nbsp; at ${esc(String(turn.created_at))}
+    </div>
+  `;
+  renderLastAppraisal(turn.last_appraisal);
+  renderLastDecision(turn.last_decision);
+  renderLastChange(turn.last_change);
+}
+
+function renderLastAppraisal(a) {
+  const el = document.getElementById('last-appraisal');
+  if (!a) { el.innerHTML = '<div class="empty">—</div>'; return; }
+  const pol = `polarity-${a.polarity || 'neutral'}`;
+  el.innerHTML = `<div class="mono" style="font-size:11px">
+    <span class="${pol}">${esc(a.polarity || '?')}</span>
+    &nbsp; authority:<span class="dim">${esc(a.authority)}</span>
+    &nbsp; causal:<span class="dim">${esc(a.causal_status)}</span>
+  </div>
+  <div class="dim mt4">confidence: ${a.provider_confidence?.toFixed(3) ?? '—'}</div>
+  <div class="dim">id: ${esc(a.appraisal_id)}</div>`;
+}
+
+function renderLastDecision(d) {
+  const el = document.getElementById('last-decision');
+  if (!d) { el.innerHTML = '<div class="empty">—</div>'; return; }
+  const cls = d.applied ? 'badge-applied' : 'badge-abstained';
+  const label = d.applied ? 'APPLIED' : 'ABSTAINED';
+  el.innerHTML = `<div class="mono" style="font-size:11px">
+    <span class="badge ${cls}">${label}</span>
+    &nbsp; rule:<span class="dim">${esc(d.rule_id)}</span>
+  </div>
+  <div class="dim mt4">reason: <span class="mono">${esc(d.reason_code || d.abstention_reason || '?')}</span></div>
+  <div class="dim">src: ${esc(d.source_ref || '?')}</div>`;
+}
+
+function renderLastChange(c) {
+  const el = document.getElementById('last-change');
+  if (!c) { el.innerHTML = '—'; return; }
+  const sign = c.delta >= 0 ? '+' : '';
+  const cls = c.delta > 0 ? 'delta-positive' : c.delta < 0 ? 'delta-negative' : 'delta-neutral';
+  el.innerHTML = `<div class="mono">
+    <span class="dim-name">${esc(c.dimension)}</span>
+    <span class="dim-val">${c.before.toFixed(3)} → ${c.after.toFixed(3)}</span>
+    <span class="${cls}">${sign}${c.delta.toFixed(3)}</span>
+  </div>`;
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+load();
+pollTimer = setInterval(load, 1500);
+window.addEventListener('pagehide', () => { if (pollTimer) clearInterval(pollTimer); });
+window.addEventListener('beforeunload', () => { if (pollTimer) clearInterval(pollTimer); });
+window.addEventListener('pageshow', (e) => { if (e.persisted) { load(); pollTimer = setInterval(load, 1500); } });
+</script>
+</body>
+</html>
