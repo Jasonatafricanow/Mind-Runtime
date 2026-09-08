@@ -53,7 +53,7 @@ def _rewrite_current(source: str, repo_root: Path, hermes_site_packages: Path) -
 
     source = re.sub(
         r"^\s*_mr_sys\.path\.insert\(0, r'C:\\projects\\Mind Runtime\\\.venv\\Lib\\site-packages'\)\r?\n",
-        f"_mr_sys.path.insert(0, {_literal(hermes_site_packages)})\n",
+        lambda _: f"_mr_sys.path.insert(0, {_literal(hermes_site_packages)})\n",
         source,
         flags=re.MULTILINE,
     )
