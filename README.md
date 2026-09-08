@@ -269,6 +269,14 @@ Cognition, Committed Lineage, and Supersession are ongoing research/design
 directions. They are not current MR runtime features unless the implementation
 and authority contract are explicitly accepted in a later milestone.
 
+## Architecture Journey
+
+The architecture was shaped by rejected shortcuts as much as by accepted
+implementations. The [architecture case studies](docs/case-studies/README.md)
+trace the decisions from retrieval-oriented memory toward explicit runtime
+authority, a separate longitudinal cognition engine, and a deliberately
+conservative production boundary.
+
 ## Repository Structure
 
 This public seed contains the following source surfaces:
