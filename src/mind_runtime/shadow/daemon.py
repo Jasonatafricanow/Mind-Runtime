@@ -23,8 +23,8 @@ from pathlib import Path
 
 LOG_DIR = Path.home() / ".hermes" / "profiles" / "xiyue" / "logs"
 LOG = LOG_DIR / "shadow-daemon.log"
-REPO = Path(os.environ.get("MIND_RUNTIME_ROOT", str(Path(__file__).resolve().parents[3])))
-VENV_PY = Path(os.environ.get("MIND_RUNTIME_PYTHON", sys.executable))
+REPO = os.environ.get("MIND_RUNTIME_ROOT", str(Path(__file__).resolve().parents[3]))
+VENV_PY = os.environ.get("MIND_RUNTIME_PYTHON", sys.executable)
 AFFECT_DB = Path.home() / ".hermes" / "profiles" / "xiyue" / "shadow_affect.db"
 STATES_DB = Path.home() / ".hermes" / "profiles" / "xiyue" / "shadow_states_v2.db"
 
