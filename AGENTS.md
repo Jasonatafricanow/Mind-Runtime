@@ -1,5 +1,48 @@
 # Mind Runtime Repository Governance
 
+## Repository authority
+
+As of 2026-09-09, the authoritative Mind Runtime repository is:
+
+- GitHub repository: `Jasonatafricanow/Mind-Runtime`
+- Push target: `https://github.com/Jasonatafricanow/Mind-Runtime.git`
+- Canonical local checkout: `C:\projects\mind-runtime-main-merge`
+- Canonical integration branch: `main`
+
+The previous local repository at `C:\projects\Mind Runtime` is legacy
+backup/recovery material only. It must not be used as the base for new
+development, branches, worktrees, merges, pushes, or production authority.
+
+`C:\projects\MR-Recovery` contains migration/recovery/rollback artifacts and is
+not a normal development root.
+
+All new work must start from the authoritative repository's current `main`.
+Before creating a branch or worktree, verify both the repository remote and
+base commit.
+
+Do not import old Git history merely to recover a change. If a legacy change
+is still required, audit and forward-port the bounded change onto current
+`main`.
+
+New worktrees must not be created under the legacy
+`C:\projects\Mind Runtime\.worktrees` tree.
+
+Any future worktree must be created from the authoritative new repository and
+must report its base `main` HEAD in the task report.
+
+### Current integration policy
+
+MR is currently under standalone development.
+
+Do not treat live Xiyue/Hermes integration as a required development gate
+unless a task explicitly re-authorizes that integration.
+
+Xiyue/MR production attachment will be revisited after the current MR
+development phase is complete.
+
+Repository/mainline work must not restart, patch, reconnect, or otherwise
+modify the live Xiyue integration merely for validation.
+
 ## Scope and authority
 
 These instructions apply to the entire repository. The following three V0.1.4
