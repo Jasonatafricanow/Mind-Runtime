@@ -1,6 +1,7 @@
 """Configuration-owned event and bounded-history affect effect mapping."""
 
 from dataclasses import dataclass, field
+from math import isfinite
 
 from mind_runtime.contracts import (
     AssessmentContribution,
@@ -8,11 +9,12 @@ from mind_runtime.contracts import (
     SemanticRoutingResult,
 )
 from mind_runtime.contracts.common import require_non_empty
+from mind_runtime.contracts.late_projection import AcceptedAppraisal, AppraisalProjectionResult
 from mind_runtime.dynamics.engine import Impulse
 
 
 def _require_number(value: float, field_name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
         raise ValueError(f"{field_name} must be numeric")
 
 
@@ -92,16 +94,16 @@ class MappedEffects:
     audit_contributions: tuple[AssessmentContribution, ...]
     source_confidences: tuple[tuple[str, float], ...]
     salience_by_source: dict[str, float | None] = field(default_factory=dict)
-    evidence_refs_by_source: dict[str, tuple[str, ...]] = field(
-        default_factory=dict
-    )
+    evidence_refs_by_source: dict[str, tuple[str, ...]] = field(default_factory=dict)
     abstention_reasons: tuple[str, ...] = ()
 
 
-class EffectMapper:
+class AppraisalProjector:
     """Map one accepted candidate plus bounded history into explicit impulses."""
 
-    def __init__(self, *, rules: tuple[EventEffectRule, ...]) -> None:
+    def __init__(self, *, rules: tuple[EventEffectRule, ...], version: str = "1") -> None:
+        require_non_empty(version, "projector version")
+        self.version = version
         by_kind: dict[str, EventEffectRule] = {}
         for rule in rules:
             if rule.event_kind in by_kind:
@@ -109,7 +111,120 @@ class EffectMapper:
             by_kind[rule.event_kind] = rule
         self._rules = by_kind
 
+    def dependency_digest(
+        self,
+        *,
+        acceptance: AcceptedAppraisal | None,
+        history: HistoricalContextBundle | None,
+        persona: tuple[object, ...] = (),
+        routing: SemanticRoutingResult | None = None,
+    ) -> str:
+        from mind_runtime.contracts.late_projection import digest
+
+        return digest(
+            (acceptance, history, persona, routing, tuple(self._rules.values()), self.version)
+        )
+
+    def project(
+        self,
+        *,
+        acceptance: AcceptedAppraisal | None = None,
+        history: HistoricalContextBundle | None = None,
+        persona: tuple[object, ...] = (),
+        routing: SemanticRoutingResult | None = None,
+    ) -> AppraisalProjectionResult:
+        from mind_runtime.contracts import AppraisalPath, AppraisalRouteDecision
+        from mind_runtime.contracts.late_projection import (
+            AppraisalProjectionResult,
+            ProjectionEffect,
+            ProjectionStatus,
+            authorized_history,
+            canonical_json,
+        )
+
+        dep = self.dependency_digest(
+            acceptance=acceptance, history=history, persona=persona, routing=routing
+        )
+        reasons: tuple[str, ...] = ()
+        source = None
+        candidate_ref = None
+        provenance: tuple[str, ...] = ()
+        status = None
+        if acceptance is not None:
+            c, a = acceptance.candidate, acceptance.appraisal
+            candidate_ref, source = c.candidate_id, a.appraisal_id
+            provenance = (acceptance.acceptance_id,) + a.evidence_refs
+            if not acceptance.valid_lineage():
+                status, reasons = ProjectionStatus.REJECTED, ("invalid_lineage",)
+            elif acceptance.status != "ACCEPTED":
+                status = (
+                    ProjectionStatus.ABSTAINED
+                    if acceptance.status == "ABSTAINED"
+                    else ProjectionStatus.REJECTED
+                )
+                reasons = acceptance.reason_codes
+            elif not authorized_history(history, c.scope, c.origin_runtime_id):
+                status, reasons = ProjectionStatus.REJECTED, ("invalid_history_lineage",)
+            elif c.kind in self._rules and acceptance.projection_scope is None:
+                status, reasons = ProjectionStatus.REJECTED, ("missing_target_scope",)
+            routing = SemanticRoutingResult(
+                AppraisalRouteDecision(
+                    "projection-route", c.scope, AppraisalPath.TYPED_MAPPING, None, c.confidence, ()
+                ),
+                (c,),
+                0,
+                (),
+                {c.candidate_id: a},
+            )
+        if routing is None:
+            raise ValueError("projection requires accepted appraisal or legacy route")
+        if status is not None:
+            mapped = MappedEffects((), (), (), abstention_reasons=reasons)
+        else:
+            mapped = self._map_legacy(routing=routing, history=history)
+            if routing.candidates:
+                candidate_ref = routing.candidates[0].candidate_id
+            if mapped.impulses:
+                status = ProjectionStatus.MAPPED
+            elif acceptance is not None and not routing.abstention_reasons:
+                status = ProjectionStatus.UNMAPPED
+                reasons = ("no_runtime_projection_rule",)
+                mapped = MappedEffects((), (), ())
+            else:
+                status = ProjectionStatus.ABSTAINED
+                reasons = mapped.abstention_reasons or routing.abstention_reasons
+            if acceptance is None:
+                reasons += ("legacy_missing_accepted_appraisal",)
+        return AppraisalProjectionResult(
+            "projection-" + dep,
+            status,
+            source,
+            candidate_ref,
+            "dynamics",
+            self.version,
+            dep,
+            tuple(
+                ProjectionEffect(
+                    i.dimension,
+                    i.amount,
+                    i.source_ref,
+                    "proposed_value" if i.source_ref.startswith("longitudinal:") else "delta",
+                    "agent",
+                    acceptance.projection_scope if acceptance is not None else None,
+                )
+                for i in mapped.impulses
+            ),
+            reasons,
+            provenance,
+            canonical_json(mapped),
+        )
+
     def map(
+        self, *, routing: SemanticRoutingResult, history: HistoricalContextBundle | None
+    ) -> MappedEffects:
+        return mapping_from_projection(self.project(routing=routing, history=history))
+
+    def _map_legacy(
         self,
         *,
         routing: SemanticRoutingResult,
@@ -118,7 +233,7 @@ class EffectMapper:
         if history is not None and history.scope != routing.route.scope:
             raise ValueError("history scope must match semantic route scope")
         if not routing.candidates:
-            return MappedEffects((), (), (), routing.abstention_reasons)
+            return MappedEffects((), (), (), abstention_reasons=routing.abstention_reasons)
 
         candidate = routing.candidates[0]
         rule = self._rules.get(candidate.kind)
@@ -165,9 +280,7 @@ class EffectMapper:
         # `appraisals_by_candidate_id` map (NOT embedded in the
         # candidate). The rule is NOT a salience source.
         appraisal = routing.appraisals_by_candidate_id.get(candidate.candidate_id)
-        upstream_salience: float | None = (
-            appraisal.salience if appraisal is not None else None
-        )
+        upstream_salience: float | None = appraisal.salience if appraisal is not None else None
         upstream_evidence_refs = candidate.evidence_refs
 
         impulses: list[Impulse] = [
@@ -178,18 +291,17 @@ class EffectMapper:
             )
         ]
         confidences: list[tuple[str, float]] = [(event_source, candidate.confidence)]
-        salience_by_source: dict[str, float | None] = {
-            event_source: upstream_salience
-        }
-        evidence_refs_by_source: dict[str, tuple[str, ...]] = {
-            event_source: upstream_evidence_refs
-        }
+        salience_by_source: dict[str, float | None] = {event_source: upstream_salience}
+        evidence_refs_by_source: dict[str, tuple[str, ...]] = {event_source: upstream_evidence_refs}
 
         # Per ADR-0018-R2 LONG-4:
         # When both longitudinal_target_dimension and longitudinal_proposed_value
         # are present, emit an additional Impulse targeting that dimension with
         # verbatim amount = rule.longitudinal_proposed_value (no confidence scaling).
-        if rule.longitudinal_target_dimension is not None and rule.longitudinal_proposed_value is not None:
+        if (
+            rule.longitudinal_target_dimension is not None
+            and rule.longitudinal_proposed_value is not None
+        ):
             longitudinal_source = f"longitudinal:{candidate.candidate_id}"
             impulses.append(
                 Impulse(
@@ -257,3 +369,33 @@ class EffectMapper:
             evidence_refs_by_source=evidence_refs_by_source,
             abstention_reasons=tuple(dict.fromkeys(abstentions)),
         )
+
+
+def mapping_from_projection(result: AppraisalProjectionResult) -> MappedEffects:
+    import json
+
+    payload = json.loads(result.mapping_json)
+    return MappedEffects(
+        impulses=tuple(Impulse(**i) for i in payload["impulses"]),
+        audit_contributions=tuple(
+            AssessmentContribution(**i) for i in payload["audit_contributions"]
+        ),
+        source_confidences=tuple(tuple(i) for i in payload["source_confidences"]),
+        salience_by_source=payload["salience_by_source"],
+        evidence_refs_by_source={
+            k: tuple(v) for k, v in payload["evidence_refs_by_source"].items()
+        },
+        abstention_reasons=tuple(payload["abstention_reasons"]),
+    )
+
+
+class EffectMapper:
+    """Compatibility name only; AppraisalProjector owns every recipe."""
+
+    def __init__(self, *, rules: tuple[EventEffectRule, ...]) -> None:
+        self.projector = AppraisalProjector(rules=rules)
+
+    def map(
+        self, *, routing: SemanticRoutingResult, history: HistoricalContextBundle | None
+    ) -> MappedEffects:
+        return self.projector.map(routing=routing, history=history)
