@@ -39,13 +39,15 @@ from mind_runtime.contracts.host import (
 from mind_runtime.host import MindRuntimeHostAdapter, MindRuntimeHostPort
 
 if TYPE_CHECKING:
-    from mind_runtime.memory.retrieval import RetrievalProvider
     from mind_runtime.dynamics.persona import PersonaProfile
     from mind_runtime.emotional_transition.appraisal import SemanticAppraisalProducer
     from mind_runtime.emotional_transition.effects import EventEffectRule
     from mind_runtime.emotional_transition.semantic import SemanticCandidateProvider
+    from mind_runtime.expression.context import DecisionContextConfig
     from mind_runtime.homeostasis.contracts import HomeostasisGate
+    from mind_runtime.memory.retrieval import RetrievalProvider
     from mind_runtime.runtime_binding import RuntimeBinding
+    from mind_runtime.situation.builder import SituationBuilder
     from mind_runtime.state.definitions import StateDefinitionRegistry
 
 from mind_runtime.runtime_binding import RuntimeEnvironment
@@ -262,6 +264,8 @@ def default_adapter(
     persona: PersonaProfile | None = None,
     effect_rules: tuple[EventEffectRule, ...] = (),
     definitions: StateDefinitionRegistry | None = None,
+    situation: SituationBuilder | None = None,
+    decision_context_config: DecisionContextConfig | None = None,
     appraisal_producer: SemanticAppraisalProducer | None = None,
     homeostasis_gate: HomeostasisGate | None = None,
     semantic_provider: SemanticCandidateProvider | None = None,
@@ -330,6 +334,8 @@ def default_adapter(
         persona=persona,
         effect_rules=effect_rules,
         definitions=definitions,
+        situation=situation,
+        decision_context_config=decision_context_config,
         appraisal_producer=appraisal_producer,
         homeostasis_gate=homeostasis_gate,
         semantic_provider=semantic_provider,

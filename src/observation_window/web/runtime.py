@@ -300,12 +300,14 @@ def main(argv: list[str] | None = None) -> int:
             from mind_runtime.runtime_binding import RuntimeEnvironment
 
             reader = open_production_binding_registry_reader()
+            live_trace_provider = _default_live_trace_provider()
             anchor = Path(args.runtime_dir) if args.runtime_dir is not None else None
             resolver = ProductionObservationBindingResolver(production_root=anchor)
             catalog = ObservationBindingCatalog(
                 reader=reader,
                 environment=RuntimeEnvironment.PRODUCTION,
                 resolver=resolver,
+                live_trace_provider=live_trace_provider,
             )
             scoped_default = catalog.resolve_default()
             resolved = scoped_default.resolved_binding
@@ -319,10 +321,11 @@ def main(argv: list[str] | None = None) -> int:
         app, sink = compose_ow_app(
             resolved,
             maxlen=args.maxlen,
-            live_trace_provider=_default_live_trace_provider(),
+            live_trace_provider=live_trace_provider,
             catalog=catalog,
         )
-        print(f"Binding   : {descriptor.binding_id} "
+        binding = resolved.runtime_binding
+        print(f"Binding   : {scoped_default.binding_id} "
               f"(agent={binding.agent_id}, "
               f"env={binding.environment.value})")
         print("Binding-registry composition (explicit production default)")

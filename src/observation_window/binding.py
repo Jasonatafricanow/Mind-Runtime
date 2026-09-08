@@ -603,12 +603,14 @@ class ObservationBindingCatalog:
         resolver: ObservationBindingResolver,
         causal_trace_store: CausalTraceStore | None = None,
         sources_factory: Any | None = None,
+        live_trace_provider: Any | None = None,
     ) -> None:
         self._reader = reader
         self._environment = environment
         self._resolver = resolver
         self._causal_store = causal_trace_store or CausalTraceStore()
         self._sources_factory = sources_factory
+        self._live_trace_provider = live_trace_provider
 
     @property
     def environment(self) -> RuntimeEnvironment:
@@ -747,7 +749,11 @@ class ObservationBindingCatalog:
         context = ObservationContext.from_resolved(
             resolved,
             causal_trace_store=self._causal_store,
-            live_trace_provider=getattr(resolved, "live_trace_provider", None),
+            live_trace_provider=(
+                self._live_trace_provider
+                if self._live_trace_provider is not None
+                else getattr(resolved, "live_trace_provider", None)
+            ),
         )
 
         return ScopedObservationBinding(
@@ -756,4 +762,3 @@ class ObservationBindingCatalog:
             context=context,
             sources=sources,
         )
-

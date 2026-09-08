@@ -51,7 +51,7 @@ if (-not $gwPid) {
 
 # 3. Observation Window Status
 $owProc = Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -match "observation_window\.web\.runtime" -and $_.CommandLine -match "8766"
+    $_.CommandLine -match "(observation_window\.web\.runtime|ow_bootstrap\.py)" -and $_.CommandLine -match "8766"
 } | Select-Object -First 1
 
 $owStatus = if ($owProc) { "RUNNING (PID: $($owProc.ProcessId))" } else { "STOPPED" }
@@ -69,8 +69,11 @@ foreach ($k in @("GLM_API_KEY", "APPRAISAL_API_KEY", "MR_ENABLED", "MR_SEMANTIC_
 # 4. Gateway Readiness & Epoch info (pure read-only)
 $readinessFile = Join-Path $runtimeDir "readiness.json"
 $coreReady = $false
+$owReady = $false
 $runtimeReadyAt = $null
 $epochId = $null
+$rdata = $null
+$authoritativeAvailable = $false
 if (Test-Path $readinessFile) {
     try {
         $rdata = Get-Content $readinessFile -Raw | ConvertFrom-Json
@@ -79,23 +82,43 @@ if (Test-Path $readinessFile) {
             $rPid = $rdata.gateway_pid
             if ($gwPid -and ($rPid -eq $gwPid) -and ($gwStatus -eq "RUNNING")) {
                 $coreReady = [bool]$rdata.core_ready
+                $owReady = [bool]$rdata.ow_ready
                 $runtimeReadyAt = $rdata.runtime_ready_at
+                $authoritativeAvailable = $true
             }
         }
     } catch {}
 }
 
-# 5. Compute Bundle State
-$bundleState = "NOT_READY"
-if ($gwStatus -eq "RUNNING" -and $coreReady) {
-    if ($owProc) {
-        $bundleState = "READY"
-    } else {
-        $bundleState = "DEGRADED"
-    }
+# 5. Live OW health is diagnostic only; it never writes readiness.json.
+$owHealthOk = $false
+if ($owProc) {
+    try {
+        $healthResp = Invoke-RestMethod -Uri "http://127.0.0.1:8766/api/health" -TimeoutSec 2 -ErrorAction Stop
+        $owHealthOk = ($healthResp.status -eq "ok")
+    } catch {}
 }
 
-# 6. MR Component Details (prefer live OW API, fallback to direct collector)
+# 6. Project authoritative bundle state and detect drift; do not recompute it.
+$bundleState = if ($authoritativeAvailable) { [string]$rdata.bundle_state } else { "NOT_READY" }
+$expectedBundleState = if ($gwStatus -ne "RUNNING" -or -not $coreReady) {
+    "NOT_READY"
+} elseif (-not $owHealthOk) {
+    "DEGRADED"
+} else {
+    "READY"
+}
+$readinessConsistency = ($authoritativeAvailable -and
+    ($rdata.bundle_state -eq $expectedBundleState) -and
+    ($owReady -eq $owHealthOk) -and
+    ([bool]$rdata.core_ready -eq $coreReady))
+
+if ($authoritativeAvailable -and $rdata.bundle_state -eq "READY" -and
+    (-not $owHealthOk -or -not $owReady)) {
+    $readinessConsistency = $false
+}
+
+# 7. MR Component Details (prefer live OW API, fallback to direct collector)
 $mrInfo = $null
 if ($owProc) {
     try {
@@ -154,24 +177,32 @@ $slowWriterStatus = if ($mrInfo -and $mrInfo.slow) { $mrInfo.slow } else { "UNKN
 $isStale = if ($mrInfo -and $mrInfo.stale) { $mrInfo.stale } else { "UNKNOWN" }
 $actualDbPath = if ($mrInfo -and $mrInfo.db) { $mrInfo.db } else { $stateDbPath }
 
-# Print Output matching spec format
+# Print authoritative projection plus explicit consistency diagnostics.
 Write-Host "=================================================="
 Write-Host ("XIYUE RUNTIME STATUS: {0}" -f $bundleState)
 Write-Host "=================================================="
-Write-Host ("Bundle State:   {0}" -f $bundleState)
-Write-Host ("Epoch ID:       {0}" -f $(if ($epochId) { $epochId } else { "-" }))
-Write-Host ("Runtime Ready:  {0}" -f $(if ($runtimeReadyAt) { $runtimeReadyAt } else { "-" }))
-Write-Host ("Supervisor:     {0}" -f $spStatus)
-Write-Host ("Gateway:        {0}" -f $gwStatus)
-Write-Host ("Gateway PID:    {0}" -f $(if ($gwPid) { $gwPid } else { "-" }))
-Write-Host ("Gateway start:  {0}" -f $(if ($gwStartTime) { $gwStartTime } else { "-" }))
-Write-Host ("MR adapter:     {0}" -f $mrAdapterStatus)
-Write-Host ("Semantic:       {0}" -f $semanticStatus)
-Write-Host ("Appraisal:      {0}" -f $appraisalStatus)
-Write-Host ("Slow writer:    {0}" -f $slowWriterStatus)
-Write-Host ("Observation:    {0}" -f $owStatus)
-Write-Host ("OW URL:         {0}" -f $owUrl)
-Write-Host ("DB path:        {0}" -f $actualDbPath)
+Write-Host ("Authoritative Bundle: {0}" -f $bundleState)
+Write-Host ("MR Core:             {0}" -f $(if ($coreReady) { "READY" } else { "NOT_READY" }))
+Write-Host ("OW Readiness:        {0}" -f $(if ($owReady) { "READY" } else { "NOT_READY" }))
+Write-Host ("OW Health:           {0}" -f $(if ($owHealthOk) { "PASS" } else { "FAIL" }))
+Write-Host ("Readiness Consistency: {0}" -f $(if ($readinessConsistency) { "PASS" } else { "FAIL" }))
+Write-Host ("Epoch ID:            {0}" -f $(if ($epochId) { $epochId } else { "-" }))
+Write-Host ("Runtime Ready:       {0}" -f $(if ($runtimeReadyAt) { $runtimeReadyAt } else { "-" }))
+Write-Host ("Supervisor:          {0}" -f $spStatus)
+Write-Host ("Gateway:             {0}" -f $gwStatus)
+Write-Host ("Gateway PID:         {0}" -f $(if ($gwPid) { $gwPid } else { "-" }))
+Write-Host ("Gateway start:       {0}" -f $(if ($gwStartTime) { $gwStartTime } else { "-" }))
+Write-Host ("MR adapter:          {0}" -f $mrAdapterStatus)
+Write-Host ("Semantic:            {0}" -f $semanticStatus)
+Write-Host ("Appraisal:           {0}" -f $appraisalStatus)
+Write-Host ("Slow writer:         {0}" -f $slowWriterStatus)
+Write-Host ("Observation process: {0}" -f $owStatus)
+Write-Host ("OW URL:              {0}" -f $owUrl)
+Write-Host ("DB path:             {0}" -f $actualDbPath)
 Write-Host ""
 Write-Host ("Gateway stale vs current production source: {0}" -f $isStale)
 Write-Host "=================================================="
+
+if (-not $readinessConsistency) {
+    Write-Host "READINESS CONSISTENCY: FAIL"
+}

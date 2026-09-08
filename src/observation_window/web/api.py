@@ -1204,9 +1204,9 @@ def build_router(
     def scoped_api_live_trace(binding_id: str) -> Any:
         try:
             b = _scoped(binding_id)
-            res = get_live_trace_payload(b.context)
+            res = _json(get_live_trace_payload(b.context))
             res["binding_id"] = b.binding_id
-            return _json(res)
+            return res
         except ScopedBindingError as exc:
             return _scoped_error_response(exc)
 
@@ -1247,7 +1247,9 @@ def build_router(
     def api_live_trace(request: Request) -> Any:
         b = _legacy_binding(request)
         if b is not None:
-            return _json(get_live_trace_payload(b.context) | {"binding_id": b.binding_id})
+            res = _json(get_live_trace_payload(b.context))
+            res["binding_id"] = b.binding_id
+            return res
         return _json(get_live_trace_payload(context))
 
     @router.get("/api/overview")

@@ -177,12 +177,22 @@ if (Test-Path $readinessFile) {
             Write-Error "Verification failed: epoch ID was not refreshed ($newEpochId)."
             exit 1
         }
+        if ($rdata.bundle_state -ne "READY" -or $rdata.core_ready -ne $true -or $rdata.ow_ready -ne $true) {
+            Write-Error ("Verification failed: authoritative readiness is not READY " +
+                "(bundle_state=$($rdata.bundle_state), core_ready=$($rdata.core_ready), " +
+                "ow_ready=$($rdata.ow_ready)).")
+            exit 1
+        }
         Write-Host ("  New Epoch ID:           {0} (PASS)" -f $newEpochId)
         Write-Host ("  Runtime Ready At:       {0} (PASS)" -f $newReadyAt)
-        Write-Host ("  Bundle State:           {0} (PASS)" -f $bundleState)
+        Write-Host ("  Authoritative Bundle:   {0} (PASS)" -f $rdata.bundle_state)
+        Write-Host ("  Authoritative OW:       {0} (PASS)" -f $rdata.ow_ready)
     } catch {
         Write-Warning "Could not verify readiness.json: $_"
     }
+} else {
+    Write-Error "Verification failed: authoritative readiness.json is missing."
+    exit 1
 }
 
 Write-Host "=================================================="

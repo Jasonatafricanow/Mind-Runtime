@@ -213,7 +213,7 @@ if (Test-Path $owPidFile) {
 
 if (-not $owPid) {
     $existingOw = Get-CimInstance Win32_Process | Where-Object {
-        $_.CommandLine -match "observation_window\.web\.runtime" -and $_.CommandLine -match "8766"
+        $_.CommandLine -match "(observation_window\.web\.runtime|ow_bootstrap\.py)" -and $_.CommandLine -match "8766"
     } | Select-Object -First 1
     if ($existingOw) {
         $owPid = $existingOw.ProcessId
@@ -232,10 +232,14 @@ if ($owPid) {
 } else {
     Write-Host "  Starting Observation Window on port $owPort..."
     $pyExe = (Get-Command python).Source
+    # The host's Python installation contains a legacy Mind Runtime .pth entry.
+    # Put this production checkout first so OW imports the same source that the
+    # Gateway run.py composition seam explicitly loads.
     # OW-MULTI-AGENT-BINDING-PHASE01-V1: production OW composes through
     # binding discovery (SingleBindingRegistryAdapter -> BindingResolver).
     # The runtime dir anchors binding.json / readiness.json lookups only.
-    $owCmd = "`"$pyExe`" -m observation_window.web.runtime --runtime-dir `"$runtimeDir`" --port $owPort"
+    $owBootstrap = Join-Path $PSScriptRoot "ow_bootstrap.py"
+    $owCmd = "`"$pyExe`" `"$owBootstrap`" --runtime-dir `"$runtimeDir`" --port $owPort"
     $owRes = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
         CommandLine = $owCmd
         CurrentDirectory = $repoRoot
@@ -272,7 +276,7 @@ if (-not $healthOk) {
 }
 
 # ------------------------------------------------------------------
-# G. Compute Bundle State and Final Summary
+# G. Wait for the Gateway-owned authoritative bundle projection
 # ------------------------------------------------------------------
 $gwAlive = $false
 if ($gwPid) {
@@ -282,15 +286,51 @@ if ($gwPid) {
     }
 }
 
-$bundleState = "NOT_READY"
-if ($gwAlive -and $coreReady) {
-    if ($healthOk) {
-        $bundleState = "READY"
-    } else {
-        $bundleState = "DEGRADED"
+# Do not derive READY locally. The Gateway owns this projection and its
+# reconciliation loop refreshes it after OW becomes healthy.
+$authoritative = $null
+$owReady = $false
+$readinessConsistency = $false
+$swBundle = [Diagnostics.Stopwatch]::StartNew()
+while ($swBundle.Elapsed.TotalSeconds -lt 20) {
+    if (Test-Path $readinessFile) {
+        try {
+            $candidate = Get-Content $readinessFile -Raw | ConvertFrom-Json
+            if ($candidate -and ($candidate.gateway_pid -eq $gwPid) -and
+                (-not $epochId -or $candidate.epoch_id -eq $epochId)) {
+                $authoritative = $candidate
+                $epochId = $candidate.epoch_id
+                $runtimeReadyAt = $candidate.runtime_ready_at
+                $coreReady = [bool]$candidate.core_ready
+                $owReady = [bool]$candidate.ow_ready
+                if ($candidate.bundle_state -eq "READY" -and $coreReady -and $owReady) {
+                    break
+                }
+            }
+        } catch {}
     }
+    Start-Sleep -Milliseconds 500
 }
 
+$bundleState = if ($authoritative) { [string]$authoritative.bundle_state } else { "NOT_READY" }
+$expectedBundleState = if (-not $gwAlive -or -not $coreReady) {
+    "NOT_READY"
+} elseif (-not $healthOk) {
+    "DEGRADED"
+} else {
+    "READY"
+}
+$readinessConsistency = ($authoritative -and
+    ($authoritative.gateway_pid -eq $gwPid) -and
+    ([bool]$authoritative.core_ready -eq $coreReady) -and
+    ([bool]$authoritative.ow_ready -eq $owReady) -and
+    ($authoritative.bundle_state -eq $bundleState) -and
+    ($authoritative.bundle_state -eq $expectedBundleState) -and
+    ($owReady -eq $healthOk))
+
+# ------------------------------------------------------------------
+# H. Final Summary (authoritative state first)
+# ------------------------------------------------------------------
 Write-Host ""
 Write-Host "=================================================="
 Write-Host ("Xiyue Runtime: {0}" -f $bundleState)
@@ -302,11 +342,17 @@ Write-Host ("MR Core:                {0}" -f $(if ($coreReady) { "READY" } else 
 Write-Host ("Epoch ID:               {0}" -f $(if ($epochId) { $epochId } else { "-" }))
 Write-Host ("Runtime Ready:          {0}" -f $(if ($runtimeReadyAt) { $runtimeReadyAt } else { "-" }))
 Write-Host ("Observation Window PID: {0}" -f $(if ($owPid) { $owPid } else { "-" }))
+Write-Host ("OW Health:              {0}" -f $(if ($healthOk) { "PASS" } else { "FAIL" }))
+Write-Host ("OW Readiness:           {0}" -f $(if ($owReady) { "READY" } else { "NOT_READY" }))
+Write-Host ("Readiness Consistency:  {0}" -f $(if ($readinessConsistency) { "PASS" } else { "FAIL" }))
 Write-Host ("Observation Window URL: http://127.0.0.1:{0}/live-trace" -f $owPort)
 Write-Host ("Runtime DB path:        {0}" -f $stateDbPath)
 Write-Host "=================================================="
 
-if ($bundleState -eq "NOT_READY") {
-    Write-Error "Bundle readiness failed: state is NOT_READY"
+if (-not $readinessConsistency) {
+    Write-Error "Bundle readiness consistency failed: authoritative state does not match live gateway/OW evidence"
+}
+if ($bundleState -ne "READY") {
+    Write-Error "Bundle readiness failed: authoritative state is $bundleState"
     exit 1
 }

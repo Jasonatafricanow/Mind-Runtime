@@ -118,6 +118,13 @@ def _ensure_mr_importable() -> bool:
 
 _local = threading.local()
 
+# The Gateway process is the sole operational readiness writer. This
+# process-local guard prevents one adapter per worker thread from starting
+# competing reconciliation loops for the same epoch/readiness artifact.
+_bundle_reconciler_lock = threading.Lock()
+_bundle_reconciler_thread: threading.Thread | None = None
+_bundle_reconciler_stop: threading.Event | None = None
+
 
 def _load_production_composition() -> dict[str, object]:
     """Decode the certified runtime-config manifest and assemble the
@@ -198,6 +205,8 @@ def _load_production_composition() -> dict[str, object]:
 
     return {
         "persona": decoded.persona_profile,
+        "situation": decoded.situation,
+        "decision_context_config": decoded.decision_context,
         "effect_rules": decoded.emotional_effects,
         "definitions": decoded.state_definitions,
         "appraisal_producer": appraisal_producer,
@@ -233,6 +242,8 @@ def get_mr_adapter():
                 composition = _load_production_composition()
                 adapter = default_adapter(
                     persona=composition["persona"],
+                    situation=composition["situation"],
+                    decision_context_config=composition["decision_context_config"],
                     effect_rules=composition["effect_rules"],
                     definitions=composition["definitions"],
                     appraisal_producer=composition["appraisal_producer"],
@@ -248,18 +259,21 @@ def get_mr_adapter():
                 adapter = None
         # Cache per-thread (including None so each worker only attempts once).
         _local.adapter = adapter
-        # Gateway-owned readiness evaluation upon successful adapter creation (re-entrancy safe)
+        # Gateway-owned readiness evaluation upon successful adapter creation
+        # (re-entrancy safe), followed by the process-local OW reconciliation
+        # loop. OW remains a read-only observer and never writes this file.
         if adapter is not None and not getattr(_local, "_updating_readiness", False):
             current = load_readiness()
             cur_pid = os.getpid()
-            if current.get("gateway_pid") == cur_pid and not current.get("core_ready", False):
+            if current.get("gateway_pid") == cur_pid:
                 _local._updating_readiness = True
                 try:
-                    mark_runtime_ready(adapter=adapter)
+                    reconcile_bundle_readiness(adapter=adapter)
                 except Exception as _r_err:
                     _logger.warning("Auto-readiness update failed: %s", _r_err)
                 finally:
                     _local._updating_readiness = False
+                start_bundle_readiness_reconciler(adapter=adapter)
     return adapter
 
 
@@ -607,6 +621,95 @@ def mark_runtime_ready(
     return current
 
 evaluate_and_update_readiness = mark_runtime_ready
+
+
+def reconcile_bundle_readiness(
+    *,
+    adapter: Any = None,
+    ow_port: int = 8766,
+    force_ready_at: datetime | None = None,
+    _allow_test_write: bool = False,
+) -> dict[str, Any]:
+    """Refresh the Gateway-owned bundle projection for the current epoch.
+
+    This is deliberately a thin operational seam over ``mark_runtime_ready``:
+    it performs no cognition work and grants no write authority to OW. The
+    caller must be the Gateway that owns the epoch (or an explicit test
+    fixture using the existing test-only escape hatch).
+    """
+    return mark_runtime_ready(
+        adapter=adapter,
+        ow_port=ow_port,
+        force_ready_at=force_ready_at,
+        _allow_test_write=_allow_test_write,
+    )
+
+
+def _bundle_reconciliation_loop(
+    adapter: Any,
+    stop_event: threading.Event,
+    ow_port: int,
+    interval_s: float,
+) -> None:
+    """Continuously reconcile OW health from the Gateway-owned process."""
+    while not stop_event.is_set():
+        current = load_readiness()
+        if current.get("gateway_pid") != os.getpid():
+            return
+        try:
+            reconcile_bundle_readiness(adapter=adapter, ow_port=ow_port)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("Bundle readiness reconciliation failed: %s", exc)
+        stop_event.wait(interval_s)
+
+
+def start_bundle_readiness_reconciler(
+    *,
+    adapter: Any,
+    ow_port: int = 8766,
+    interval_s: float = 1.0,
+) -> threading.Event:
+    """Start one Gateway-owned readiness reconciler for this process.
+
+    The returned event is test/controlled-shutdown support. The thread is a
+    daemon because it is strictly an operational projection refresher and
+    must never keep the Gateway alive during process shutdown.
+    """
+    global _bundle_reconciler_thread, _bundle_reconciler_stop
+    if interval_s <= 0:
+        raise ValueError("interval_s must be positive")
+    with _bundle_reconciler_lock:
+        if (
+            _bundle_reconciler_thread is not None
+            and _bundle_reconciler_thread.is_alive()
+            and _bundle_reconciler_stop is not None
+        ):
+            return _bundle_reconciler_stop
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=_bundle_reconciliation_loop,
+            args=(adapter, stop_event, ow_port, interval_s),
+            name="xiyue-bundle-readiness",
+            daemon=True,
+        )
+        _bundle_reconciler_stop = stop_event
+        _bundle_reconciler_thread = thread
+        thread.start()
+        return stop_event
+
+
+def stop_bundle_readiness_reconciler() -> None:
+    """Stop the process-local reconciliation loop (shutdown/test support)."""
+    global _bundle_reconciler_thread, _bundle_reconciler_stop
+    with _bundle_reconciler_lock:
+        stop_event = _bundle_reconciler_stop
+        thread = _bundle_reconciler_thread
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        _bundle_reconciler_thread = None
+        _bundle_reconciler_stop = None
 
 
 def on_gateway_process_startup() -> dict[str, Any]:

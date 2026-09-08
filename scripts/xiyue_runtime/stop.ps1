@@ -80,7 +80,7 @@ if (Test-Path $owPidFile) {
     try {
         $candOw = [int](Get-Content $owPidFile -Raw -ErrorAction SilentlyContinue).Trim()
         $candProc = Get-CimInstance Win32_Process -Filter "ProcessId = $candOw" -ErrorAction SilentlyContinue
-        if ($candProc -and $candProc.CommandLine -match "observation_window\.web\.runtime") {
+        if ($candProc -and $candProc.CommandLine -match "(observation_window\.web\.runtime|ow_bootstrap\.py)") {
             Write-Host "  Stopping Observation Window (PID: $candOw)..."
             Stop-Process -Id $candOw -Force -ErrorAction SilentlyContinue
             $stoppedOw = $true
@@ -91,7 +91,7 @@ if (Test-Path $owPidFile) {
 
 # Also verify via CIM strictly matching port 8766
 $owProcesses = Get-CimInstance Win32_Process | Where-Object {
-    $_.CommandLine -match "observation_window\.web\.runtime" -and $_.CommandLine -match "8766"
+    $_.CommandLine -match "(observation_window\.web\.runtime|ow_bootstrap\.py)" -and $_.CommandLine -match "8766"
 }
 
 foreach ($ow in $owProcesses) {

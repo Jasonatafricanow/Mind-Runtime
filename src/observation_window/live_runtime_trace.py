@@ -102,11 +102,9 @@ class LiveRuntimeTraceCollector:
         repo_root: Path | str | None = None,
         hermes_profile_dir: Path | str | None = None,
     ) -> None:
-        self.repo_root = (
-            Path(repo_root)
-            if repo_root is not None
-            else Path(__file__).resolve().parents[2]
-        )
+        if repo_root is None:
+            repo_root = os.environ.get("MR_REPO_ROOT") or Path(__file__).resolve().parents[2]
+        self.repo_root = Path(repo_root)
         if hermes_profile_dir is None:
             self.hermes_profile_dir = Path.home() / ".hermes" / "profiles" / "xiyue"
         else:
@@ -295,9 +293,14 @@ class LiveRuntimeTraceCollector:
             try:
                 rdata = json.loads(readiness_file.read_text(encoding="utf-8"))
                 file_pid = rdata.get("gateway_pid")
-                # Epoch must match current gateway_pid and core_ready must be True
-                if gw_pid is not None and file_pid == gw_pid and rdata.get("core_ready", False):
-                    bundle_state = "READY"
+                # The Gateway-owned readiness projection is the bundle-state
+                # authority.  Do not recompute READY from process/core probes
+                # here: that would recreate the split truth this collector is
+                # meant to expose.
+                if gw_pid is not None and file_pid == gw_pid:
+                    candidate_state = rdata.get("bundle_state")
+                    if candidate_state in {"READY", "DEGRADED", "NOT_READY"}:
+                        bundle_state = candidate_state
                     runtime_ready_at = rdata.get("runtime_ready_at")
                     epoch_id = rdata.get("epoch_id")
                 else:

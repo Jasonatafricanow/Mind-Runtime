@@ -54,6 +54,8 @@ from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
     SemanticRouter,
 )
+from mind_runtime.expression.context import DecisionContextCompiler, DecisionContextConfig
+from mind_runtime.expression.renderer import DeterministicContextRenderer
 from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
 from mind_runtime.homeostasis.contracts import HomeostasisGate
@@ -69,8 +71,8 @@ from mind_runtime.pipeline.orchestrator import TurnOrchestrator
 from mind_runtime.pipeline.ports import HistoricalContextPort
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.providers.clock import Clock
-from mind_runtime.runtime_binding import RuntimeBinding, resolve_storage_paths
 from mind_runtime.runtime_admission import NamespaceAdmissionAuthority
+from mind_runtime.runtime_binding import RuntimeBinding, resolve_storage_paths
 from mind_runtime.shadow.production_wiring import ProductionShadowTap, ShadowTapReport
 from mind_runtime.shadow.source_bridge import (
     SOURCE_NAME,
@@ -79,6 +81,7 @@ from mind_runtime.shadow.source_bridge import (
     HermesProductionBridge,
     SourceRecord,
 )
+from mind_runtime.situation.builder import SituationBuilder
 from mind_runtime.slow_plasticity.writer import SlowPlasticityWriter
 from mind_runtime.state.definitions import StateDefinitionRegistry
 from mind_runtime.state.persistence import (
@@ -226,6 +229,8 @@ def build_runtime_stack(
     historical_context: HistoricalContextPort | None = None,
     slow_plasticity_window_size: int | None = None,
     definitions: StateDefinitionRegistry | None = None,
+    situation: SituationBuilder | None = None,
+    decision_context_config: DecisionContextConfig | None = None,
     effect_rules: tuple[EventEffectRule, ...] = (),
     appraisal_producer: SemanticAppraisalProducer | None = None,
     homeostasis_gate: HomeostasisGate | None = None,
@@ -260,6 +265,15 @@ def build_runtime_stack(
         fact_service = FactIngestService(clock=clock, backend=SqliteFactBackend(facts_db))
     state_backend = SqliteStateBackend(state_db)
     marker_store = SqliteCommitMarkerStore(state_db, connection=state_backend.connection)
+    if situation is None:
+        bound_situation = SituationBuilder(runtime_id=origin_runtime_id)
+    else:
+        bound_situation = SituationBuilder(
+            runtime_id=origin_runtime_id,
+            recently_awake_window=situation._awake_window,
+            conversation_idle_window=situation._idle_window,
+            interaction_recent_window=situation._recent_window,
+        )
     # Reuse ONE state backend instance for both the orchestrator canonical
     # state and the slow-plasticity writer, so slow-state commits are
     # transactional with canonical state (ADR-0017 "one transaction").
@@ -277,6 +291,14 @@ def build_runtime_stack(
     if definitions is not None:
         for definition in definitions.all():
             state_backend.save_definition(definition)
+    decision_context_compiler = None
+    context_renderer = None
+    if decision_context_config is not None:
+        decision_context_compiler = DecisionContextCompiler(
+            config=decision_context_config,
+            definitions=definitions,
+        )
+        context_renderer = DeterministicContextRenderer(decision_context_config)
     # Emotional-composition wiring: when a persona is supplied together with
     # appraisal / homeostasis authorities (configuration-driven, wired by the
     # host), construct the production EngineEmotionalTransitionPort directly so
@@ -305,6 +327,9 @@ def build_runtime_stack(
         emotional_transition=emotional_transition,
         effect_rules=effect_rules,
         definitions=definitions,
+        situation=bound_situation,
+        decision_context_compiler=decision_context_compiler,
+        context_renderer=context_renderer,
         state_backend=state_backend,
         commit_markers=marker_store,
         semantic_provider=semantic_provider,
