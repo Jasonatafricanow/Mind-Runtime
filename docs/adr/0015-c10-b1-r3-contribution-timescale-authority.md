@@ -415,7 +415,7 @@ audit for the ADAPT or REPLACE branch.
 
 ## References
 
-- [ADR-0017](.worktrees/j8-e3-appraisal-affect-impulse-clean/docs/adr/0017-resolved-appraisal-to-ordinary-affect-impulse.md) — ResolvedAppraisal to ordinary Impulse
+- ADR-0017 — ResolvedAppraisal to ordinary Impulse (historical authority reference; source document is not part of this public seed)
 - `ADR-C10-A1` — three-layer plasticity + Homeostasis Gate authority
 - `docs/C10_B1_R3_CONTRIBUTION_TIMESCALE_CONTRACT.md` — full spec
 - `src/mind_runtime/homeostasis/contracts.py` — HomeostasisDisposition
