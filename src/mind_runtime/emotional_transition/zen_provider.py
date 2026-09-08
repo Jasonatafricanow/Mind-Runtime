@@ -14,12 +14,13 @@ Contract:
   * no state write, no numeric affect authority.  Pure proposal layer.
   * no canonical write authority.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from mind_runtime.contracts import (
@@ -29,6 +30,12 @@ from mind_runtime.contracts import (
     Situation,
 )
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol
+
+# Both vendor adapters implement the same open, bounded proposal contract.
+from mind_runtime.emotional_transition.glm_provider import (
+    SYSTEM_PROMPT,
+    _validated_event_payload,
+)
 from mind_runtime.emotional_transition.semantic import (
     ProviderExecutionResult,
     SemanticCandidateProvider,
@@ -36,30 +43,6 @@ from mind_runtime.emotional_transition.semantic import (
 
 ZEN_URL = "https://opencode.ai/zen/v1/chat/completions"
 ZEN_MODEL = os.environ.get("ZEN_MODEL", "hy3-free")
-
-SYSTEM_PROMPT = (
-    "You are a precise event classifier for a companion agent's internal "
-    "cognitive runtime. You receive one raw user message and must classify "
-    "it into at most ONE event kind from the taxonomy. You must reply with "
-    "ONLY a JSON object, no prose, no markdown, exactly: "
-    '{"kind": "...", "confidence": 0.0-1.0, "attributes": {"...": "..."}}. '
-    "If the message does not clearly fit any kind, reply {\"kind\": \"none\", "
-    "\"confidence\": 0.0, \"attributes\": {}}.\n\n"
-    "Taxonomy:\n"
-    "- distress_sharing: user shares worry/stress/anxiety/being overwhelmed\n"
-    "- ownership_complaint: user complains about something they own / data / "
-    "records / files being lost, overwritten, or mishandled\n"
-    "- request_favor: user asks for emotional support or a direct favor\n"
-    "- appreciation: user thanks or praises the agent\n"
-    "- playful_flirt: playful tease, flirt, or banter\n"
-    "- factual: routine question or neutral informational remark\n"
-    "- plan_confirmed: user explicitly confirms or agrees to a shared plan\n"
-    "- plan_cancelled: user explicitly cancels or abandons a shared plan\n"
-    "- warm_reunion: user returns warmly after an absence\n"
-    "- harsh_message: user expresses hostility, anger, or harsh rejection\n\n"
-    "Choose the SINGLE best fit. Confidence must reflect how clearly the "
-    "message fits that single kind."
-)
 
 
 def _require_safe_host(url: str) -> None:
@@ -73,13 +56,7 @@ def _require_safe_host(url: str) -> None:
 
     try:
         ip = ipaddress.ip_address(host)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_reserved
-            or ip.is_link_local
-            or ip.is_multicast
-        ):
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
             raise ValueError(f"Zen endpoint host {host} is private/reserved (SSRF)")
     except ValueError as exc:
         if "does not appear to be an IPv4 or IPv6 address" in str(exc):
@@ -145,7 +122,7 @@ class ZenHy3Provider(SemanticCandidateProvider):
         prompt = (
             "User message:\n"
             f"{text}\n\n"
-            "Classify into at most ONE kind from the taxonomy. Reply with ONLY JSON."
+            "Propose at most ONE event; novel kinds are allowed. Reply with ONLY JSON."
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -182,7 +159,7 @@ class ZenHy3Provider(SemanticCandidateProvider):
                     success=success,
                     retry_count=0,
                     error_message=error_msg,
-                    occurred_at=datetime.now(timezone.utc),
+                    occurred_at=datetime.now(UTC),
                 )
             except Exception:
                 pass
@@ -197,8 +174,19 @@ class ZenHy3Provider(SemanticCandidateProvider):
                 error=error_msg,
             )
 
-        kind = payload.get("kind")
-        if not kind or kind == "none":
+        try:
+            kind, confidence, attributes = _validated_event_payload(payload)
+        except ValueError:
+            return ProviderExecutionResult(
+                candidates=(),
+                provider_name="zen",
+                model=self._model,
+                latency_ms=latency_ms,
+                success=True,
+                explicit_abstain=False,
+                error="invalid_candidate_schema",
+            )
+        if kind in {"abstain", "none"}:
             return ProviderExecutionResult(
                 candidates=(),
                 provider_name="zen",
@@ -207,20 +195,7 @@ class ZenHy3Provider(SemanticCandidateProvider):
                 success=True,
                 explicit_abstain=True,
             )
-        try:
-            confidence = float(payload.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        if not 0.0 <= confidence <= 1.0:
-            confidence = 0.0
-        attrs_raw = payload.get("attributes") or {}
-        if not isinstance(attrs_raw, dict):
-            attrs_raw = {}
-        attributes = tuple(
-            sorted(
-                (str(k), str(v)) for k, v in attrs_raw.items() if str(k) and str(v)
-            )
-        )
+
         cand = SemanticEventCandidate(
             candidate_id=f"zen-{obs.id}",
             scope=scope,
@@ -260,8 +235,11 @@ class ZenHy3Provider(SemanticCandidateProvider):
         # 30x redirect to a private address, defeating the
         # _require_safe_host check above.
         r = curl_requests.post(
-            ZEN_URL, json=body, headers=headers,
-            impersonate="chrome120", timeout=self._timeout_s,
+            ZEN_URL,
+            json=body,
+            headers=headers,
+            impersonate="chrome120",
+            timeout=self._timeout_s,
             allow_redirects=False,
         )
         if r.status_code != 200:
@@ -285,4 +263,4 @@ class ZenHy3Provider(SemanticCandidateProvider):
                     return json.loads(content[start : end + 1])
                 except json.JSONDecodeError:
                     pass
-            raise RuntimeError(f"Zen returned non-JSON: {content[:200]}")
+            raise RuntimeError(f"Zen returned non-JSON: {content[:200]}") from None
