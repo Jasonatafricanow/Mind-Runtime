@@ -71,7 +71,9 @@ def _rewrite_current(source: str, repo_root: Path, hermes_site_packages: Path) -
 def _render_template(repo_root: Path, hermes_site_packages: Path) -> str:
     template = _read(TEMPLATE)
     return (
-        template.replace("__MR_SRC_LITERAL__", _literal(repo_root / "src"))
+        template.replace("__PATCH_CONTEXT_BLANK_1__", " ")
+        .replace("__PATCH_CONTEXT_BLANK_13__", "             ")
+        .replace("__MR_SRC_LITERAL__", _literal(repo_root / "src"))
         .replace("__MR_XIYUE_LITERAL__", _literal(repo_root / "xiyue"))
         .replace("__HERMES_SITE_PACKAGES_LITERAL__", _literal(hermes_site_packages))
     )

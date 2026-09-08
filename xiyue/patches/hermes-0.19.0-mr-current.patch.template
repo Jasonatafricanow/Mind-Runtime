@@ -5,7 +5,7 @@ index 12b7477..e52633c 100644
 @@ -24,6 +24,53 @@ except ModuleNotFoundError:
      # means UTF-8 stdio setup is skipped on Windows; POSIX is unaffected.
      pass
- 
+__PATCH_CONTEXT_BLANK_1__
 +# --- Xiyue MR seam bootstrap (HI-2) ---
 +import sys as _mr_sys
 +_mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
@@ -112,7 +112,7 @@ index 12b7477..e52633c 100644
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
 @@ -20963,6 +21056,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
-             
+__PATCH_CONTEXT_BLANK_13__
              # Return final response, or a message if something went wrong
              final_response = result.get("final_response")
 +            # --- Xiyue MR seam: commit/abort (HI-2) ---
@@ -138,6 +138,6 @@ index 12b7477..e52633c 100644
 +            except Exception:
 +                pass
 +            # --- end Xiyue MR commit/abort seam ---
- 
+__PATCH_CONTEXT_BLANK_1__
              # Extract actual token counts from the agent instance used for this run
              _last_prompt_toks = 0
