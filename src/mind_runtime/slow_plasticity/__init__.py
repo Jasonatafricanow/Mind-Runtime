@@ -1,1 +1,20 @@
-"""Rolling-window longitudinal state writer.\n\nThe historical SlowPlasticityWriter name remains available for compatibility.\n"""\n\nfrom mind_runtime.slow_plasticity.writer import (\n    LongitudinalStateWriter,\n    SlowPlasticityWriter,\n    SlowContributionRecord,\n    SlowStateBackend,\n    SlowWindowSnapshot,\n)\n\n__all__ = [\n    "LongitudinalStateWriter",\n    "SlowPlasticityWriter",\n    "SlowContributionRecord",\n    "SlowWindowSnapshot",\n    "SlowStateBackend",\n]\n
+"""Rolling-window longitudinal state writer.
+
+The historical SlowPlasticityWriter name remains available for compatibility.
+"""
+
+from mind_runtime.slow_plasticity.writer import (
+    LongitudinalStateWriter,
+    SlowContributionRecord,
+    SlowPlasticityWriter,
+    SlowStateBackend,
+    SlowWindowSnapshot,
+)
+
+__all__ = [
+    "LongitudinalStateWriter",
+    "SlowContributionRecord",
+    "SlowPlasticityWriter",
+    "SlowStateBackend",
+    "SlowWindowSnapshot",
+]
