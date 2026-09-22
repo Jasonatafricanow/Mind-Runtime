@@ -899,3 +899,239 @@ def test_s3_unauthorized_or_non_accumulator_cross_scope_rejected() -> None:
         slow_state_records=(user_cross_state,),
         persona_ref="persona-1",
         state_definitions=registry,
+    )
+    with pytest.raises(ValueError, match="slow_state scope mismatch"):
+        make_compiler().compile(input_user_cross)
+
+
+def test_s4_wrong_agent_or_runtime_scoped_slow_state_rejected() -> None:
+    """S4: Wrong agent/runtime scoped Slow State -> rejected."""
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+
+    registry = StateDefinitionRegistry()
+    register_longitudinal_definition(registry, key=SLOW_DIM)
+
+    # Sub-case A: wrong agent identity
+    wrong_agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="other-agent", persona_id="other-persona"
+    )
+    wrong_agent_state = RuntimeState(
+        state_id="slow-wrong-agent",
+        scope=wrong_agent_scope,
+        dimension=SLOW_DIM,
+        value=0.5,
+        status="active",
+        valid_from=NOW,
+        valid_until=None,
+        relevant_until=None,
+        last_observed_at=NOW,
+        evidence_refs=("evidence-1",),
+        transition_refs=(),
+        updated_at=NOW,
+        origin_runtime_id="runtime-1",
+        version=1,
+        sync=SyncFields(wrong_agent_scope, "runtime-1", "slow-wrong-agent", 1, "idem-3"),
+    )
+    input_wrong_agent = _build_user_interaction_input(
+        slow_state_records=(wrong_agent_state,),
+        persona_ref="persona-1",
+        state_definitions=registry,
+    )
+    with pytest.raises(ValueError, match="slow_state agent identity mismatch"):
+        make_compiler().compile(input_wrong_agent)
+
+    # Sub-case B: wrong origin_runtime_id
+    wrong_runtime_state = make_slow_state(value=0.5, origin_runtime_id="rogue-runtime")
+    input_wrong_runtime = _build_user_interaction_input(
+        slow_state_records=(wrong_runtime_state,),
+        persona_ref="persona-1",
+        origin_runtime_id="runtime-1",
+        state_definitions=registry,
+    )
+    with pytest.raises(ValueError, match="slow_state origin_runtime_id mismatch"):
+        make_compiler().compile(input_wrong_runtime)
+
+
+def test_s5_missing_slow_state_emits_zero_slow_items_in_user_interaction() -> None:
+    """S5: Missing Slow State -> unchanged, emits zero slow items."""
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+
+    registry = StateDefinitionRegistry()
+    register_longitudinal_definition(registry, key=SLOW_DIM)
+    input_empty = _build_user_interaction_input(
+        slow_state_records=(),
+        persona_ref="persona-1",
+        state_definitions=registry,
+    )
+    ctx, _ = make_compiler().compile(input_empty)
+    slow_items = [
+        item
+        for item in ctx.expression_context
+        if item.kind == ExpressionContextKind.INTERNAL_STATE and item.key.startswith("slow_")
+    ]
+    assert slow_items == []
+    assert ctx.slow_state_projection_refs == ()
+
+
+def test_s6_zero_slow_state_emits_real_projected_item_in_user_interaction() -> None:
+    """S6: 0.0 Slow State -> remains a real projected item."""
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+
+    registry = StateDefinitionRegistry()
+    register_longitudinal_definition(registry, key=SLOW_DIM)
+    zero_state = make_slow_state(value=0.0, state_id="slow-zero-1")
+    input_zero = _build_user_interaction_input(
+        slow_state_records=(zero_state,),
+        persona_ref="persona-1",
+        state_definitions=registry,
+    )
+    ctx, _ = make_compiler().compile(input_zero)
+    slow_items = [
+        item
+        for item in ctx.expression_context
+        if item.kind == ExpressionContextKind.INTERNAL_STATE and item.key == f"slow_{SLOW_DIM}"
+    ]
+    assert len(slow_items) == 1
+    item = slow_items[0]
+    assert item.value == "0.0"
+    assert item.source_refs == ("slow", "slow-zero-1", "v1")
+    assert ctx.slow_state_projection_refs == ("slow-zero-1",)
+
+
+def test_s7_fast_and_user_scoped_state_validations_remain_unchanged() -> None:
+    """S7: Fast/user-scoped state validation -> unchanged."""
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+    from tests.expression.test_context import (
+        make_situation,
+        make_intent,
+        make_allowed_policy,
+    )
+
+    registry = StateDefinitionRegistry()
+    register_longitudinal_definition(registry, key=SLOW_DIM)
+    base_input = _build_user_interaction_input(
+        slow_state_records=(),
+        persona_ref="persona-1",
+        state_definitions=registry,
+    )
+
+    other_user_scope = Scope(domain=ScopeDomain.USER, user_id="user-2")
+
+    # 1. Situation scope mismatch rejected
+    bad_situation_input = replace(
+        base_input,
+        situation=make_situation(scope=other_user_scope, origin_runtime_id="runtime-1"),
+    )
+    with pytest.raises(ValueError, match="Situation scope must match compiler input scope"):
+        make_compiler().compile(bad_situation_input)
+
+    # 2. Effective user state scope mismatch rejected
+    bad_sync = replace(base_input.effective_user_state.sync, scope=other_user_scope)
+    bad_effective_state = replace(
+        base_input.effective_user_state, scope=other_user_scope, sync=bad_sync
+    )
+    bad_effective_input = replace(base_input, effective_user_state=bad_effective_state)
+    with pytest.raises(ValueError, match="effective user state scope must match compiler input scope"):
+        make_compiler().compile(bad_effective_input)
+
+    # 3. Intent scope mismatch rejected
+    bad_intent = make_intent(scope=other_user_scope, origin_runtime_id="runtime-1")
+    bad_intent_input = replace(base_input, intent=bad_intent)
+    with pytest.raises(ValueError, match="Intent and Policy scope must match compiler input scope"):
+        make_compiler().compile(bad_intent_input)
+
+    # 4. Policy scope mismatch rejected
+    bad_policy = make_allowed_policy(scope=other_user_scope, origin_runtime_id="runtime-1")
+    bad_policy_input = replace(base_input, policy_result=bad_policy)
+    with pytest.raises(ValueError, match="Intent and Policy scope must match compiler input scope"):
+        make_compiler().compile(bad_policy_input)
+
+    # 5. Projected agent state scope non-agent/non-user rejected
+    rel_scope = Scope(
+        domain=ScopeDomain.RELATIONSHIP,
+        relationship_id="rel-1",
+        persona_id="persona-1",
+    )
+    rel_sync = replace(base_input.projected_agent_state.sync, scope=rel_scope)
+    bad_proj_state = replace(
+        base_input.projected_agent_state.projected_states[0],
+        scope=rel_scope,
+        dimension="relationship.trust",
+        sync=replace(
+            base_input.projected_agent_state.projected_states[0].sync,
+            scope=rel_scope,
+        ),
+    )
+    bad_projected = replace(
+        base_input.projected_agent_state,
+        scope=rel_scope,
+        projected_states=(bad_proj_state,),
+        sync=rel_sync,
+    )
+    bad_proj_input = replace(base_input, projected_agent_state=bad_projected)
+    with pytest.raises(ValueError, match="projected agent state scope must match or be an agent scope"):
+        make_compiler().compile(bad_proj_input)
+
+
+def test_two_turn_production_regression_turn1_persists_turn2_reads_and_compiles(tmp_path: Path) -> None:
+    """Mandatory Two-Turn Regression:
+    turn 1: production event -> SLOW_ACCEPT -> persist AGENT relationship_security
+    turn 2: C1 reads persisted state -> DecisionContextCompiler accepts it -> no slow_state scope mismatch
+    """
+    from mind_runtime.validation import load_horizon_template
+    import mind_runtime.validation.composition as composition_module
+    from tests.validation.test_composition import make_runtime_config, MockAppraisalTransport
+
+    inputs = Path("certification/d11s/inputs")
+    transport = MockAppraisalTransport()
+    config = replace(make_runtime_config(tmp_path), appraisal_transport=transport)
+    composition = composition_module.build_composition(config)
+
+    try:
+        h = load_horizon_template(inputs / "horizon-30.json")
+        now = datetime(2026, 1, 1, 8, 0, tzinfo=timezone.utc)
+
+        # Turn 1: Day 1 positive event
+        ev1 = h.events[1]
+        config.clock.advance_to(now + ev1.at_offset)
+        composition.apply_event(ev1)
+
+        # Verify Turn 1 persisted AGENT slow state
+        state_backend = SqliteStateBackend(config.durable_paths.state_db)
+        try:
+            agent_scope = Scope(
+                domain=ScopeDomain.AGENT, agent_id="kayla_v0", persona_id="kayla_v0"
+            )
+            states = state_backend.load_slow_states(
+                agent_scope, "agent.longitudinal.relationship_security"
+            )
+            assert len(states) >= 1
+            assert states[-1].value == 0.80
+        finally:
+            state_backend.close()
+
+        # Turn 2: Day 2 negative event — previously failed with ValueError("slow_state scope mismatch")
+        ev2 = h.events[2]
+        config.clock.advance_to(now + ev2.at_offset)
+        composition.apply_event(ev2)
+
+        # Turn 2 must succeed and compile DecisionContext with slow item
+        turn2 = composition.orchestrator._turn
+        assert turn2 is not None
+        assert turn2.decision_context is not None
+        slow_items = [
+            item
+            for item in turn2.decision_context.expression_context
+            if item.kind == ExpressionContextKind.INTERNAL_STATE
+            and item.key == "slow_agent.longitudinal.relationship_security"
+        ]
+        assert len(slow_items) == 1
+        assert slow_items[0].value == "0.8"
+        assert slow_items[0].source_refs[0] == "slow"
+        assert "agent.longitudinal.relationship_security" in slow_items[0].source_refs[1]
+        assert slow_items[0].source_refs[2] == "v1"
+        assert len(turn2.decision_context.slow_state_projection_refs) == 1
+    finally:
+        composition.close()
+
+
