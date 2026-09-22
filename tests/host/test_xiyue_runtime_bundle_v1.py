@@ -18,7 +18,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import pytest
 
 # Ensure the repository source tree is importable for the host integration test.
@@ -310,8 +309,3 @@ class TestRequiredRuntimeFailureSeam:
         self, tmp_path, monkeypatch
     ):
         """Prove all 9 points of TEST 7 with actual Xiyue adapter and TurnOrchestrator."""
-        from mind_runtime.contracts import Scope, ScopeDomain
-        from mind_runtime.facts.persistence import SqliteFactBackend
-        from mind_runtime.host.xiyue_adapter import default_adapter
-        from mind_runtime.pipeline.orchestrator import TurnState
-        from mind_runtime.state.persistence import SqliteStateBackend
