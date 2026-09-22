@@ -26,7 +26,7 @@ lookup that the caller builds from `orchestrator._appraisal_rules`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from mind_runtime.contracts.emotional_transition import (
     AssessmentContribution,
@@ -80,8 +80,9 @@ def _classify_composition(
     """
     if not _is_appraisal_result_subtype(result):
         return AppraisalCompositionStatus.OFF
-    appraisal_result = getattr(result, "appraisal_result", None)
-    decisions = getattr(result, "appraisal_affect_decisions", ())
+    extended = cast(Any, result)
+    appraisal_result = extended.appraisal_result
+    decisions = extended.appraisal_affect_decisions
     if appraisal_result is None:
         return AppraisalCompositionStatus.OFF
     if not rules_provided and not decisions:
@@ -278,8 +279,9 @@ class OWLiveTraceSource:
         appraisal_result_obj: Any | None = None
         decisions_tuple: tuple[Any, ...] = ()
         if _is_appraisal_result_subtype(result):
-            appraisal_result_obj = getattr(result, "appraisal_result")
-            decisions_tuple = tuple(getattr(result, "appraisal_affect_decisions"))
+            extended = cast(Any, result)
+            appraisal_result_obj = extended.appraisal_result
+            decisions_tuple = tuple(extended.appraisal_affect_decisions)
 
         # Build the OW-3 decision list.
         observed_decisions = tuple(
