@@ -263,9 +263,32 @@ def _audit(control_text: str, treatment_text: str) -> None:
 @pytest.mark.parametrize("probe", ["relevant", "irrelevant"])
 @pytest.mark.parametrize("arm", ["control", "treatment"])
 def test_body_causal_alpha_generation(probe: str, arm: str) -> None:
-    api_key = os.environ.get("GLM_API_KEY")
-    if not api_key:
-        pytest.skip("GLM_API_KEY not set")
+    if os.environ.get("BODY_CAUSAL_RUN_LIVE") != "1":
+        pytest.skip(
+            "BODY_CAUSAL_RUN_LIVE is not set to '1' (explicit opt-in required for live network execution)"
+        )
+
+    # Match credential to configured endpoint to prevent provider pairing mismatch
+    if "generativelanguage.googleapis.com" in _ENDPOINT:
+        api_key = (
+            os.environ.get("BODY_CAUSAL_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
+        if not api_key:
+            pytest.skip(
+                "Gemini endpoint configured but GEMINI_API_KEY / GOOGLE_API_KEY / BODY_CAUSAL_API_KEY not set"
+            )
+    elif "bigmodel.cn" in _ENDPOINT or "z.ai" in _ENDPOINT:
+        api_key = os.environ.get("BODY_CAUSAL_API_KEY") or os.environ.get("GLM_API_KEY")
+        if not api_key:
+            pytest.skip(
+                "GLM endpoint configured but GLM_API_KEY / BODY_CAUSAL_API_KEY not set"
+            )
+    else:
+        api_key = os.environ.get("BODY_CAUSAL_API_KEY")
+        if not api_key:
+            pytest.skip("Custom endpoint configured but BODY_CAUSAL_API_KEY not set")
 
     control_context, control_text = _render("control")
     treatment_context, treatment_text = _render("treatment")

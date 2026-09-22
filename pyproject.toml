@@ -26,7 +26,7 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = ["live: Live integration test that makes real external API calls; skipped by default via -m 'not live'"]
-addopts = ["--strict-config", "--strict-markers"]
+addopts = ["--strict-config", "--strict-markers", "-m", "not live"]
 
 [tool.ruff]
 target-version = "py312"

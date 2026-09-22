@@ -15,6 +15,7 @@ def test_fastembed_missing_package_is_explicit(tmp_path, monkeypatch):
 
 
 def test_fastembed_missing_model_cannot_download(tmp_path, monkeypatch):
+    pytest.importorskip("fastembed")
     from fastembed import TextEmbedding
 
     from mind_runtime.memory.providers.errors import ProviderStorageUnavailable
@@ -37,6 +38,7 @@ def test_model_fingerprint_is_content_bound(tmp_path):
 
 
 def test_model_identity_mismatch_before_loading(tmp_path, monkeypatch):
+    pytest.importorskip("fastembed")
     from fastembed import TextEmbedding
 
     from mind_runtime.memory.providers.errors import ProviderStorageUnavailable

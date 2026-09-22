@@ -17,11 +17,13 @@ from tests.memory_vector.test_qdrant import plane, project
 
 @pytest.fixture(scope="module")
 def semantic_embedding():
+    pytest.importorskip("fastembed")
     directory = os.environ.get("MR_VECTOR_TEST_MODEL_DIR")
-    assert directory, (
-        "Provision the local fixture; set MR_VECTOR_TEST_MODEL_DIR (see provider report)"
-    )
+    if not directory:
+        pytest.skip("Provision the local fixture; set MR_VECTOR_TEST_MODEL_DIR (see provider report)")
     path = Path(directory)
+    if not path.exists():
+        pytest.skip(f"MR_VECTOR_TEST_MODEL_DIR path {directory!r} does not exist")
     return FastEmbedEmbedding(
         EmbeddingIdentity(
             "fastembed",

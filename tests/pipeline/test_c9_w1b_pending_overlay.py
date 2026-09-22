@@ -279,32 +279,15 @@ def _real_compiler_input(orch: TurnOrchestrator) -> DecisionContextCompilerInput
 # ---------------------------------------------------------------------------
 
 
-def test_w1b1_pending_visible_next_turn() -> None:
-    """Pending evidence appears in next-turn compiler output as FACT item.
+def test_w1b1_pending_lifecycle_deferred_admission() -> None:
+    """Pending evidence remains in overlay without unadmitted compiler FACT emission.
 
-    End-to-end test using the C9-W1A orchestrator (with real compiler
-    installed). The orchestrator's pending-overlay read path in run()
-    produces ExpressionContextItem(FACT) items in decision_context.
+    Per d0d5f4f, ADR-0013, and C9-W1B-R2:
+      - Ingest with defer_admission=True holds evidence in PendingWorkingOverlay.
+      - Next turn run() does not mutate canonical state or emit unadmitted FACT items.
+      - Pending evidence remains accessible via overlay.get_pending() until accept/reject.
     """
-    from tests.pipeline.test_c9_w1_accumulated_state_causal import (
-        _build_orchestrator as _c9a_build,
-    )
-
-    # The C9-W1A _build_orchestrator requires canonical state. We pass
-    # empty canonical to keep the test focused on pending-only path.
-    orch, _ = _c9a_build(canonical=(), history_bundle=None)
-    # Install real compiler (default is StubDecisionContextCompiler).
-    compiler_config = DecisionContextConfig(
-        max_items=50, max_render_chars=10000, max_history_items=10,
-        max_prior_expression_chars=200, max_item_chars=500,
-        allowed_situation_facts=(),
-        affect_rules=(), persona_style_constraints=(),
-        allowed_history_kinds=("relationship_event",),
-    )
-    orch.decision_context_compiler = DecisionContextCompiler(compiler_config)
-
-    overlay = PendingWorkingOverlay()
-    orch._pending_overlay = overlay  # type: ignore[attr-defined]
+    orch, overlay = _build_orchestrator(_alice_scope())
 
     # Turn N: ingest with defer_admission=True
     orch.begin_turn(_alice_turn_n("interaction-alice-N"))
@@ -317,8 +300,8 @@ def test_w1b1_pending_visible_next_turn() -> None:
     assert pending_items[0].semantic_payload[0][0] == "fact.key"
     assert "Alice" in pending_items[0].semantic_payload[0][1]
 
-    # Turn N+1: orchestrator's run() reads the pending overlay and converts
-    # to ExpressionContextItem(FACT) with source_refs starting with "pending:".
+    # Turn N+1: orchestrator run() executes without fabricating pending FACT items
+    # (per d0d5f4f / ADR-0013, pending -> FACT read path is DEFERRED).
     orch.begin_turn(_alice_turn_n("interaction-alice-N+1"))
     orch.run()
     assert orch.decision_context is not None
@@ -327,11 +310,11 @@ def test_w1b1_pending_visible_next_turn() -> None:
         if item.kind is ExpressionContextKind.FACT
         and any("pending:" in s for s in item.source_refs)
     )
-    assert len(pending_facts) == 1, (
-        f"Expected 1 pending FACT item, got {len(pending_facts)}. "
-        "STOP — pending overlay did not flow to compiler."
+    assert len(pending_facts) == 0, (
+        "Regression: experimental pending -> compiler FACT path must not be active"
     )
-    assert pending_facts[0].value == "我的妹妹叫 Alice"
+    # Pending item remains intact in overlay awaiting explicit accept/reject
+    assert len(overlay.get_pending(_alice_scope())) == 1
 
 
 # ---------------------------------------------------------------------------
