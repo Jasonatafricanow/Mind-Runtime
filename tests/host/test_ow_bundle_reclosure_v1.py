@@ -131,7 +131,7 @@ def test_process_alive_without_health_is_not_ow_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mr_repo_imports: None
 ) -> None:
     """The bundle authority must use the HTTP health result, not a PID hint."""
-    import mr_seam
+    from xiyue import mr_seam
 
     monkeypatch.setenv("MR_READINESS_PATH", str(tmp_path / "readiness.json"))
     monkeypatch.setattr(
