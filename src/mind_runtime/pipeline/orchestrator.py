@@ -1500,3 +1500,284 @@ class TurnOrchestrator:
                 f"accept_pending requires PENDING status; got {pending.status.value}"
             )
         # Synthesize an Evidence from the pending item's stored source text.
+        # Uses the pending item's scope; if the canonical path was not called
+        # with a scope, we fall back to the orchestrator's writing persona.
+        # The source_type is "user_message" because the pending item represents
+        # a user utterance that has now been admitted; the authority boundary
+        # is "user tells MR about their sister".
+        evidence = Evidence(
+            id=pending.evidence_ref,
+            source_type="user_message",
+            source_id=pending.pending_id,
+            authority_level=AuthorityLevel.ASSERTED,
+            occurred_at=pending.created_at,
+            received_at=pending.created_at,
+            payload=pending.source_text,
+            scope=pending.scope,
+            origin_runtime_id=pending.origin_runtime_id,
+            authority=Authority(
+                scope=pending.scope,
+                level=AuthorityLevel.ASSERTED,
+                source_id=pending.pending_id,
+            ),
+            sync=SyncFields(
+                scope=pending.scope,
+                origin_runtime_id=pending.origin_runtime_id,
+                object_id=pending.evidence_ref,
+                version=1,
+                idempotency_key=f"pending:{pending.pending_id}",
+            ),
+        )
+        result = self.fact_ingest.admit(
+            evidence,
+            interaction_id=pending.source_turn_id,
+            writing_runtime=(
+                pending.scope.agent_id
+                if pending.scope.domain == ScopeDomain.AGENT
+                else self._runtime_id
+            ),
+            writing_persona_id=pending.scope.persona_id,
+        )
+        # Remove from pending overlay (the ACCEPTED status is tracked by overlay accept())
+        self._pending_overlay.accept(pending_id)
+        return result.observation
+
+    def reject_pending(self, pending_id: str) -> bool:
+        """Reject a PENDING item without canonical promotion.
+
+        Removes the item from the pending overlay. Returns True if the item
+        was found, False if not.
+
+        Raises ValueError if the item is not in PENDING status.
+        """
+        if self._pending_overlay is None:
+            raise ValueError("pending_overlay is not set on this orchestrator")
+        pending = self._pending_overlay.get_by_pending_id(pending_id)
+        if pending is None:
+            return False
+        if pending.status is not PendingStatus.PENDING:
+            raise ValueError(
+                f"reject_pending requires PENDING status; got {pending.status.value}"
+            )
+        self._pending_overlay.reject(pending_id)
+        return True
+
+    def recover(self, interaction_id: str) -> RecoveryDecision:
+        """Decide what a restart may do with a checkpointed turn (D5.4)."""
+        checkpoint = (
+            self._checkpoints.load(interaction_id) if self._checkpoints is not None else None
+        )
+        return recovery_decision(checkpoint)
+
+    def reconcile(self, action_intent_id: str) -> ReceiptOutcome:
+        """Reconcile the delivery state of one action intent (D5.5)."""
+        if self._receipts is None:
+            return ReceiptOutcome(
+                action_intent_id=action_intent_id,
+                delivery_status=DeliveryStatus.UNSENT,
+                reconciled=False,
+                reason="no_registry",
+            )
+        outcome = self._receipts.reconcile(action_intent_id)
+        if outcome.reconciled and outcome.delivery_status is DeliveryStatus.SENT:
+            current = next(
+                (
+                    intent
+                    for intent in self.intent_lifecycle.backend.current(
+                        self._require_turn().interaction.scope
+                    )
+                    if intent.intent_id == action_intent_id
+                ),
+                None,
+            )
+            if current is not None and self.intent_lifecycle.has_status(
+                current, IntentStatus.ALLOWED
+            ):
+                self.intent_lifecycle.transition(
+                    current.scope,
+                    current.intent_id,
+                    IntentStatus.COMPLETED,
+                    ("delivery_reconciled_sent",),
+                    self._clock.now(),
+                    f"receipt-complete-{current.intent_id}-v{current.sync.version}",
+                )
+        return outcome
+
+    def _checkpoint(
+        self,
+        turn: _Turn,
+        *,
+        stage: TurnStage,
+        receipt: ActionReceipt | None,
+        now: datetime,
+    ) -> None:
+        if self._checkpoints is None:
+            return
+        projection_ref = turn.projection.projection_id if turn.projection is not None else "none"
+        checkpoint_id = f"checkpoint-{turn.interaction.interaction_id}"
+        self._checkpoints.save(
+            TurnCheckpoint(
+                checkpoint_id=checkpoint_id,
+                interaction_id=turn.interaction.interaction_id,
+                scope=turn.interaction.scope,
+                origin_runtime_id=self._runtime_id,
+                stage=stage,
+                base_state_version=max(
+                    (state.version for state in self._canonical.values()), default=1
+                ),
+                projection_ref=projection_ref,
+                action_id=receipt.action_intent_id if receipt is not None else None,
+                delivery_status=(
+                    receipt.delivery_status if receipt is not None else DeliveryStatus.UNSENT
+                ),
+                checkpointed_at=now,
+                sync=SyncFields(
+                    turn.interaction.scope,
+                    self._runtime_id,
+                    checkpoint_id,
+                    1,
+                    f"idem-{checkpoint_id}",
+                ),
+            )
+        )
+
+    def _drop_checkpoint(self, interaction_id: str) -> None:
+        if self._checkpoints is not None:
+            self._checkpoints.remove(interaction_id)
+
+    def _ingest_commit(self, turn: _Turn, *, now: datetime) -> None:
+        """Reconcile this turn's dimension-typed observations into canonical.
+
+        Only observations that follow the typed convention
+        (``<domain>.<name>.observed`` / ``.<terminal>``) produce state
+        changes; source-typed observations (semantic extraction pending in
+        D8) leave canonical untouched. The committed records are exposed as
+        ``overlay`` for read-your-writes inspection.
+        """
+        intents = tuple(
+            intent
+            for observation in turn.observations
+            if (intent := interpret_observation(observation)) is not None
+        )
+        if not intents:
+            self._overlay = ()
+            self._ingest_transitions = ()
+            return
+        reconciler = FactualReconciler(clock=self._clock, definitions=self._definitions)
+        result = reconciler.apply(self.canonical, intents)
+        base_ids = set(self._canonical)
+        # D5.8: ingest-committed facts are durable immediately (they survive
+        # a cognitive abort — G13b — and a restart). The durable table is
+        # append-only history: every state a transition references is
+        # persisted too (superseded intermediate records are not part of
+        # the effective set) so load_transitions can resolve full chains.
+        # MR-RUNTIME-05 §9: persist the ingest-committed states BEFORE
+        # advancing memory; a persistence failure fails the turn loudly
+        # instead of silently losing the write behind a success signal.
+        if self._state_backend is not None:
+            for state in result.effective:
+                # MR-RUNTIME-05 §9: a NEW state (not in the pre-turn
+                # canonical base) must durably insert — a conflicting
+                # duplicate fails the turn loudly. An UNCHANGED state
+                # carried through the reconciler's full-snapshot effective
+                # set is an idempotent re-persist of an already-durable row.
+                # (A validity-expiry rewrite of an existing row stays a
+                # silent re-persist: pre-existing D4.2 behavior, unchanged.)
+                if state.state_id in base_ids:
+                    self._state_backend.save_state(state)
+                else:
+                    self._persist_state_idempotent(state)
+            for transition in result.transitions:
+                # Idempotent re-persists: from_state is the already-durable
+                # prior record; to_state was saved with result.effective.
+                self._state_backend.save_state(transition.from_state)
+                self._state_backend.save_state(transition.to_state)
+                self._persist_transition_idempotent(transition)
+        for state in result.effective:
+            # One current record per (scope, dimension): drop older versions.
+            for old_id in [
+                state_id
+                for state_id, current in self._canonical.items()
+                if current.scope == state.scope and current.dimension == state.dimension
+            ]:
+                del self._canonical[old_id]
+            self._canonical[state.state_id] = state
+        self._overlay = tuple(state for state in result.effective if state.state_id not in base_ids)
+        self._ingest_transitions = result.transitions
+        # D5.6 trace: the causal chain continues into canonical state records.
+        for state in self._overlay:
+            self._trace.record(
+                turn.interaction.interaction_id,
+                "state",
+                ref=state.state_id,
+                at=now,
+            )
+
+    def _build_projection(
+        self,
+        turn: _Turn,
+        *,
+        effective_state_before: RuntimeState,
+        situation_ref: str,
+        assessment_trace_ref: str,
+        now: datetime,
+    ) -> TurnProjection:
+        """Assemble the uncommitted TurnProjection for this turn (D5.2).
+
+        The projected mind transition carries a turn_commit-phase
+        TransitionIntent only when the projection targets the same dimension
+        as the effective state (a real before/after pair); stub projections
+        that synthesize a fresh dimension carry no intent until real
+        dynamics land (D7).
+        """
+        assert turn.projected is not None
+        projected = turn.projected
+        current_by_key = {
+            (state.scope, state.dimension): state for state in self._canonical.values()
+        }
+        transition_intents = tuple(
+            build_turn_commit_intent(
+                interaction_id=turn.interaction.interaction_id,
+                scope=projected_state.scope,
+                origin_runtime_id=self._runtime_id,
+                target_dimension=projected_state.dimension,
+                before=current_by_key[(projected_state.scope, projected_state.dimension)],
+                proposed_after=projected_state,
+                cause_refs=tuple(observation.id for observation in turn.observations),
+                confidence=1.0,
+            )
+            for projected_state in projected.projected_states
+            if (projected_state.scope, projected_state.dimension) in current_by_key
+        )
+        projection_id = f"projection-{turn.interaction.interaction_id}"
+        intent_refs = turn.admitted_intent_refs
+        policy_result_ref = turn.policy_result.policy_id if turn.policy_result is not None else None
+        return TurnProjection(
+            projection_id=projection_id,
+            interaction_id=turn.interaction.interaction_id,
+            scope=turn.interaction.scope,
+            origin_runtime_id=self._runtime_id,
+            effective_state_before=effective_state_before,
+            observations=turn.observations,
+            situation=situation_ref,
+            assessment_trace_ref=assessment_trace_ref,
+            intent_refs=intent_refs,
+            policy_result_ref=policy_result_ref,
+            transition_intents=transition_intents,
+            projected_mind_state=projected,
+            created_at=now,
+            sync=SyncFields(
+                turn.interaction.scope,
+                self._runtime_id,
+                projection_id,
+                1,
+                f"idem-{projection_id}",
+            ),
+        )
+
+
+class _DefaultAgent:
+    """Fallback agent returning a fixed expression (never fails)."""
+
+    def respond(self, provider_context: ProviderExpressionContext) -> str:
+        return "stub response"
