@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from mind_runtime.contracts import (
+    ExpressionOutcome,
     Interaction,
     Situation,
 )
