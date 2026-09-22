@@ -233,6 +233,10 @@ certification/             deterministic certification artifacts
 
 This repository is a clean-history public baseline extracted from the longer Mind Runtime development line. Its Git history is intentionally not a complete reconstruction of every private/local development step.
 
+## Project history
+
+The public repository is a cleaned publication baseline. See [PROJECT-HISTORY.md](PROJECT-HISTORY.md) for the architectural development record and how to interpret the public commit history.
+
 ## Engineering philosophy
 
 > Build for the original problem, not for the maximum available capability.
