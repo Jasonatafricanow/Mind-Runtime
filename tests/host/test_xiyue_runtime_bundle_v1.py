@@ -327,6 +327,7 @@ class TestRequiredRuntimeFailureSeam:
         monkeypatch.setenv("MR_STATE_DB", str(state_db))
         monkeypatch.setenv("MR_ENABLED", "true")
         monkeypatch.setenv("MR_SEMANTIC_PROVIDER", "glm")
+        monkeypatch.setenv("GLM_API_KEY", "test-key")
 
         now = datetime.now(timezone.utc)
         mr_seam.begin_runtime_epoch(pid=os.getpid(), started_at=(now - timedelta(seconds=60)).isoformat())
@@ -453,6 +454,7 @@ class TestRequiredRuntimeFailureSeam:
         monkeypatch.setenv("MR_STATE_DB", str(state_db))
         monkeypatch.setenv("MR_ENABLED", "true")
         monkeypatch.setenv("MR_SEMANTIC_PROVIDER", "glm")
+        monkeypatch.setenv("GLM_API_KEY", "test-key")
 
         now = datetime.now(timezone.utc)
         mr_seam.begin_runtime_epoch(pid=os.getpid(), started_at=(now - timedelta(seconds=60)).isoformat())
