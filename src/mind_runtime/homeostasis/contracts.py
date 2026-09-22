@@ -195,4 +195,8 @@ __all__ = [
     "StateUpdateDisposition",
     "StateUpdatePolicy",
 ]
-\n# Backward-compatible names retained for existing callers and historical ADRs.\nHomeostasisDisposition = StateUpdateDisposition\nHomeostasisDecision = StateUpdateDecision\nHomeostasisGate = StateUpdatePolicy\n
+
+# Backward-compatible names retained for existing callers and historical ADRs.
+HomeostasisDisposition = StateUpdateDisposition
+HomeostasisDecision = StateUpdateDecision
+HomeostasisGate = StateUpdatePolicy
