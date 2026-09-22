@@ -30,9 +30,12 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import uvicorn
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 from mind_runtime.contracts.common import SyncFields
 from mind_runtime.contracts.evidence import Evidence
