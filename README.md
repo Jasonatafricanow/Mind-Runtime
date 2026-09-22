@@ -164,12 +164,14 @@ The repository intentionally distinguishes implemented runtime behavior from res
 
 ## Verification and delivery status
 
-MR uses pytest, strict mypy, Ruff, branch coverage, deterministic certification inputs, restart validation, and explicit live-test markers.
+MR uses pytest, strict mypy configuration, Ruff, branch coverage, deterministic certification inputs, restart validation, and explicit live-test markers.
 
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
+
+The public quality gate distinguishes **verification** from **historical static-analysis debt**. Clean installation and the full test suite run independently. Existing Ruff and mypy findings are tracked through no-regression baselines: counts may decrease, while new path/error-code findings or increases fail CI. This is debt accounting, not a claim that the current tree is already lint- or type-clean.
 
 The deterministic local product slice has been certified further than the live integration surface. Live shadow validation still depends on external environment evidence and is not represented as complete production validation.
 
