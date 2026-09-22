@@ -1,4 +1,4 @@
-"""MR-C10-B-W: Homeostasis Gate contracts.
+"""State update policy contracts.
 
 Ported from `6163b1f` (`w/c9-w1-closed-clean`) and adapted to the
 C10-B-W production wiring. Per ADR-C10-A1 §1.1 / §2.1 / §2.3 / §3 / §7
@@ -12,8 +12,8 @@ allowed to:
 
 This module defines the minimal contract surface:
   - CandidateStateDelta: a per-dimension candidate value, with provenance
-  - HomeostasisDecision: per-dimension verdict, with reason code
-  - HomeostasisGate: the protocol that turns candidates into decisions
+  - StateUpdateDecision: per-dimension verdict, with reason code
+  - StateUpdatePolicy: the protocol that turns candidates into decisions
 
 Numerical thresholds (salience, confidence, etc.) are NOT frozen here.
 They are configuration-loaded via the policy implementation that
@@ -38,7 +38,7 @@ from mind_runtime.contracts.scope import Scope
 # ============================================================================
 
 
-class HomeostasisDisposition(StrEnum):
+class StateUpdateDisposition(StrEnum):
     """Per-dimension verdict produced by the Homeostasis Gate.
 
     The five values are the full vocabulary required by ADR-C10-A1 §2.1.
@@ -115,12 +115,12 @@ class CandidateStateDelta:
 
 
 # ============================================================================
-# HomeostasisDecision — per-dimension verdict with reason code
+# StateUpdateDecision — per-dimension verdict with reason code
 # ============================================================================
 
 
 @dataclass(frozen=True, slots=True)
-class HomeostasisDecision:
+class StateUpdateDecision:
     """Per-dimension verdict for a single CandidateStateDelta.
 
     Carries the full audit trail per ADR-C10-A1 §3.1 and §7-H7:
@@ -133,25 +133,25 @@ class HomeostasisDecision:
 
     candidate: CandidateStateDelta
     prior_value: float | None
-    decision: HomeostasisDisposition
+    decision: StateUpdateDisposition
     reason_code: str
     decided_at: object  # datetime
 
     def __post_init__(self) -> None:
         if not isinstance(self.candidate, CandidateStateDelta):
             raise ValueError("candidate must be a CandidateStateDelta")
-        if not isinstance(self.decision, HomeostasisDisposition):
-            raise ValueError("decision must be a HomeostasisDisposition")
+        if not isinstance(self.decision, StateUpdateDisposition):
+            raise ValueError("decision must be a StateUpdateDisposition")
         require_non_empty(self.reason_code, "reason_code")
         require_aware_utc(self.decided_at, "decided_at")
 
 
 # ============================================================================
-# HomeostasisGate — the authority seam protocol
+# StateUpdatePolicy — the authority seam protocol
 # ============================================================================
 
 
-class HomeostasisGate(Protocol):
+class StateUpdatePolicy(Protocol):
     """The authority seam that turns candidate state deltas into decisions.
 
     Per ADR-C10-A1 §2.1, this protocol is the only place where Fast vs
@@ -173,14 +173,14 @@ class HomeostasisGate(Protocol):
         self,
         candidate: CandidateStateDelta,
         prior_value: float | None,
-    ) -> HomeostasisDecision:
+    ) -> StateUpdateDecision:
         """Decide the disposition for one candidate state delta."""
         ...
 
     def decide_batch(
         self,
         candidates: tuple[tuple[CandidateStateDelta, float | None], ...],
-    ) -> tuple[HomeostasisDecision, ...]:
+    ) -> tuple[StateUpdateDecision, ...]:
         """Decide dispositions for a batch of candidates.
 
         Default implementations can iterate decide() per item. Concrete
@@ -191,7 +191,8 @@ class HomeostasisGate(Protocol):
 
 __all__ = [
     "CandidateStateDelta",
-    "HomeostasisDecision",
-    "HomeostasisDisposition",
-    "HomeostasisGate",
+    "StateUpdateDecision",
+    "StateUpdateDisposition",
+    "StateUpdatePolicy",
 ]
+\n# Backward-compatible names retained for existing callers and historical ADRs.\nHomeostasisDisposition = StateUpdateDisposition\nHomeostasisDecision = StateUpdateDecision\nHomeostasisGate = StateUpdatePolicy\n
