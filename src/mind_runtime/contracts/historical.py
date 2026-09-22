@@ -115,4 +115,7 @@ class LongitudinalView:
     recent_predominant_valence: str = "neutral"
     exceptions: tuple[object, ...] = ()
     is_empty: bool = False
+    distinct_root_count: int = 0
+    raw_record_count: int = 0
+
 

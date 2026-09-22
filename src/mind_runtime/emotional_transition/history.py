@@ -233,24 +233,63 @@ def derive_longitudinal_view(
             recent_predominant_valence="neutral",
             exceptions=(),
             is_empty=True,
+            distinct_root_count=0,
+            raw_record_count=0,
         )
 
-    matched.sort(key=lambda r: getattr(r, "source_occurred_at", now))
-    if len(matched) > query.max_records:
-        matched = matched[-query.max_records:]
+    raw_record_count = len(matched)
 
-    total_count = len(matched)
-    pos_count = sum(1 for r in matched if getattr(r, "valence", "") == "positive")
-    neg_count = sum(1 for r in matched if getattr(r, "valence", "") == "negative")
-    neu_count = sum(1 for r in matched if getattr(r, "valence", "") not in ("positive", "negative"))
+    # Deduplicate by root occurrence identity to ensure:
+    # 1) Same-root re-summary / revision does not increase occurrence count (P1).
+    # 2) Old valid reference replay does not create a new occurrence (P2).
+    # Root occurrence identity is taken from source_refs[0] if present, else source_occurrence_id.
+    grouped_by_root: dict[str, list[Any]] = {}
+    for r in matched:
+        root_key = ""
+        refs = getattr(r, "source_refs", None)
+        if refs and len(refs) > 0 and refs[0]:
+            root_key = str(refs[0])
+        elif getattr(r, "source_occurrence_id", None):
+            root_key = str(r.source_occurrence_id)
+        else:
+            root_key = str(
+                getattr(r, "appraisal_id", None)
+                or getattr(r, "candidate_id", None)
+                or getattr(r, "acceptance_id", None)
+                or id(r)
+            )
+        grouped_by_root.setdefault(root_key, []).append(r)
 
-    earliest = getattr(matched[0], "source_occurred_at", now)
-    latest = getattr(matched[-1], "source_occurred_at", now)
+    # For each root group, select the latest revision by (assessed_at, source_occurred_at, acceptance_id)
+    deduped: list[Any] = []
+    for group in grouped_by_root.values():
+        latest_r = max(
+            group,
+            key=lambda rec: (
+                getattr(rec, "assessed_at", now),
+                getattr(rec, "source_occurred_at", now),
+                getattr(rec, "acceptance_id", ""),
+            ),
+        )
+        deduped.append(latest_r)
+
+    deduped.sort(key=lambda r: getattr(r, "source_occurred_at", now))
+    if len(deduped) > query.max_records:
+        deduped = deduped[-query.max_records:]
+
+    total_count = len(deduped)
+    distinct_root_count = len(deduped)
+    pos_count = sum(1 for r in deduped if getattr(r, "valence", "") == "positive")
+    neg_count = sum(1 for r in deduped if getattr(r, "valence", "") == "negative")
+    neu_count = sum(1 for r in deduped if getattr(r, "valence", "") not in ("positive", "negative"))
+
+    earliest = getattr(deduped[0], "source_occurred_at", now)
+    latest = getattr(deduped[-1], "source_occurred_at", now)
     time_span_days = max(0.0, (latest - earliest).total_seconds() / 86400.0)
 
     recent_cutoff = now - timedelta(days=query.recent_days)
-    earlier = [r for r in matched if getattr(r, "source_occurred_at", now) <= recent_cutoff]
-    recent = [r for r in matched if getattr(r, "source_occurred_at", now) > recent_cutoff]
+    earlier = [r for r in deduped if getattr(r, "source_occurred_at", now) <= recent_cutoff]
+    recent = [r for r in deduped if getattr(r, "source_occurred_at", now) > recent_cutoff]
 
     def _predominant_valence(recs: list[Any]) -> str:
         if not recs:
@@ -267,7 +306,7 @@ def derive_longitudinal_view(
             key=lambda k: (counts[k], 1 if k == "positive" else (0 if k == "neutral" else -1)),
         )
 
-    earlier_predominant = _predominant_valence(earlier) if earlier else _predominant_valence(matched)
+    earlier_predominant = _predominant_valence(earlier) if earlier else _predominant_valence(deduped)
     recent_predominant = _predominant_valence(recent) if recent else earlier_predominant
 
     exceptions = tuple(r for r in recent if getattr(r, "valence", "") != earlier_predominant)
@@ -284,5 +323,7 @@ def derive_longitudinal_view(
         recent_predominant_valence=recent_predominant,
         exceptions=exceptions,
         is_empty=False,
+        distinct_root_count=distinct_root_count,
+        raw_record_count=raw_record_count,
     )
 

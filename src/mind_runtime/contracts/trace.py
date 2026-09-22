@@ -86,6 +86,7 @@ class ResolvedSource:
     is_admitted: bool
     is_valid_for_longitudinal_support: bool
     denial_reason: str | None = None
+    is_quoted_prior_judgment: bool = False
 
     def __post_init__(self) -> None:
         require_non_empty(self.ref, "ref")

@@ -189,7 +189,18 @@ def _step_slow_state_summary(dctx) -> str | None:
 def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | None:
     """Build a HostDecisionContext from the orchestrator's current state.
 
-    Returns None if the orchestrator has no decision context yet.
+    AUTHORITY BOUNDARY NOTE (MR Affect Slice 01A):
+    - `TurnConditionProjection` is the sole semantic authority for longitudinal
+      read-time conditions.
+    - Host transport fields (`HostDecisionContext.emotional_state`,
+      `HostDecisionContext.intent_summary`) are purely transport compatibility
+      adapters for downstream BODY consumption. They are NOT semantic owners,
+      cannot mutate or define relationship state, and must never be treated as
+      canonical truth.
+    - If `cond` is omitted (`cond.is_omitted == True`) or has empty text, no
+      longitudinal condition text is surfaced to BODY.
+
+    Returns None if the orchestrator has no decision context yet and no active condition.
     The summaries are human-readable strings, never numeric values.
     """
     ctx = orchestrator.decision_context

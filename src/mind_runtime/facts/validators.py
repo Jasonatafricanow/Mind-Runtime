@@ -13,8 +13,41 @@ INTERNALLY_DERIVED_SOURCE_TYPES = frozenset(
         "model_output",
         "derived_context",
         "internal_projection",
+        "summary",
+        "derived_summary",
     }
 )
+
+_PRIOR_JUDGMENT_QUOTE_PATTERNS = (
+    "你之前不是说",
+    "你之前说",
+    "你上次说",
+    "你说过",
+    "正如你所说",
+    "you previously said",
+    "you said earlier",
+    "you said before",
+    "you already told me",
+    "as you said",
+    "according to you",
+)
+
+
+def _is_quoting_prior_judgment(payload: object) -> bool:
+    """Check if the payload contains quotes of assistant's prior judgments."""
+    from collections.abc import Mapping
+
+    if isinstance(payload, Mapping):
+        if payload.get("quoted_prior_judgment") is True or payload.get("is_quoted_prior_judgment") is True:
+            return True
+        text = payload.get("text") or payload.get("content") or payload.get("message") or ""
+        if isinstance(text, str):
+            text_lower = text.lower()
+            return any(pat.lower() in text_lower for pat in _PRIOR_JUDGMENT_QUOTE_PATTERNS)
+    elif isinstance(payload, str):
+        text_lower = payload.lower()
+        return any(pat.lower() in text_lower for pat in _PRIOR_JUDGMENT_QUOTE_PATTERNS)
+    return False
 
 
 class AuthorityError(Exception):
@@ -94,6 +127,46 @@ class SourceResolver:
     def __init__(self, backend: object) -> None:
         self._backend = backend
 
+    def _walk_refs(
+        self,
+        curr: str,
+        expected_scope: Scope,
+        path: tuple[str, ...],
+    ) -> tuple[bool, object | None]:
+        """Walk reference graph detecting cycles and finding leaf Evidence."""
+        if curr in path:
+            return True, None
+        new_path = path + (curr,)
+        backend = self._backend
+
+        ev_pair = backend.find_evidence(expected_scope, curr) if hasattr(backend, "find_evidence") else None
+        if ev_pair:
+            ev = ev_pair[0]
+            if isinstance(ev.payload, dict):
+                refs = ev.payload.get("evidence_refs") or ev.payload.get("source_refs")
+                if isinstance(refs, (list, tuple)):
+                    for r in refs:
+                        if isinstance(r, str):
+                            cycle, found = self._walk_refs(r, expected_scope, new_path)
+                            if cycle:
+                                return True, None
+                            if found:
+                                return False, found
+            return False, ev
+
+        ob = backend.find_observation(expected_scope, curr) if hasattr(backend, "find_observation") else None
+        if ob:
+            if ob.evidence_refs:
+                for child_ref in ob.evidence_refs:
+                    cycle, found = self._walk_refs(child_ref, expected_scope, new_path)
+                    if cycle:
+                        return True, None
+                    if found:
+                        return False, found
+            return False, None
+
+        return False, None
+
     def resolve(
         self,
         ref: str,
@@ -142,12 +215,28 @@ class SourceResolver:
 
         evidence = ev_pair[0] if ev_pair else None
         observation = ob
-        root_ev_id = evidence.id if evidence else (observation.evidence_refs[0] if observation and observation.evidence_refs else None)
-        if root_ev_id and not evidence and hasattr(backend, "find_evidence"):
-            ev_pair2 = backend.find_evidence(expected_scope, root_ev_id)
-            if ev_pair2:
-                evidence = ev_pair2[0]
 
+        # 3. Circular reference check
+        cycle_detected, leaf_ev = self._walk_refs(ref, expected_scope, ())
+        if cycle_detected:
+            actual_runtime = evidence.origin_runtime_id if evidence else (observation.origin_runtime_id if observation else "")
+            return ResolvedSource(
+                ref=ref,
+                root_evidence_id=None,
+                admitted_observation_id=observation.id if observation else None,
+                scope=expected_scope,
+                origin_runtime_id=actual_runtime,
+                source_kind=SourceKind.UNKNOWN,
+                epistemic_mode=EpistemicMode.UNKNOWN,
+                is_admitted=True,
+                is_valid_for_longitudinal_support=False,
+                denial_reason="circular_provenance_detected",
+            )
+
+        if leaf_ev is not None:
+            evidence = leaf_ev
+
+        root_ev_id = evidence.id if evidence else (observation.evidence_refs[0] if observation and observation.evidence_refs else None)
         actual_runtime = evidence.origin_runtime_id if evidence else (observation.origin_runtime_id if observation else "")
         if expected_runtime and actual_runtime != expected_runtime:
             return ResolvedSource(
@@ -178,6 +267,28 @@ class SourceResolver:
                 is_admitted=True,
                 is_valid_for_longitudinal_support=False,
                 denial_reason="derived_source_cannot_support_longitudinal",
+            )
+
+        # 4. Quoted prior judgment check
+        is_quoted = False
+        if evidence and _is_quoting_prior_judgment(evidence.payload):
+            is_quoted = True
+        elif observation and _is_quoting_prior_judgment(observation.value):
+            is_quoted = True
+
+        if is_quoted:
+            return ResolvedSource(
+                ref=ref,
+                root_evidence_id=root_ev_id,
+                admitted_observation_id=observation.id if observation else None,
+                scope=expected_scope,
+                origin_runtime_id=actual_runtime,
+                source_kind=SourceKind.USER_REPORT,
+                epistemic_mode=EpistemicMode.REPORTED,
+                is_admitted=True,
+                is_valid_for_longitudinal_support=False,
+                denial_reason="quoted_prior_judgment_cannot_provide_independent_support",
+                is_quoted_prior_judgment=True,
             )
 
         if source_type in ("user_message", "user_profile"):

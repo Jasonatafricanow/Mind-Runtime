@@ -724,11 +724,11 @@ def compile_condition(
             coverage_summary="omitted",
         )
 
-    if longitudinal_view.total_record_count == 0:
+    if longitudinal_view.total_record_count == 0 or longitudinal_view.distinct_root_count == 0:
         return TurnConditionProjection(
-            condition_text=f"No prior relationship history with {participant_id} (0 interactions).",
-            is_omitted=False,
-            omission_reason=None,
+            condition_text="",
+            is_omitted=True,
+            omission_reason="zero_history_omission",
             coverage_summary="no_relationship_history",
         )
 
@@ -738,13 +738,13 @@ def compile_condition(
         else ""
     )
     exc_str = (
-        f" Recent exceptions: {len(longitudinal_view.exceptions)}."
+        f"; recent exceptions: {len(longitudinal_view.exceptions)}"
         if longitudinal_view.exceptions
         else ""
     )
     condition_text = (
-        f"Prior relationship history with {participant_id}: {longitudinal_view.total_record_count} interactions"
-        f"{span_str}. Pattern: {longitudinal_view.earlier_predominant_valence}.{exc_str}"
+        f"Covered appraisal history for {participant_id}: {longitudinal_view.total_record_count} interactions"
+        f"{span_str}; appraisal valence predominantly {longitudinal_view.earlier_predominant_valence}{exc_str}."
     )
     return TurnConditionProjection(
         condition_text=condition_text,
