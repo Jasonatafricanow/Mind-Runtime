@@ -41,6 +41,7 @@ from mind_runtime.homeostasis.contracts import (
     HomeostasisDisposition,
 )
 from mind_runtime.slow_plasticity.writer import SlowPlasticityWriter
+from mind_runtime.state.definitions import StateDefinitionRegistry
 from mind_runtime.state.longitudinal import register_longitudinal_definition
 from mind_runtime.state.persistence import SqliteStateBackend
 

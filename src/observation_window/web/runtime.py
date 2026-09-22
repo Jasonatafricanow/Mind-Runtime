@@ -25,11 +25,14 @@ import argparse
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
 from observation_window.web import LiveTraceCache
+
+if TYPE_CHECKING:
+    from observation_window.binding import StateSurface
 from observation_window.web.wiring import (
     OrchestratorLiveTraceSink,
     build_dashboard_data_sources,

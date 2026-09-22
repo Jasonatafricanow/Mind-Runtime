@@ -12,13 +12,14 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from mind_runtime.validation.digest import canonical_json_bytes
 
-REPO = Path("C:/projects/Mind Runtime")
+REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "certification" / "d11s" / "inputs" / "runtime-config.json"
 SEAM = REPO / "xiyue" / "mr_seam.py"
 
@@ -26,6 +27,7 @@ SEAM = REPO / "xiyue" / "mr_seam.py"
 def _load_seam():
     spec = importlib.util.spec_from_file_location("mr_seam", str(SEAM))
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

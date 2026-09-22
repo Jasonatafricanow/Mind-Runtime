@@ -246,17 +246,9 @@ class CausalChainBuilder:
         (the OW-3 spec requires a clean OFF display, not a
         "missing reference" error for the J8-E3 chain itself).
         """
-        try:
-            from mind_runtime.contracts.appraisal_affect import (
-                AppraisalAffectTransitionResult,
-            )
-        except ImportError:
-            AppraisalAffectTransitionResult = None  # type: ignore
         from observation_window.live_trace import OWLiveTraceSource
+
         if hasattr(snapshot_or_result, "assessment_trace"):
-            # Live result: only J8-E3 subtype produces causal chains.
-            if AppraisalAffectTransitionResult is not None and not isinstance(snapshot_or_result, AppraisalAffectTransitionResult):
-                return ()
             source = OWLiveTraceSource()
             snap = source.observe(
                 interaction_id="ix-inline",

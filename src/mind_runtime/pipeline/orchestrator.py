@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from dataclasses import replace as _replace
 from datetime import datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
+from typing import Any
 
 from mind_runtime.contracts import (
     ActionDecision,
@@ -248,8 +250,8 @@ class TurnOrchestrator:
         effect_rules: tuple[EventEffectRule, ...] = (),
         semantic_provider: SemanticCandidateProvider | None = None,
         shadow_enabled: bool | None = None,
-        external_memory_authority: ExternalMemoryAuthority | None = None,
-        external_memory_reference_store: MemoryReferenceStore | None = None,
+        external_memory_authority: object | None = None,
+        external_memory_reference_store: object | None = None,
         pending_overlay: PendingWorkingOverlay | None = None,
         slow_plasticity_writer: SlowPlasticityWriter | None = None,
         telemetry_sink: TelemetrySinkProtocol | None = None,
@@ -412,8 +414,8 @@ class TurnOrchestrator:
         # Forward-compatibility slot: retained so that a future ADR can re-open
         # this seam and restore external memory wiring without constructor
         # signature churn. Both default to None.
-        self._em_authority: ExternalMemoryAuthority | None = external_memory_authority
-        self._em_reference_store: MemoryReferenceStore | None = external_memory_reference_store
+        self._em_authority: object | None = external_memory_authority
+        self._em_reference_store: object | None = external_memory_reference_store
 
     @property
     def shadow_enabled(self) -> bool:

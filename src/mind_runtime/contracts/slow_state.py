@@ -13,6 +13,11 @@ concerns belong to a separate C2 authority decision.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mind_runtime.contracts.state import RuntimeState
+
 # SlowStateProjection is a frozen tuple of RuntimeState records whose
 # dimension is a registered longitudinal target.  Read from the
 # authoritative SQLite backend at orchestrator turn-runtime (no cache,

@@ -33,7 +33,7 @@ C10-B1-R3 additions:
   - H6 (no evidence → no SLOW_*) preserved
   - R3-F2 confidence asymmetry preserved (confidence can veto, never promote)
   - This is a CANDIDATE implementation per R3-F3; the runtime boundary
-    is the HomeostasisGate Protocol, not this concrete policy.
+    is the StateUpdatePolicy Protocol, not this concrete policy.
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from typing import Protocol
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.homeostasis.contracts import (
     CandidateStateDelta,
-    HomeostasisDecision,
-    HomeostasisDisposition,
-    HomeostasisGate,
+    StateUpdateDecision,
+    StateUpdateDisposition,
+    StateUpdatePolicy,
 )
 
 
@@ -134,7 +134,7 @@ class SalienceThresholdPolicy:
     no batch cross-candidate reasoning.
 
     C10-B1-R3 status: CANDIDATE implementation (R3-F3). The runtime
-    boundary is the HomeostasisGate Protocol. Subject to conformance
+    boundary is the StateUpdatePolicy Protocol. Subject to conformance
     audit.
     """
 
@@ -145,7 +145,7 @@ class SalienceThresholdPolicy:
         self,
         candidate: CandidateStateDelta,
         prior_value: float | None,
-    ) -> HomeostasisDecision:
+    ) -> StateUpdateDecision:
         salience: float | None = candidate.salience
         confidence = float(candidate.confidence)
         fast_floor = float(self.config.salience_floor_fast_apply)
@@ -158,10 +158,10 @@ class SalienceThresholdPolicy:
         # Salience=None means "not appraised" — the gate cannot authorize
         # any mutation on missing authority.
         if salience is None:
-            return HomeostasisDecision(
+            return StateUpdateDecision(
                 candidate=candidate,
                 prior_value=prior_value,
-                decision=HomeostasisDisposition.REJECT,
+                decision=StateUpdateDisposition.REJECT,
                 reason_code="salience_unavailable_reject",
                 decided_at=self.clock.now(),
             )
@@ -179,17 +179,17 @@ class SalienceThresholdPolicy:
             # SLOW_DAMP. It may still be FAST_APPLY (if salience is high
             # enough) or be REJECTED.
             if salience >= fast_floor:
-                return HomeostasisDecision(
+                return StateUpdateDecision(
                     candidate=candidate,
                     prior_value=prior_value,
-                    decision=HomeostasisDisposition.FAST_APPLY,
+                    decision=StateUpdateDisposition.FAST_APPLY,
                     reason_code="no_evidence_fast_only_authorized",
                     decided_at=self.clock.now(),
                 )
-            return HomeostasisDecision(
+            return StateUpdateDecision(
                 candidate=candidate,
                 prior_value=prior_value,
-                decision=HomeostasisDisposition.REJECT,
+                decision=StateUpdateDisposition.REJECT,
                 reason_code="no_evidence_reject",
                 decided_at=self.clock.now(),
             )
@@ -199,17 +199,17 @@ class SalienceThresholdPolicy:
             # Below the Slow-mutation thresholds. Fast may still apply if
             # salience is high enough; otherwise the candidate is rejected.
             if salience >= fast_floor:
-                return HomeostasisDecision(
+                return StateUpdateDecision(
                     candidate=candidate,
                     prior_value=prior_value,
-                    decision=HomeostasisDisposition.FAST_APPLY,
+                    decision=StateUpdateDisposition.FAST_APPLY,
                     reason_code="fast_apply_below_slow_thresholds",
                     decided_at=self.clock.now(),
                 )
-            return HomeostasisDecision(
+            return StateUpdateDecision(
                 candidate=candidate,
                 prior_value=prior_value,
-                decision=HomeostasisDisposition.FAST_ONLY,
+                decision=StateUpdateDisposition.FAST_ONLY,
                 reason_code="low_salience_low_confidence_fast_only",
                 decided_at=self.clock.now(),
             )
@@ -217,20 +217,20 @@ class SalienceThresholdPolicy:
         # H3: high-salience verified event may both displace Fast and
         # enter Slow candidacy. The Gate decides each separately.
         if confidence >= slow_conf:
-            return HomeostasisDecision(
+            return StateUpdateDecision(
                 candidate=candidate,
                 prior_value=prior_value,
-                decision=HomeostasisDisposition.SLOW_ACCEPT,
+                decision=StateUpdateDisposition.SLOW_ACCEPT,
                 reason_code="high_salience_high_confidence_slow_accept",
                 decided_at=self.clock.now(),
             )
 
         # Defensive: if salience passes slow_floor but confidence
         # doesn't, we damp the slow mutation.
-        return HomeostasisDecision(
+        return StateUpdateDecision(
             candidate=candidate,
             prior_value=prior_value,
-            decision=HomeostasisDisposition.SLOW_DAMP,
+            decision=StateUpdateDisposition.SLOW_DAMP,
             reason_code="high_salience_low_confidence_slow_damp",
             decided_at=self.clock.now(),
         )
@@ -238,7 +238,7 @@ class SalienceThresholdPolicy:
     def decide_batch(
         self,
         candidates: tuple[tuple[CandidateStateDelta, float | None], ...],
-    ) -> tuple[HomeostasisDecision, ...]:
+    ) -> tuple[StateUpdateDecision, ...]:
         return tuple(self.decide(c, p) for c, p in candidates)
 
 

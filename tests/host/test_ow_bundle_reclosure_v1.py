@@ -14,9 +14,9 @@ import pytest
 @pytest.fixture
 def mr_repo_imports() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    for path in (repo_root / "xiyue", repo_root / "src"):
-        if str(path) not in os.sys.path:
-            os.sys.path.insert(0, str(path))
+    src_dir = repo_root / "src"
+    if str(src_dir) not in os.sys.path:
+        os.sys.path.insert(0, str(src_dir))
 
 
 def test_production_ow_entrypoint_reaches_uvicorn_without_legacy_variables(
@@ -69,7 +69,7 @@ def test_gateway_reconciles_ow_late_start_without_moving_ingress_ready_at(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mr_repo_imports: None
 ) -> None:
     """T1 is DEGRADED; T4 OW health causes Gateway-owned READY refresh."""
-    import mr_seam
+    from xiyue import mr_seam
 
     readiness = tmp_path / "readiness.json"
     monkeypatch.setenv("MR_READINESS_PATH", str(readiness))
@@ -131,7 +131,7 @@ def test_process_alive_without_health_is_not_ow_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mr_repo_imports: None
 ) -> None:
     """The bundle authority must use the HTTP health result, not a PID hint."""
-    import mr_seam
+    from xiyue import mr_seam
 
     monkeypatch.setenv("MR_READINESS_PATH", str(tmp_path / "readiness.json"))
     monkeypatch.setattr(

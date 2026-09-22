@@ -1,4 +1,4 @@
-"""MR-C10-B-W: Slow Plasticity Writer — canonical rolling-window writer.
+"""Rolling-window writer for longitudinal state.
 
 Implements ADR-0017 (ACCEPTED):
 
@@ -29,7 +29,7 @@ Persistence:
 The writer is the SINGLE AUTHORITATIVE writer for registered longitudinal
 dimensions. The orchestrator seam in `commit_turn()` calls this writer
 exactly once per turn with the SLOW_ACCEPT decisions produced by the
-HomeostasisGate. The writer does not call any LLM, does not infer
+StateUpdatePolicy. The writer does not call any LLM, does not infer
 contributions, does not strip or rewrite target_dimension strings, and
 does not mutate `agent.affect.*` state.
 """
@@ -47,8 +47,8 @@ from mind_runtime.contracts import (
 )
 from mind_runtime.homeostasis.contracts import (
     CandidateStateDelta,
-    HomeostasisDecision,
-    HomeostasisDisposition,
+    StateUpdateDecision,
+    StateUpdateDisposition,
 )
 
 
@@ -61,8 +61,8 @@ from mind_runtime.homeostasis.contracts import (
 class SlowContributionRecord:
     """One qualifying SLOW_ACCEPT contribution in the rolling window.
 
-    The record is constructed from a HomeostasisDecision accepted by the
-    HomeostasisGate. It carries the full audit-trail identity bundle so
+    The record is constructed from a StateUpdateDecision accepted by the
+    StateUpdatePolicy. It carries the full audit-trail identity bundle so
     the writer can persist the rolling window verbatim and recompute A_t(d)
     on restart without losing lineage.
     """
@@ -165,14 +165,14 @@ class _RealClock:
 
 
 # ============================================================================
-# SlowPlasticityWriter — the single authoritative slow-state writer
+# LongitudinalStateWriter — the single authoritative slow-state writer
 # ============================================================================
 
 
-class SlowPlasticityWriter:
+class LongitudinalStateWriter:
     """C10-B-W: the authoritative slow-plasticity writer (ADR-0017).
 
-    Accepts qualifying HomeostasisDecision records from the orchestrator,
+    Accepts qualifying StateUpdateDecision records from the orchestrator,
     maintains a rolling window of the last `window_size` qualifying
     contributions per (scope, dimension), and atomically writes the
     salience-weighted mean (A_t) to the canonical RuntimeState table.
@@ -182,7 +182,7 @@ class SlowPlasticityWriter:
             has no default. Pass it explicitly.
 
     Usage:
-        writer = SlowPlasticityWriter(
+        writer = LongitudinalStateWriter(
             backend=state_backend, runtime_id="runtime-1", window_size=8
         )
         writer.load()  # rebuild in-memory view from persisted ledger
@@ -248,11 +248,11 @@ class SlowPlasticityWriter:
 
     def accept(
         self,
-        decision: HomeostasisDecision,
+        decision: StateUpdateDecision,
         *,
         target_scope: Scope | None = None,
     ) -> SlowContributionRecord | None:
-        """Accept one HomeostasisDecision if it qualifies for slow state.
+        """Accept one StateUpdateDecision if it qualifies for slow state.
 
         Qualifying (per ADR-0017):
           - decision.decision == SLOW_ACCEPT
@@ -265,7 +265,7 @@ class SlowPlasticityWriter:
         Non-qualifying decisions are silently dropped. The orchestrator seam
         is responsible for routing only SLOW_ACCEPT decisions to the writer.
         """
-        if decision.decision != HomeostasisDisposition.SLOW_ACCEPT:
+        if decision.decision != StateUpdateDisposition.SLOW_ACCEPT:
             return None
         if not isinstance(decision.candidate, CandidateStateDelta):
             return None
@@ -557,6 +557,9 @@ class SlowPlasticityWriter:
 __all__ = [
     "SlowContributionRecord",
     "SlowWindowSnapshot",
-    "SlowPlasticityWriter",
+    "LongitudinalStateWriter",
     "SlowStateBackend",
 ]
+
+# Backward-compatible public name.
+SlowPlasticityWriter = LongitudinalStateWriter
