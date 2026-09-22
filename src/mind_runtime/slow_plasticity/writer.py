@@ -560,4 +560,6 @@ __all__ = [
     "LongitudinalStateWriter",
     "SlowStateBackend",
 ]
-\n# Backward-compatible public name.\nSlowPlasticityWriter = LongitudinalStateWriter\n
+
+# Backward-compatible public name.
+SlowPlasticityWriter = LongitudinalStateWriter
