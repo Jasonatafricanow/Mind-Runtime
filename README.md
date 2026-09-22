@@ -1,251 +1,201 @@
 # Mind Runtime
 
-**A stateful cognition runtime for long-lived AI agents.**
+**A stateful runtime for long-lived AI agents.**
 
-Mind Runtime (MR) is a runtime for carrying authorized state across turns,
-restarts, and model changes. It separates evidence, memory, runtime identity,
-canonical state, policy, expression, persistence, and observation so that a
-model can continue from what a system has already established instead of
-reconstructing everything from historical fragments on every turn.
+Mind Runtime (MR) is built around a problem that prompt expansion and memory retrieval do not fully solve:
 
-MR is a runtime boundary, not a claim that current systems are conscious or
-fully autonomous. Models remain responsible for bounded inference and
-expression. MR is responsible for the state and authority boundaries from
-which inference may safely continue.
+> How can an agent continue from previously established state across turns, restarts, and model changes without allowing retrieval or model output to silently become authority?
 
-## Why Mind Runtime Exists
+MR separates evidence, memory, runtime identity, canonical state, policy, persistence, expression, telemetry, and observation. Models still perform inference; MR defines the state and authority boundary from which inference continues.
 
-Large language models are good at reasoning in the moment, but they do not
-naturally maintain a stable understanding of a person, themselves, or an
-ongoing relationship across time.
+## Portfolio role
 
-Many memory systems address this by retrieving historical information and
-placing it back into the prompt. Mind Runtime takes a different approach. It
-treats persistent cognition as runtime state with explicit authority,
-provenance, identity, lifecycle, and failure semantics.
+```text
+                         LCE
+             longitudinal structure research
+                          |
+                          | optional derived input
+                          v
+Agent host -------> Mind Runtime
+ interaction       runtime authority
+                          |
+                          +------> Observation Window
+                          |          read-only inspection
+                          |
+                          +------> MR Habitat
+                                     spatial projection
+```
 
-The question is not only whether a system can remember that something
-happened. The question is whether it can continue from the understanding
-that event produced, while distinguishing evidence, interpretation, current
-state, projection, and superseded state.
+[Statebar MCP](https://github.com/Jasonatafricanow/Statebar-mcp) solves a narrower current-state problem. MR generalizes the same concern into a long-lived agent runtime with explicit identity, persistence, admission, policy, and recovery semantics.
 
-## What MR Is Not
+## The problem
 
-Mind Runtime is not:
-
-- a vector database;
-- a chat-history wrapper;
-- a prompt persona;
-- a RAG framework;
-- an autonomous-agent framework;
-- a virtual companion application.
-
-Models still perform inference. MR provides the durable runtime state and
-governance boundaries that inference consumes.
-
-## Problem Definition
-
-A long-lived agent needs to answer questions such as:
-
-- Who is the user and who is the agent?
-- What changed, and when?
-- What was already understood?
-- Which conclusions remain valid?
-- Which state was temporary, expired, or superseded?
-- What is allowed to affect the next decision?
-
-A simple historical loop is:
+A common memory loop is:
 
 ```text
 history -> retrieve -> prompt -> model reinterpretation
 ```
 
-That loop can be useful, but by itself it leaves authority implicit. It also
-permits model variance, repeated reasoning, retrieval being mistaken for
-belief, self-reinforcement, and ambiguity between current and superseded
-state. MR makes those boundaries explicit in code and contracts.
+This is useful for recall, but it leaves several questions implicit:
 
-## Design Principles
+- Is retrieved material evidence, a candidate, or accepted state?
+- Which conclusion is still current after later evidence?
+- What survives restart?
+- What happens when two runtime identities share one process?
+- Can a model's own previous interpretation reinforce itself?
+- Which state is allowed to affect planning or expression now?
+
+MR treats those as runtime questions rather than prompt-engineering details.
+
+## How the design evolved
+
+### 1. Memory retrieval exposed an authority problem
+
+Improving retrieval did not remove repeated reinterpretation. The model still had to reconstruct what mattered and could treat a retrieved item as if it were already accepted truth.
+
+The design moved from "better memory injection" toward explicit state objects with provenance, lifecycle, identity, and admission rules.
+
+### 2. Persistent state required runtime identity
+
+Once state survives turns and restarts, "which agent/user/runtime does this belong to?" becomes a storage and authority question.
+
+MR therefore uses explicit runtime bindings, namespaces, storage validation, and multi-binding isolation rather than relying on ambient process configuration.
+
+### 3. More capability increased the need for boundaries
+
+Affect, intent, scheduling, context compilation, and expression were added as bounded stages. The runtime does not become an open-ended agent core: deterministic and policy-owned transitions stay separate from model reasoning and language generation.
+
+### 4. Longitudinal cognition outgrew the runtime
+
+Experiments around semantic structure, trajectories, and understanding across long histories became a different class of problem. Keeping that work inside MR would let experimental discovery look like current runtime authority.
+
+That led to [LCE](https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine) as a separate engine.
+
+### 5. Inspection became a governance surface
+
+Persistent systems need more than logs. Observation Window was kept read-only so state, bindings, causal traces, and telemetry can be inspected without giving the inspection layer write authority.
+
+[MR Habitat](https://github.com/Jasonatafricanow/MR-Habitat) explores a later product question: whether that state can be perceived as spatial presence without moving cognition ownership into the visualization.
+
+## Key design decisions
 
 ### Evidence is not cognition
 
-Interaction, observation, retrieved memory, model interpretation, projection,
-and canonical state are different objects. They have different provenance and
-different authority.
+Interaction, memory, retrieved candidates, model interpretation, projection, and canonical state are distinct objects with different provenance and authority.
 
 ### Retrieval is not authority
 
-Similarity, recency, frequency, and clustering can find candidates. They do
-not by themselves authorize canonical runtime state. Authority is explicit.
+Similarity, recency, frequency, and clustering may surface candidates. They do not authorize runtime state.
 
-### Cognition should survive model replacement
+### Model output cannot authorize itself
 
-Durable state should become less dependent on model-specific reconstruction.
-MR does not claim complete model independence; it provides the boundaries that
-make that direction testable.
+Probabilistic inference can propose meaning. Promotion into durable runtime state requires an explicit authority path.
 
-### Longitudinal state is different from memory
+### Ambiguity fails closed
 
-Remembering that something happened is different from representing how
-something changed over time.
+Identity, scope, binding, or authority ambiguity is rejected or left unknown rather than silently resolved for convenience.
 
-### Ambiguity should fail closed
+### Runtime state must survive restart
 
-When identity, scope, binding, or authority is ambiguous, the safe behavior is
-to reject or abstain. Convenience is not allowed to create authority.
+Persistence and checkpoint semantics are part of correctness, not a cache optimization.
 
-### Persistent cognition must be inspectable
+### Observation is read-only
 
-Provenance, telemetry, causal tracing, human inspection, and restart/recovery
-checks are runtime governance, not optional decoration. The read-only
-Observation Window source under `src/observation_window/` is part of that
-boundary.
+Inspection should explain the system without becoming another hidden write path.
 
-## Architecture
+### Current-turn reasoning stays outside MR
 
-```text
-                     Model / Agent Host
-                            |
-                            v
-                  +-------------------+
-                  |    Mind Runtime   |
-                  |                   |
-Interaction ----->| Runtime Binding   |
-                  | Admission         |
-                  | State Authority   |
-                  | Memory Authority  |
-                  | Persistence       |
-                  | Telemetry         |
-                  +---------+---------+
-                            |
-              +-------------+-------------+
-              v             v             v
-        Canonical State   Memory       Observation
-           SQLite        Storage         Window
-                            |
-                            | optional
-                            v
-                    External Cognition
-                        Substrates
-                            |
-                            v
-                           LCE
-```
+MR provides durable state, policy boundaries, and bounded context. The model/agent host still owns current-turn reasoning and expression within those constraints.
 
-MR owns runtime authority. External systems may discover, retrieve, or
-interpret structures; they do not automatically become canonical MR state.
-
-## Verified Product Slice and Delivery Gates
-
-The currently verified compressed product slice is:
+## Runtime architecture
 
 ```text
 Interaction
--> Evidence
--> Observation
--> Effective State
--> Factual Context
--> Deterministic Emotional Transition
--> Projected Internal State
--> Intent / Scheduler
--> ActionPolicy
--> Minimal Decision Context
--> Agent / LLM Expression
--> ExpressionGuard
--> Commit
+    |
+    v
+Runtime Binding / Admission
+    |
+    v
+Evidence -> Effective State -> Factual Context
+                         |
+                         v
+               bounded deterministic state
+               affect / intent / policy
+                         |
+                         v
+                 Context Compilation
+                         |
+                         v
+                    Model / Agent
+                         |
+                         v
+                 Expression Guard
+                         |
+                         v
+                       Commit
+                         |
+            +------------+------------+
+            v                         v
+       Persistence                Telemetry
+                                     |
+                                     v
+                             Observation Window
 ```
 
-The accepted delivery order keeps deterministic certification separate from
-live shadow validation:
+Optional external cognition systems such as LCE may provide derived structures through narrow adapters. They do not automatically become canonical MR state.
 
-```text
-D0 -> D1 -> D2 -> D2S -> D3 -> D4 -> D5 -> D6 -> D7 -> D7R -> D8 -> D9 -> D10 -> D11S -> D11L -> D11 completion -> D11P
+## Current implemented scope
+
+The public baseline includes:
+
+- SQLite-backed canonical facts, state, intent, delivery, and checkpoints;
+- explicit runtime binding and storage namespaces;
+- persistent multi-binding registry and isolation;
+- memory admission / retrieval seams;
+- optional vector retrieval adapters;
+- optional one-way LCE integration boundary;
+- process-local atomic turn admission;
+- bounded affect, intent, scheduler, action-policy, and expression stages;
+- telemetry and causal tracing;
+- read-only Observation Window;
+- restart and recovery validation.
+
+The repository intentionally distinguishes implemented runtime behavior from research vocabulary.
+
+## Verification and delivery status
+
+MR uses pytest, strict mypy, Ruff, branch coverage, deterministic certification inputs, restart validation, and explicit live-test markers.
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest -q
 ```
 
-The current gate snapshot is deliberately explicit:
+The deterministic local product slice has been certified further than the live integration surface. Live shadow validation still depends on external environment evidence and is not represented as complete production validation.
 
-| Gate | Current status | Scope |
-| --- | --- | --- |
-| D7R | Complete | Compressed runtime topology and authority boundaries are frozen. |
-| D8 | Complete | Deterministic emotional-transition step and fail-closed semantic candidates are covered. |
-| D9 | Complete | Intent lifecycle, scheduling, policy, and persistence are covered. |
-| D10 | Complete | Bounded expression runtime, context compilation, guards, and rewrite limits are covered. |
-| D11S | Complete | Fixed-clock deterministic certification is closed. |
-| D11L | Blocked | Live shadow validation is blocked by unavailable external environment evidence. |
-| D11 | Incomplete | Fixed-clock certification is complete; live validation is not performed. |
-| D11P | Blocked | Productization waits for its named gates. |
+See:
 
-This table records verified scope, not a claim of live deployment or complete
-longitudinal cognition.
+- [architecture lock](docs/architecture/MR_ARCHITECTURE_LOCK_v1_1.md)
+- [case studies](docs/case-studies/README.md)
+- [design philosophy](docs/design-philosophy.md)
+- [repository governance](AGENTS.md)
 
-## Current Implementation
+## Boundaries and non-claims
 
-The following claims are verified against this clean source tree and its
-tests:
+MR does **not** currently claim:
 
-| Capability | Current boundary | Evidence |
-| --- | --- | --- |
-| Canonical runtime state | SQLite-backed facts, state, intent, delivery, and checkpoint persistence | `src/mind_runtime/facts/`, `state/`, `intents/`, `delivery/`, `pipeline/checkpoints.py` |
-| Runtime identity and namespaces | Explicit binding identity, production compatibility binding, storage namespace validation, and physical path isolation | `src/mind_runtime/runtime_binding.py` |
-| Multi-binding isolation | Persistent `BindingRegistry` with explicit reader/writer ports and fail-closed resolution | `src/mind_runtime/binding_registry.py`, `binding_registry_composition.py` |
-| Legacy production compatibility | `production/xiyue` remains an explicit compatibility namespace; explicit bindings take precedence | `runtime_binding.py`, `src/observation_window/web/` |
-| Memory authority | Canonical memory store and admission/projection seams separate storage authority from retrieval | `src/mind_runtime/memory/`, ADRs 0023–0025 |
-| Retrieval and context | Historical context is assembled through a bounded read seam; optional providers supply candidates, not authority | `memory/retrieval.py`, `memory/retrieval_composition.py`, `pipeline/ports.py` |
-| Optional vector retrieval | FastEmbed/Qdrant adapters are optional and isolated behind provider ports | `memory/providers/`, `pyproject.toml` |
-| MR-side LCE boundary | An optional one-way adapter binds MR memory to an external LCE package; LCE Core is not vendored here | `src/mind_runtime/integrations/lce.py`, `docs/integrations/lce-binding.md` |
-| Turn admission | Process-local atomic turn admission and commit/abort boundaries protect a single runtime process | `src/mind_runtime/runtime_admission.py`, `pipeline/orchestrator.py` |
-| Slow longitudinal state | Slow-state contracts and persistence exist as runtime objects; they are not the same as a compiled cognition engine | `contracts/slow_state.py`, `state/longitudinal.py`, `slow_plasticity/` |
-| Telemetry and causal tracing | Typed telemetry contracts, trace recording, and Observation Window causal inspection | `contracts/telemetry.py`, `pipeline/trace.py`, `src/observation_window/` |
-| Read-only observation | Observation Window health and query surfaces advertise and enforce read-only inspection | `src/observation_window/web/api.py`, `query_service.py` |
-| Restart recovery | Durable state/checkpoint loading and deterministic binding reconstruction are covered by restart validation | `state/persistence.py`, `pipeline/checkpoints.py`, `validation/restart.py` |
+- solved persistent or general cognition;
+- Compiled Cognition as a completed MR Core feature;
+- model independence;
+- cross-process writer authority;
+- complete live production validation;
+- ownership of LCE internals or current-turn open-ended reasoning.
 
-These are implementation boundaries, not a promise that every optional
-provider, live integration, or external project is installed in every clone.
+Uncertainty and incomplete authority are valid runtime outcomes.
 
-## Current Limitations
+## Research direction
 
-The following are intentionally not presented as implemented runtime
-features:
-
-- Compiled Cognition is not implemented in MR Core.
-- `EffectiveCognitionView` remains design/draft work, not a current authority.
-- Committed cognition lineage and effective-head selection are not implemented.
-- Cross-process writer authority is unsupported; the turn-admission guarantee
-  is process-local.
-- Legacy `MAX(version)`-style resolution remains in historical or bounded
-  paths and is not claimed as a new authority model.
-- Full longitudinal cognition compilation is not owned by MR Core.
-- Live shadow validation and external-provider behavior require separate
-  environments and gates.
-
-## MR and LCE
-
-MR and LCE are independent projects with a deliberately narrow integration
-boundary.
-
-**MR owns:** runtime authority, identity, state, memory consumption,
-admission, persistence, telemetry, and observation.
-
-**LCE owns:** longitudinal cognition-engine research and structures compiled
-across evidence over time.
-
-> LCE asks: **What structure may exist across this history?**
->
-> MR asks: **What state is authorized to participate in cognition now?**
-
-The MR-side adapter is optional and one-way. LCE Core implementation and its
-internal schema remain outside this repository. The external project is
-[LCE — Longitudinal Cognition Engine](https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine).
-
-## Observation Window
-
-Observation Window is a read-only inspection surface for runtime visibility,
-binding visibility, durable state queries, causal trace, and telemetry. It is
-not a cognition editor and it does not own cognition writes.
-
-## Research Direction
-
-The longer-term research direction is:
+The longer-term question is:
 
 ```text
 history
@@ -255,86 +205,36 @@ history
   -> reusable runtime cognition
 ```
 
-This differs from:
+instead of repeatedly doing:
 
 ```text
 history
-  -> retrieval
+  -> retrieve
   -> prompt
-  -> full reinterpretation
+  -> reinterpret everything
 ```
 
-Compiled Cognition, Cognitive Trajectory, Cognitive Frontier, Effective
-Cognition, Committed Lineage, and Supersession are ongoing research/design
-directions. They are not current MR runtime features unless the implementation
-and authority contract are explicitly accepted in a later milestone.
+The research vocabulary around trajectory, frontier, committed cognition, effective cognition, and supersession is kept separate from implemented claims until an explicit authority contract and runtime implementation exist.
 
-## Architecture Journey
+## Stack and repository layout
 
-The architecture was shaped by rejected shortcuts as much as by accepted
-implementations. The [architecture case studies](docs/case-studies/README.md)
-trace the decisions from retrieval-oriented memory toward explicit runtime
-authority, a separate longitudinal cognition engine, and a deliberately
-conservative production boundary.
-
-## Repository Structure
-
-This public seed contains the following source surfaces:
+Python 3.12+ · SQLite · pytest · mypy · Ruff · optional Qdrant/FastEmbed
 
 ```text
-src/mind_runtime/          canonical runtime, contracts, persistence, memory
-src/observation_window/    read-only inspection and web/query surfaces
-xiyue/                     MR-side host seam and integration entrypoints
-tests/                     unit, contract, integration, and certification tests
-docs/                      accepted ADRs, architecture, research, and integration docs
-certification/             deterministic certification inputs and reports
-scripts/                   portable operator and verification helpers
-configs/                   safe, non-secret runtime/persona/config templates
+src/mind_runtime/          runtime, authority, persistence, memory
+src/observation_window/    read-only inspection
+xiyue/                     host / integration seam
+tests/                     unit, contract, integration, certification
+docs/                      ADRs, architecture, research, case studies
+certification/             deterministic certification artifacts
 ```
 
-Durable runtime databases, logs, provider outputs, embeddings, and real
-interaction data are excluded by policy and `.gitignore`.
+## Repository history
 
-## Testing
+This repository is a clean-history public baseline extracted from the longer Mind Runtime development line. Its Git history is intentionally not a complete reconstruction of every private/local development step.
 
-From a Python 3.12+ environment:
+## Engineering philosophy
 
-```powershell
-python -m venv .venv
-& '.\.venv\Scripts\python.exe' -m pip install -e '.[dev]'
-& '.\.venv\Scripts\python.exe' -m pytest -q
-```
+> Build for the original problem, not for the maximum available capability.
 
-The core and production-relevant suites can run without production data. Some
-tests require optional local dependencies such as `fastembed`, an external
-semantic model fixture, or a live provider environment. Live tests are marked
-and are not a substitute for the deterministic local suite.
-
-The clean seed's non-live verification currently records 2,883 passing tests,
-3 test failures, 2 errors, and 7 skips. The known non-pass cases are missing
-optional `fastembed`, missing external semantic-model fixtures, and a
-pre-existing C9 helper import gap; none is a seed-omission claim. This is
-reported explicitly rather than represented as an all-green badge.
-
-## Governance and Design References
-
-- [Repository governance](AGENTS.md)
-- [Architecture lock](docs/architecture/MR_ARCHITECTURE_LOCK_v1_1.md)
-- [Runtime identity and storage isolation](docs/adr/0020-runtime-identity-binding-storage-isolation.md)
-- [Multi-binding registry authority](docs/adr/0021-multi-binding-registry-authority.md)
-- [Canonical Memory authority](docs/adr/0023-canonical-memory-authority.md)
-- [Shared Memory retrieval seam](docs/adr/0024-shared-memory-retrieval-read-seam.md)
-- [Optional semantic vector provider](docs/adr/0025-optional-semantic-vector-provider.md)
-- [Optional LCE substrate binding](docs/adr/0026-optional-lce-memory-substrate-binding.md)
-- [Atomic affect projection](docs/adr/0005-atomic-affect-vector-projection.md)
-- [Bounded expression authority](docs/adr/0007-bound-expression-authority.md)
-- [MR-side LCE binding](docs/integrations/lce-binding.md)
-- [Design philosophy](docs/design-philosophy.md)
-
-## Status
-
-This repository is a clean-history public baseline extracted from the verified
-Mind Runtime source line. It is the future development repository for MR.
-The historical source repository and production cutover worktree remain
-separate audit and rollback references; they are not this repository's Git
-history.
+The durable asset is not the largest feature surface. It is the set of boundaries that remain necessary when models, providers, or surrounding frameworks change.
