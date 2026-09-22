@@ -50,7 +50,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests"]
-mypy_path = ["src", "xiyue"]
+mypy_path = ["src"]
 strict = true
 warn_unused_configs = true
 explicit_package_bases = true
