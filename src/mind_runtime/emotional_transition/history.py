@@ -2,13 +2,15 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime
-from typing import Protocol, runtime_checkable
+from datetime import datetime, timedelta
+from typing import Any, Protocol, runtime_checkable
 
 from mind_runtime.contracts import (
     HistoricalContextBundle,
     HistoricalContextItem,
     HistoricalContextQuery,
+    LongitudinalQuery,
+    LongitudinalView,
     Observation,
     PatternMatchSummary,
     PatternQuery,
@@ -196,3 +198,91 @@ class BoundedHistoricalContextAdapter:
                 raise ValueError(
                     "relationship summary refs must resolve to selected relationship items"
                 )
+
+
+def derive_longitudinal_view(
+    records: tuple[object, ...] | list[object],
+    query: LongitudinalQuery,
+    now: datetime,
+) -> LongitudinalView:
+    """Derive a bounded, read-time longitudinal view over accepted appraisals.
+
+    Read-only derivation: never mutates, reinforces, or writes back to memory.
+    """
+    matched: list[Any] = []
+    for r in records:
+        rel_id = (
+            getattr(getattr(r, "resolved_relationship_scope", None), "relationship_id", None)
+            or getattr(getattr(r, "resolved_relationship_scope", None), "user_id", None)
+            or getattr(getattr(r, "source_scope", None), "relationship_id", None)
+            or getattr(getattr(r, "source_scope", None), "user_id", None)
+        )
+        if rel_id == query.relationship_id:
+            matched.append(r)
+
+    if not matched:
+        return LongitudinalView(
+            total_record_count=0,
+            positive_count=0,
+            negative_count=0,
+            neutral_count=0,
+            covered_time_span_days=0.0,
+            earlier_segment_count=0,
+            recent_segment_count=0,
+            earlier_predominant_valence="neutral",
+            recent_predominant_valence="neutral",
+            exceptions=(),
+            is_empty=True,
+        )
+
+    matched.sort(key=lambda r: getattr(r, "source_occurred_at", now))
+    if len(matched) > query.max_records:
+        matched = matched[-query.max_records:]
+
+    total_count = len(matched)
+    pos_count = sum(1 for r in matched if getattr(r, "valence", "") == "positive")
+    neg_count = sum(1 for r in matched if getattr(r, "valence", "") == "negative")
+    neu_count = sum(1 for r in matched if getattr(r, "valence", "") not in ("positive", "negative"))
+
+    earliest = getattr(matched[0], "source_occurred_at", now)
+    latest = getattr(matched[-1], "source_occurred_at", now)
+    time_span_days = max(0.0, (latest - earliest).total_seconds() / 86400.0)
+
+    recent_cutoff = now - timedelta(days=query.recent_days)
+    earlier = [r for r in matched if getattr(r, "source_occurred_at", now) <= recent_cutoff]
+    recent = [r for r in matched if getattr(r, "source_occurred_at", now) > recent_cutoff]
+
+    def _predominant_valence(recs: list[Any]) -> str:
+        if not recs:
+            return "neutral"
+        counts = {"positive": 0, "negative": 0, "neutral": 0}
+        for r in recs:
+            v = getattr(r, "valence", "neutral")
+            if v in counts:
+                counts[v] += 1
+            else:
+                counts["neutral"] += 1
+        return max(
+            counts.keys(),
+            key=lambda k: (counts[k], 1 if k == "positive" else (0 if k == "neutral" else -1)),
+        )
+
+    earlier_predominant = _predominant_valence(earlier) if earlier else _predominant_valence(matched)
+    recent_predominant = _predominant_valence(recent) if recent else earlier_predominant
+
+    exceptions = tuple(r for r in recent if getattr(r, "valence", "") != earlier_predominant)
+
+    return LongitudinalView(
+        total_record_count=total_count,
+        positive_count=pos_count,
+        negative_count=neg_count,
+        neutral_count=neu_count,
+        covered_time_span_days=time_span_days,
+        earlier_segment_count=len(earlier),
+        recent_segment_count=len(recent),
+        earlier_predominant_valence=earlier_predominant,
+        recent_predominant_valence=recent_predominant,
+        exceptions=exceptions,
+        is_empty=False,
+    )
+

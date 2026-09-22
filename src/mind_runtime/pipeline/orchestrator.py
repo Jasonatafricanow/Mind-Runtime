@@ -40,21 +40,27 @@ from mind_runtime.contracts import (
     StateTransition,
     SyncFields,
     TurnCheckpoint,
+    TurnConditionProjection,
     TurnProjection,
     TurnStage,
 )
+from mind_runtime.contracts.historical import LongitudinalQuery
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol, TelemetryStage
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import EventEffectRule
 from mind_runtime.emotional_transition.factory import (
     create_semantic_provider,
 )
-from mind_runtime.emotional_transition.history import NullHistoricalContext
+from mind_runtime.emotional_transition.history import NullHistoricalContext, derive_longitudinal_view
 from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
     SemanticRouter,
 )
-from mind_runtime.expression.context import DecisionContextCompiler, DecisionContextCompilerInput
+from mind_runtime.expression.context import (
+    DecisionContextCompiler,
+    DecisionContextCompilerInput,
+    compile_condition,
+)
 from mind_runtime.expression.history import NullPreviousExpressionPort
 from mind_runtime.facts.ports import FactAdmissionDisposition, FactIngestPort
 from mind_runtime.facts.service import FactIngestService
@@ -189,6 +195,9 @@ class _Turn:
     decision_context: DecisionContext | None
     expression_outcome: ExpressionOutcome | None
     action_receipt: ActionReceipt | None
+    accepted_appraisals: tuple[object, ...] = ()
+    condition_projection: TurnConditionProjection | None = None
+
 
 
 def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None:
@@ -434,6 +443,18 @@ class TurnOrchestrator:
         if self._turn is None:
             return None
         return self._turn.decision_context
+
+    @property
+    def condition_projection(self) -> TurnConditionProjection | None:
+        if self._turn is None:
+            return None
+        return self._turn.condition_projection
+
+    @property
+    def accepted_appraisals(self) -> tuple[object, ...]:
+        if self._turn is None:
+            return ()
+        return self._turn.accepted_appraisals
 
     @property
     def expression_outcome(self) -> ExpressionOutcome | None:
@@ -704,6 +725,8 @@ class TurnOrchestrator:
             decision_context=None,
             expression_outcome=None,
             action_receipt=None,
+            accepted_appraisals=(),
+            condition_projection=None,
         )
         self.state = TurnState.BEGIN
         self._trace.record(
@@ -932,9 +955,11 @@ class TurnOrchestrator:
             outcome = self.emotional_transition.transition_with_gate(transition_input)
             transition_result = outcome.transition_result
             turn.slow_decisions = outcome.slow_decisions
+            turn.accepted_appraisals = outcome.accepted_appraisals
         else:
             transition_result = self.emotional_transition.transition(transition_input)
             turn.slow_decisions = ()
+            turn.accepted_appraisals = ()
         intent_result = self.intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=turn.interaction.interaction_id,
@@ -1056,6 +1081,59 @@ class TurnOrchestrator:
             "projection",
             ref=turn.projection.projection_id,
             at=now,
+        )
+
+        # Compile read-time condition projection for turn (even with no selected Intent)
+        user_message_text = ""
+        for ob in turn.observations:
+            if ob.key == "user_message.observed":
+                if isinstance(ob.value, dict):
+                    user_message_text = str(ob.value.get("text", ""))
+                elif isinstance(ob.value, str):
+                    user_message_text = ob.value
+                break
+        if not user_message_text and "user_message.observed" in self.factual_overlay:
+            val = self.factual_overlay["user_message.observed"]
+            if isinstance(val, dict):
+                user_message_text = str(val.get("text", ""))
+            elif isinstance(val, str):
+                user_message_text = val
+
+        persona_id = (
+            self._persona.persona_id
+            if self._persona is not None
+            else "kayla_v0"
+        )
+        owner_scope = Scope(domain=ScopeDomain.AGENT, agent_id=self._runtime_id, persona_id=persona_id)
+        relationship_id = (
+            turn.interaction.scope.relationship_id
+            or turn.interaction.scope.user_id
+        )
+        historical_records: tuple[object, ...] = ()
+        if (
+            self._state_backend is not None
+            and hasattr(self._state_backend, "load_appraisal_evaluations")
+            and relationship_id
+        ):
+            historical_records = self._state_backend.load_appraisal_evaluations(
+                owner_scope=owner_scope,
+                relationship_id=relationship_id,
+                limit=256,
+            )
+        l_query = LongitudinalQuery(
+            owner_scope=owner_scope,
+            relationship_id=relationship_id or "",
+            as_of=now,
+            max_records=256,
+        )
+        longitudinal_view = derive_longitudinal_view(historical_records, l_query, now)
+        turn.condition_projection = compile_condition(
+            user_message=user_message_text,
+            participant_id=relationship_id or "",
+            longitudinal_view=longitudinal_view,
+            fast_state=None,
+            slow_state=None,
+            persona_ref=persona_id,
         )
 
         if selected is None:
@@ -1283,6 +1361,11 @@ class TurnOrchestrator:
                                     ),
                                 )
                             )
+
+                    # Save committed accepted appraisals (low-salience & gated)
+                    if getattr(turn, "accepted_appraisals", None) and self._state_backend is not None:
+                        if hasattr(self._state_backend, "save_appraisal_evaluations"):
+                            self._state_backend.save_appraisal_evaluations(turn.accepted_appraisals)
 
                     # Execute slow plans inside transaction
                     if slow_plans:

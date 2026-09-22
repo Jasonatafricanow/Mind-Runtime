@@ -59,12 +59,15 @@ from mind_runtime.contracts.expression import (
     ExpressionOutcome,
     PreviousExpression,
     ProviderExpressionContext,
+    TurnConditionProjection,
 )
 from mind_runtime.contracts.governance import DataSensitivity, RedactionPolicy, RetentionClass
 from mind_runtime.contracts.historical import (
     HistoricalContextBundle,
     HistoricalContextItem,
     HistoricalContextQuery,
+    LongitudinalQuery,
+    LongitudinalView,
 )
 from mind_runtime.contracts.intent import (
     Intent,
@@ -135,13 +138,14 @@ __all__ = [
     "Interaction",
     "InteractionStatus",
     "Intent",
-    "IntentEngineInput",
     "IntentEngineResult",
     "IntentScoreContribution",
     "IntentScoreTrace",
     "IntentStatus",
     "IntentTransition",
     "IntentWake",
+    "LongitudinalQuery",
+    "LongitudinalView",
     "Observation",
     "Ownership",
     "PatternMatchSummary",
@@ -173,7 +177,9 @@ __all__ = [
     "TraceRef",
     "TransitionIntent",
     "TurnCheckpoint",
+    "TurnConditionProjection",
     "TurnProjection",
     "TurnStage",
     "WritePolicy",
 ]
+

@@ -1,10 +1,11 @@
 """Bounded semantic interpretation contracts."""
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from mind_runtime.contracts.common import require_non_empty
+from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.scope import Scope
 
 
@@ -229,3 +230,87 @@ class SemanticAppraisalModelPort(Protocol):
     ) -> AppraisalModelProposal:
         """Propose estimates for model-estimated fields."""
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedAppraisalRecord:
+    """Committed subjective appraisal history record; independent of Slow admission.
+
+    Represents that the Agent, in this interaction and based on these sources,
+    formed this subjective appraisal. It is NOT an objective fact assertion about
+    the participant.
+    """
+
+    acceptance_id: str
+    interaction_id: str
+    source_occurrence_id: str
+    candidate_id: str
+    candidate_kind: str
+    candidate_confidence: float
+    appraisal_id: str
+    meanings: tuple[str, ...]
+    valence: str
+    relationship_relevance: str
+    appraisal_confidence: float
+    salience: float | None
+    source_scope: Scope
+    owner_scope: Scope
+    resolved_relationship_scope: Scope | None
+    source_refs: tuple[str, ...]
+    supporting_refs: tuple[str, ...]
+    context_dependency_refs: tuple[str, ...]
+    source_occurred_at: datetime
+    source_received_at: datetime
+    assessed_at: datetime
+    persona_id: str
+    persona_version: str
+    route_status: str
+    acceptance_status: str
+    acceptance_reason: str
+    contract_version: str
+    binding_version: str
+    commit_marker_ref: str | None = None
+    payload_digest: str = ""
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.acceptance_id, "acceptance_id")
+        require_non_empty(self.interaction_id, "interaction_id")
+        require_non_empty(self.source_occurrence_id, "source_occurrence_id")
+        require_non_empty(self.candidate_id, "candidate_id")
+        require_non_empty(self.candidate_kind, "candidate_kind")
+        require_non_empty(self.appraisal_id, "appraisal_id")
+        require_non_empty(self.valence, "valence")
+        require_non_empty(self.relationship_relevance, "relationship_relevance")
+        require_non_empty(self.persona_id, "persona_id")
+        require_non_empty(self.persona_version, "persona_version")
+        require_non_empty(self.route_status, "route_status")
+        require_non_empty(self.acceptance_status, "acceptance_status")
+        require_non_empty(self.acceptance_reason, "acceptance_reason")
+        require_non_empty(self.contract_version, "contract_version")
+        require_non_empty(self.binding_version, "binding_version")
+
+        require_aware_utc(self.source_occurred_at, "source_occurred_at")
+        require_aware_utc(self.source_received_at, "source_received_at")
+        require_aware_utc(self.assessed_at, "assessed_at")
+
+        if not self.meanings:
+            raise ValueError("meanings must not be empty")
+        for meaning in self.meanings:
+            require_non_empty(meaning, "meanings entries")
+
+        if isinstance(self.candidate_confidence, bool) or not 0 <= self.candidate_confidence <= 1:
+            raise ValueError("candidate_confidence must be in [0, 1]")
+        if isinstance(self.appraisal_confidence, bool) or not 0 <= self.appraisal_confidence <= 1:
+            raise ValueError("appraisal_confidence must be in [0, 1]")
+
+        if self.salience is not None:
+            if isinstance(self.salience, bool) or not 0 <= self.salience <= 1:
+                raise ValueError("salience must be in [0, 1]")
+
+        for ref in self.source_refs:
+            require_non_empty(ref, "source_refs entries")
+        for ref in self.supporting_refs:
+            require_non_empty(ref, "supporting_refs entries")
+        for ref in self.context_dependency_refs:
+            require_non_empty(ref, "context_dependency_refs entries")
+

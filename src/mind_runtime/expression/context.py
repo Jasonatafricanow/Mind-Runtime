@@ -22,7 +22,9 @@ from mind_runtime.contracts import (
     SlowStateProjection,
     StateDefinition,
     StateDomain,
+    TurnConditionProjection,
 )
+from mind_runtime.contracts.historical import LongitudinalView
 from mind_runtime.contracts.common import require_non_empty
 from typing import Protocol, runtime_checkable
 
@@ -696,3 +698,58 @@ class DecisionContextCompiler:
 
 def _item_sort_key(item: ExpressionContextItem) -> tuple[int, int, str, tuple[str, ...], str]:
     return (_SECTION_ORDER[item.kind], item.priority, item.key, item.source_refs, item.item_id)
+
+
+def compile_condition(
+    user_message: str,
+    participant_id: str,
+    longitudinal_view: LongitudinalView,
+    fast_state: RuntimeState | None = None,
+    slow_state: RuntimeState | None = None,
+    persona_ref: str = "",
+) -> TurnConditionProjection:
+    """Derive a bounded turn condition projection for the current turn.
+
+    Carried to Host/BODY even when no Intent is selected.
+    R6 semantic relevance: objective/non-relational tasks omit relationship condition.
+    R5 participant isolation: only reflects the specified participant's history.
+    """
+    msg_clean = user_message.strip().lower()
+    objective_markers = ("check grammar", "translate:", "summarize:", "proofread:", "format code:")
+    if any(marker in msg_clean for marker in objective_markers):
+        return TurnConditionProjection(
+            condition_text="",
+            is_omitted=True,
+            omission_reason="objective_task_omission",
+            coverage_summary="omitted",
+        )
+
+    if longitudinal_view.total_record_count == 0:
+        return TurnConditionProjection(
+            condition_text=f"No prior relationship history with {participant_id} (0 interactions).",
+            is_omitted=False,
+            omission_reason=None,
+            coverage_summary="no_relationship_history",
+        )
+
+    span_str = (
+        f" over {int(longitudinal_view.covered_time_span_days)} days"
+        if longitudinal_view.covered_time_span_days > 0
+        else ""
+    )
+    exc_str = (
+        f" Recent exceptions: {len(longitudinal_view.exceptions)}."
+        if longitudinal_view.exceptions
+        else ""
+    )
+    condition_text = (
+        f"Prior relationship history with {participant_id}: {longitudinal_view.total_record_count} interactions"
+        f"{span_str}. Pattern: {longitudinal_view.earlier_predominant_valence}.{exc_str}"
+    )
+    return TurnConditionProjection(
+        condition_text=condition_text,
+        is_omitted=False,
+        omission_reason=None,
+        coverage_summary=f"{longitudinal_view.total_record_count}_interactions",
+    )
+

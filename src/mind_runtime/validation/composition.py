@@ -82,6 +82,7 @@ from mind_runtime.validation.schedule import SimulationClock
 _EXPECTED_TABLES = {
     "facts": ("evidence", "interactions", "observations"),
     "state": (
+        "appraisal_evaluations",
         "slow_contribution_window",
         "sqlite_sequence",
         "state_definitions",

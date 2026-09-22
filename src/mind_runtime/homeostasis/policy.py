@@ -140,6 +140,7 @@ class SalienceThresholdPolicy:
 
     config: SalienceThresholdConfig
     clock: _Clock = field(default_factory=_default_clock)
+    source_resolver: object | None = None
 
     def decide(
         self,
@@ -193,6 +194,32 @@ class SalienceThresholdPolicy:
                 reason_code="no_evidence_reject",
                 decided_at=self.clock.now(),
             )
+
+        # Validate evidence provenance with source_resolver if configured
+        if self.source_resolver is not None and candidate.evidence_refs:
+            for ref in candidate.evidence_refs:
+                res = self.source_resolver.resolve(
+                    ref,
+                    expected_scope=candidate.scope,
+                    expected_runtime=getattr(candidate.scope, "agent_id", None),
+                )
+                if not res.is_valid_for_longitudinal_support:
+                    if salience >= fast_floor:
+                        return HomeostasisDecision(
+                            candidate=candidate,
+                            prior_value=prior_value,
+                            decision=HomeostasisDisposition.FAST_ONLY,
+                            reason_code=f"unresolved_evidence_fast_only_{res.denial_reason or 'invalid'}",
+                            decided_at=self.clock.now(),
+                        )
+                    return HomeostasisDecision(
+                        candidate=candidate,
+                        prior_value=prior_value,
+                        decision=HomeostasisDisposition.REJECT,
+                        reason_code=f"unresolved_evidence_reject_{res.denial_reason or 'invalid'}",
+                        decided_at=self.clock.now(),
+                    )
+
 
         # H1: ordinary / noisy cannot directly mutate Slow.
         if salience < slow_floor or confidence < slow_conf:

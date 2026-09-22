@@ -86,6 +86,8 @@ class EmotionalTransitionOutcome:
 
     transition_result: EmotionalTransitionResult
     slow_decisions: tuple[HomeostasisDecision, ...]
+    accepted_appraisals: tuple[object, ...] = ()
+
 
 
 class EngineEmotionalTransitionPort:
@@ -256,6 +258,63 @@ class EngineEmotionalTransitionPort:
                 abstention_reasons=routing.abstention_reasons,
                 appraisals_by_candidate_id=appraisals,
             )
+        accepted_appraisals: list[object] = []
+        if routing.appraisals_by_candidate_id:
+            from mind_runtime.contracts.appraisal import AcceptedAppraisalRecord
+
+            persona_id = (
+                getattr(transition_input, "persona_id", None)
+                or (getattr(self._engine.persona, "persona_id", None) if hasattr(self, "_engine") and hasattr(self._engine, "persona") else None)
+                or "kayla_v0"
+            )
+            for cand_id, appraisal in routing.appraisals_by_candidate_id.items():
+                cand = next((c for c in routing.candidates if c.candidate_id == cand_id), None)
+                if cand is None or appraisal.meanings == ("unappraised",):
+                    continue
+                rel_scope = None
+                if cand.scope.domain is ScopeDomain.RELATIONSHIP:
+                    rel_scope = cand.scope
+                elif cand.scope.user_id:
+                    rel_scope = Scope(
+                        domain=ScopeDomain.RELATIONSHIP,
+                        relationship_id=cand.scope.user_id,
+                        persona_id=persona_id,
+                    )
+                rec = AcceptedAppraisalRecord(
+                    acceptance_id=f"acc-{cand.candidate_id}",
+                    interaction_id=transition_input.interaction_id,
+                    source_occurrence_id=cand.candidate_id,
+                    candidate_id=cand.candidate_id,
+                    candidate_kind=cand.kind,
+                    candidate_confidence=cand.confidence,
+                    appraisal_id=appraisal.appraisal_id,
+                    meanings=appraisal.meanings,
+                    valence=appraisal.valence,
+                    relationship_relevance=appraisal.relationship_relevance,
+                    appraisal_confidence=appraisal.confidence,
+                    salience=appraisal.salience,
+                    source_scope=cand.scope,
+                    owner_scope=Scope(
+                        domain=ScopeDomain.AGENT, agent_id=self._runtime_id, persona_id=persona_id
+                    ),
+                    resolved_relationship_scope=rel_scope,
+                    source_refs=cand.evidence_refs,
+                    supporting_refs=appraisal.evidence_refs,
+                    context_dependency_refs=(),
+                    source_occurred_at=transition_input.clock,
+                    source_received_at=transition_input.clock,
+                    assessed_at=transition_input.clock,
+                    persona_id=persona_id,
+                    persona_version="1",
+                    route_status="ACCEPTED",
+                    acceptance_status="COMMITTED",
+                    acceptance_reason="source_bound_appraisal",
+                    contract_version="1",
+                    binding_version="1",
+                    commit_marker_ref=None,
+                    payload_digest=f"digest-{cand.candidate_id}",
+                )
+                accepted_appraisals.append(rec)
         evidence_refs = tuple(
             dict.fromkeys(
                 transition_input.context.evidence_refs
@@ -663,6 +722,7 @@ class EngineEmotionalTransitionPort:
                 assessment_trace=trace,
             ),
             slow_decisions=slow_decisions,
+            accepted_appraisals=tuple(accepted_appraisals),
         )
 
     def _invoke_homeostasis_gate(

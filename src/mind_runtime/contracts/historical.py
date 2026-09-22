@@ -1,6 +1,7 @@
 """Provider-neutral historical context read contracts (MR-2)."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.pattern import PatternMatchSummary, PatternQuery
@@ -76,3 +77,42 @@ class HistoricalContextBundle:
         require_non_empty(self.provider_trace, "provider_trace")
         for ref in self.source_refs:
             require_non_empty(ref, "source_refs entries")
+
+
+@dataclass(frozen=True, slots=True)
+class LongitudinalQuery:
+    """A bounded query for longitudinal appraisal history."""
+
+    owner_scope: Scope
+    relationship_id: str
+    as_of: datetime
+    max_records: int = 256
+    recent_days: int = 7
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.relationship_id, "relationship_id")
+        if isinstance(self.max_records, bool) or self.max_records <= 0:
+            raise ValueError("max_records must be positive")
+        if isinstance(self.recent_days, bool) or self.recent_days < 0:
+            raise ValueError("recent_days must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class LongitudinalView:
+    """A derived, bounded read-time view over longitudinal appraisal history.
+
+    Never stored as canonical state, never self-reinforcing.
+    """
+
+    total_record_count: int
+    positive_count: int
+    negative_count: int = 0
+    neutral_count: int = 0
+    covered_time_span_days: float = 0.0
+    earlier_segment_count: int = 0
+    recent_segment_count: int = 0
+    earlier_predominant_valence: str = "neutral"
+    recent_predominant_valence: str = "neutral"
+    exceptions: tuple[object, ...] = ()
+    is_empty: bool = False
+

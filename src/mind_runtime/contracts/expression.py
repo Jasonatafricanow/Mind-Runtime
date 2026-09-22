@@ -232,3 +232,18 @@ class ExpressionOutcome:
                 raise ValueError("ACCEPT requires accepted_expression")
         elif self.accepted_expression is not None:
             raise ValueError("REJECT requires no accepted_expression")
+
+
+@dataclass(frozen=True, slots=True)
+class TurnConditionProjection:
+    """Read-time derived bounded condition projection for a turn.
+
+    Carried to Host/BODY even when no Intent is selected.
+    Not canonical state; never written back to Memory or Slow state.
+    """
+
+    condition_text: str
+    is_omitted: bool = False
+    omission_reason: str | None = None
+    coverage_summary: str = ""
+

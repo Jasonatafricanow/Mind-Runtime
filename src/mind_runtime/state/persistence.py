@@ -161,6 +161,54 @@ CREATE INDEX IF NOT EXISTS idx_slow_window_ordering
         scope_relationship_id, scope_world_id, scope_interaction_id,
         target_dimension, accepted_at
     );
+CREATE TABLE IF NOT EXISTS appraisal_evaluations (
+    acceptance_id TEXT PRIMARY KEY,
+    interaction_id TEXT NOT NULL,
+    source_occurrence_id TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    candidate_kind TEXT NOT NULL,
+    candidate_confidence REAL NOT NULL,
+    appraisal_id TEXT NOT NULL,
+    meanings TEXT NOT NULL,
+    valence TEXT NOT NULL,
+    relationship_relevance TEXT NOT NULL,
+    appraisal_confidence REAL NOT NULL,
+    salience REAL,
+    source_scope_domain TEXT NOT NULL,
+    source_scope_user_id TEXT NOT NULL DEFAULT '',
+    source_scope_agent_id TEXT NOT NULL DEFAULT '',
+    source_scope_persona_id TEXT NOT NULL DEFAULT '',
+    source_scope_relationship_id TEXT NOT NULL DEFAULT '',
+    source_scope_world_id TEXT NOT NULL DEFAULT '',
+    source_scope_interaction_id TEXT NOT NULL DEFAULT '',
+    owner_scope_domain TEXT NOT NULL,
+    owner_scope_user_id TEXT NOT NULL DEFAULT '',
+    owner_scope_agent_id TEXT NOT NULL DEFAULT '',
+    owner_scope_persona_id TEXT NOT NULL DEFAULT '',
+    owner_scope_relationship_id TEXT NOT NULL DEFAULT '',
+    owner_scope_world_id TEXT NOT NULL DEFAULT '',
+    owner_scope_interaction_id TEXT NOT NULL DEFAULT '',
+    resolved_relationship_id TEXT,
+    source_refs TEXT NOT NULL,
+    supporting_refs TEXT NOT NULL,
+    context_dependency_refs TEXT NOT NULL,
+    source_occurred_at TEXT NOT NULL,
+    source_received_at TEXT NOT NULL,
+    assessed_at TEXT NOT NULL,
+    persona_id TEXT NOT NULL,
+    persona_version TEXT NOT NULL,
+    route_status TEXT NOT NULL,
+    acceptance_status TEXT NOT NULL,
+    acceptance_reason TEXT NOT NULL,
+    contract_version TEXT NOT NULL,
+    binding_version TEXT NOT NULL,
+    commit_marker_ref TEXT,
+    payload_digest TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appraisal_eval_lookup
+    ON appraisal_evaluations (owner_scope_domain, owner_scope_agent_id, resolved_relationship_id, source_occurred_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_appraisal_eval_idempotency
+    ON appraisal_evaluations (owner_scope_agent_id, interaction_id, source_occurrence_id, contract_version);
 """
 
 
@@ -667,9 +715,182 @@ class SqliteStateBackend:
         (one transaction). This hook exists so the writer can document
         a controlled path if it needs to abort before calling commit.
         """
-        # Intentionally empty. The single-transaction guard in
-        # commit_slow_window_update is the only atomicity mechanism.
         return None
+
+    def save_appraisal_evaluations(
+        self,
+        records: tuple[object, ...],
+    ) -> None:
+        """Atomically persist accepted appraisal records."""
+        if not records:
+            return
+        if self._in_transaction:
+            self._save_appraisal_evaluations_rows(records)
+        else:
+            with self._conn:
+                self._save_appraisal_evaluations_rows(records)
+
+    def _save_appraisal_evaluations_rows(
+        self,
+        records: tuple[object, ...],
+    ) -> None:
+        for r in records:
+            # Check idempotency
+            existing = self._conn.execute(
+                "SELECT acceptance_id, payload_digest, valence, meanings FROM appraisal_evaluations WHERE "
+                "owner_scope_agent_id = ? AND interaction_id = ? AND source_occurrence_id = ? AND contract_version = ?",
+                (r.owner_scope.agent_id or "", r.interaction_id, r.source_occurrence_id, r.contract_version),
+            ).fetchone()
+            if existing is not None:
+                if existing["payload_digest"] == r.payload_digest and existing["valence"] == r.valence:
+                    continue
+                raise sqlite3.IntegrityError(
+                    f"conflict on replay for appraisal evaluation: {r.acceptance_id} vs {existing['acceptance_id']}"
+                )
+
+            src_scope_vals = _scope_values(r.source_scope)
+            owner_scope_vals = _scope_values(r.owner_scope)
+            rel_id = (
+                r.resolved_relationship_scope.relationship_id
+                if r.resolved_relationship_scope
+                else None
+            )
+
+            self._conn.execute(
+                "INSERT INTO appraisal_evaluations ("
+                "acceptance_id, interaction_id, source_occurrence_id, candidate_id, candidate_kind, candidate_confidence,"
+                "appraisal_id, meanings, valence, relationship_relevance, appraisal_confidence, salience,"
+                f"{', '.join(f'source_{c}' for c in _SCOPE_COLUMNS)}, "
+                f"{', '.join(f'owner_{c}' for c in _SCOPE_COLUMNS)}, "
+                "resolved_relationship_id, source_refs, supporting_refs, context_dependency_refs,"
+                "source_occurred_at, source_received_at, assessed_at, persona_id, persona_version,"
+                "route_status, acceptance_status, acceptance_reason, contract_version, binding_version,"
+                "commit_marker_ref, payload_digest"
+                ") VALUES ("
+                f"{', '.join('?' * 42)}"
+                ")",
+                (
+                    r.acceptance_id,
+                    r.interaction_id,
+                    r.source_occurrence_id,
+                    r.candidate_id,
+                    r.candidate_kind,
+                    float(r.candidate_confidence),
+                    r.appraisal_id,
+                    _to_json(r.meanings),
+                    r.valence,
+                    r.relationship_relevance,
+                    float(r.appraisal_confidence),
+                    float(r.salience) if r.salience is not None else None,
+                    *src_scope_vals,
+                    *owner_scope_vals,
+                    rel_id,
+                    _to_json(r.source_refs),
+                    _to_json(r.supporting_refs),
+                    _to_json(r.context_dependency_refs),
+                    _format_dt(r.source_occurred_at),
+                    _format_dt(r.source_received_at),
+                    _format_dt(r.assessed_at),
+                    r.persona_id,
+                    r.persona_version,
+                    r.route_status,
+                    r.acceptance_status,
+                    r.acceptance_reason,
+                    r.contract_version,
+                    r.binding_version,
+                    r.commit_marker_ref,
+                    r.payload_digest,
+                ),
+            )
+
+    def load_appraisal_evaluations(
+        self,
+        *,
+        owner_scope: Scope,
+        relationship_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 256,
+    ) -> tuple[object, ...]:
+        query = (
+            "SELECT * FROM appraisal_evaluations WHERE "
+            "owner_scope_domain = ? AND owner_scope_agent_id = ?"
+        )
+        params: list[object] = [owner_scope.domain.value, owner_scope.agent_id or ""]
+        if relationship_id is not None:
+            query += " AND resolved_relationship_id = ?"
+            params.append(relationship_id)
+        if since is not None:
+            query += " AND source_occurred_at >= ?"
+            params.append(_format_dt(since))
+        query += " ORDER BY source_occurred_at ASC, acceptance_id ASC LIMIT ?"
+        params.append(int(limit))
+
+        rows = self._conn.execute(query, params).fetchall()
+        return tuple(self._appraisal_record_from_row(row) for row in rows)
+
+    @staticmethod
+    def _appraisal_record_from_row(row: sqlite3.Row) -> object:
+        from mind_runtime.contracts.appraisal import AcceptedAppraisalRecord
+
+        source_scope = Scope(
+            domain=ScopeDomain(row["source_scope_domain"]),
+            user_id=row["source_scope_user_id"] or None,
+            agent_id=row["source_scope_agent_id"] or None,
+            persona_id=row["source_scope_persona_id"] or None,
+            relationship_id=row["source_scope_relationship_id"] or None,
+            world_id=row["source_scope_world_id"] or None,
+            interaction_id=row["source_scope_interaction_id"] or None,
+        )
+        owner_scope = Scope(
+            domain=ScopeDomain(row["owner_scope_domain"]),
+            user_id=row["owner_scope_user_id"] or None,
+            agent_id=row["owner_scope_agent_id"] or None,
+            persona_id=row["owner_scope_persona_id"] or None,
+            relationship_id=row["owner_scope_relationship_id"] or None,
+            world_id=row["owner_scope_world_id"] or None,
+            interaction_id=row["owner_scope_interaction_id"] or None,
+        )
+        rel_scope = None
+        if row["resolved_relationship_id"]:
+            rel_scope = Scope(
+                domain=ScopeDomain.RELATIONSHIP,
+                relationship_id=row["resolved_relationship_id"],
+                persona_id=row["persona_id"],
+            )
+
+        return AcceptedAppraisalRecord(
+            acceptance_id=row["acceptance_id"],
+            interaction_id=row["interaction_id"],
+            source_occurrence_id=row["source_occurrence_id"],
+            candidate_id=row["candidate_id"],
+            candidate_kind=row["candidate_kind"],
+            candidate_confidence=float(row["candidate_confidence"]),
+            appraisal_id=row["appraisal_id"],
+            meanings=tuple(_from_json(row["meanings"])),
+            valence=row["valence"],
+            relationship_relevance=row["relationship_relevance"],
+            appraisal_confidence=float(row["appraisal_confidence"]),
+            salience=float(row["salience"]) if row["salience"] is not None else None,
+            source_scope=source_scope,
+            owner_scope=owner_scope,
+            resolved_relationship_scope=rel_scope,
+            source_refs=tuple(_from_json(row["source_refs"])),
+            supporting_refs=tuple(_from_json(row["supporting_refs"])),
+            context_dependency_refs=tuple(_from_json(row["context_dependency_refs"])),
+            source_occurred_at=_parse_required_dt(row["source_occurred_at"]),
+            source_received_at=_parse_required_dt(row["source_received_at"]),
+            assessed_at=_parse_required_dt(row["assessed_at"]),
+            persona_id=row["persona_id"],
+            persona_version=row["persona_version"],
+            route_status=row["route_status"],
+            acceptance_status=row["acceptance_status"],
+            acceptance_reason=row["acceptance_reason"],
+            contract_version=row["contract_version"],
+            binding_version=row["binding_version"],
+            commit_marker_ref=row["commit_marker_ref"],
+            payload_digest=row["payload_digest"],
+        )
+
 
 
 class CommitMarkerStore(Protocol):

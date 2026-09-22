@@ -194,6 +194,18 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
     """
     ctx = orchestrator.decision_context
     if ctx is None:
+        cond = getattr(orchestrator, "condition_projection", None)
+        if cond is not None and not cond.is_omitted and cond.condition_text:
+            sit_summary = ""
+            if orchestrator.situation is not None:
+                sit_summary = f"situation_ref={orchestrator.situation.situation_id}"
+            return HostDecisionContext(
+                intent_summary="none",
+                emotional_state=cond.condition_text,
+                situation_summary=sit_summary,
+                action_taken=None,
+                next_steps=None,
+            )
         return None
     # The selected_intent_kind is a stable enum-like string; safe to
     # surface. We never expose the underlying numeric affect, the
@@ -203,6 +215,9 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
     # provider-visible context, verbatim from MR) to the emotional_state slot.
     slow_summary = _step_slow_state_summary(ctx)
     emotional_state = f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}"
+    cond = getattr(orchestrator, "condition_projection", None)
+    if cond is not None and not cond.is_omitted and cond.condition_text:
+        emotional_state += f"; {cond.condition_text}"
     if slow_summary:
         emotional_state += f"; slow_state: {slow_summary}"
     situation_summary = f"situation_ref={ctx.situation_ref}"
