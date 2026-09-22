@@ -26,24 +26,7 @@ lookup that the caller builds from `orchestrator._appraisal_rules`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable
-
-try:
-    from mind_runtime.contracts.appraisal_affect import (
-        AppraisalAffectDecision,
-        AppraisalAffectTransitionResult,
-    )
-    from mind_runtime.contracts.appraisal_result import (
-        AbstainReason,
-        AppraisalResult,
-        ResolvedAppraisal,
-    )
-except ImportError:
-    AppraisalAffectDecision = None  # type: ignore
-    AppraisalAffectTransitionResult = None  # type: ignore
-    AbstainReason = None  # type: ignore
-    AppraisalResult = None  # type: ignore
-    ResolvedAppraisal = None  # type: ignore
+from typing import Any, Iterable
 
 from mind_runtime.contracts.emotional_transition import (
     AssessmentContribution,
@@ -78,7 +61,9 @@ def _is_appraisal_result_subtype(result: object) -> bool:
     OW-3 decoupled from MR module layout. The discriminator is the
     presence of the two J8-E3 fields.
     """
-    return isinstance(result, AppraisalAffectTransitionResult)
+    return hasattr(result, "appraisal_result") and hasattr(
+        result, "appraisal_affect_decisions"
+    )
 
 
 def _classify_composition(
@@ -95,9 +80,11 @@ def _classify_composition(
     """
     if not _is_appraisal_result_subtype(result):
         return AppraisalCompositionStatus.OFF
-    if result.appraisal_result is None:
+    appraisal_result = getattr(result, "appraisal_result", None)
+    decisions = getattr(result, "appraisal_affect_decisions", ())
+    if appraisal_result is None:
         return AppraisalCompositionStatus.OFF
-    if not rules_provided and not result.appraisal_affect_decisions:
+    if not rules_provided and not decisions:
         # ON but no rules fired; still ON.
         return AppraisalCompositionStatus.ON
     return AppraisalCompositionStatus.ON
@@ -111,7 +98,7 @@ def _decision_source_ref(
 
 
 def _observed_decision(
-    decision: AppraisalAffectDecision,
+    decision: Any,
     index: int,
     *,
     rule_dimension_lookup: dict[RuleId, str] | None,
@@ -151,7 +138,7 @@ def _observed_decision(
     )
 
 
-def _observed_appraisal(appraisal: ResolvedAppraisal) -> ObservedAppraisal:
+def _observed_appraisal(appraisal: Any) -> ObservedAppraisal:
     """Map a ResolvedAppraisal to OW-3 immutable form.
 
     The production ResolvedAppraisal at J8-E3 Gate 8 carries:
@@ -173,7 +160,7 @@ def _observed_appraisal(appraisal: ResolvedAppraisal) -> ObservedAppraisal:
 
 
 def _observed_appraisal_source(
-    result: AppraisalResult | None,
+    result: Any | None,
 ) -> ObservedAppraisalSourceOutput | None:
     """Map an AppraisalResult to OW-3 immutable form, or None if absent.
 
@@ -288,11 +275,11 @@ class OWLiveTraceSource:
         snapshot_trace = _observed_trace(trace)
 
         # J8-E3 subtype fields.
-        appraisal_result_obj: AppraisalResult | None = None
-        decisions_tuple: tuple[AppraisalAffectDecision, ...] = ()
+        appraisal_result_obj: Any | None = None
+        decisions_tuple: tuple[Any, ...] = ()
         if _is_appraisal_result_subtype(result):
-            appraisal_result_obj = result.appraisal_result  # type: ignore[attr-defined]
-            decisions_tuple = result.appraisal_affect_decisions  # type: ignore[attr-defined]
+            appraisal_result_obj = getattr(result, "appraisal_result")
+            decisions_tuple = tuple(getattr(result, "appraisal_affect_decisions"))
 
         # Build the OW-3 decision list.
         observed_decisions = tuple(
