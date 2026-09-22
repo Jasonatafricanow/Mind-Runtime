@@ -7,6 +7,7 @@ from mind_runtime.contracts import (
     AffectiveDimensionProfile,
     AssessmentContribution,
     HistoricalContextBundle,
+    ScopeDomain,
     SemanticRoutingResult,
     StateDomain,
     StateValueType,
@@ -130,8 +131,10 @@ class AppraisalProjector:
     def _rule_for(
         self, acceptance: AcceptedAppraisal | None, routing: SemanticRoutingResult | None
     ) -> EventEffectRule | None:
-        candidate = acceptance.candidate if acceptance is not None else (
-            routing.candidates[0] if routing is not None and routing.candidates else None
+        candidate = (
+            acceptance.candidate
+            if acceptance is not None
+            else (routing.candidates[0] if routing is not None and routing.candidates else None)
         )
         return self._rules.get(candidate.kind) if candidate is not None else None
 
@@ -150,7 +153,6 @@ class AppraisalProjector:
                 owner.persona_id != acceptance.persona_id
                 or scope is None
                 or scope.persona_id != owner.persona_id
-                or scope.agent_id != owner.persona_id
                 or state_domain_for_scope(scope) is not StateDomain.AGENT
             ):
                 return "foreign_projection_owner"
@@ -184,6 +186,33 @@ class AppraisalProjector:
             return "invalid_effect_target"
         return None
 
+    def validate_materialized_result(
+        self, result: AppraisalProjectionResult, *, acceptance: AcceptedAppraisal
+    ) -> None:
+        """Reject forged mapped effects before durable evaluation or cache reuse."""
+        from mind_runtime.contracts.late_projection import ProjectionStatus
+
+        if result.status is not ProjectionStatus.MAPPED:
+            return
+        if not result.effects:
+            raise ValueError("projection effect is required for MAPPED result")
+        rule = self._rule_for(acceptance, None)
+        if rule is None or self._target_reason(acceptance, rule, ()) is not None:
+            raise ValueError("projection effect has no valid target authority")
+        for effect in result.effects:
+            if effect.dimension == rule.dimension:
+                operation = "delta"
+            elif effect.dimension == rule.longitudinal_target_dimension:
+                operation = "proposed_value"
+            else:
+                raise ValueError("projection effect has an unexpected target")
+            if (
+                effect.operation != operation
+                or effect.target_domain != StateDomain.AGENT.value
+                or effect.target_scope != acceptance.projection_scope
+            ):
+                raise ValueError("projection effect conflicts with target authority")
+
     def dependency_digest(
         self,
         *,
@@ -214,8 +243,18 @@ class AppraisalProjector:
         bound_owner = (
             (owner.persona_id, owner.version, selected_profile) if owner is not None else None
         )
-        return digest((acceptance, history, routing, rule, self.version,
-                       bound_owner, consumed_definitions, mismatch))
+        return digest(
+            (
+                acceptance,
+                history,
+                routing,
+                rule,
+                self.version,
+                bound_owner,
+                consumed_definitions,
+                mismatch,
+            )
+        )
 
     def project(
         self,
@@ -258,6 +297,11 @@ class AppraisalProjector:
                 reasons = acceptance.reason_codes
             elif not authorized_history(history, c.scope, c.origin_runtime_id):
                 status, reasons = ProjectionStatus.REJECTED, ("invalid_history_lineage",)
+            elif acceptance.projection_scope is not None and (
+                acceptance.projection_scope.domain is not ScopeDomain.AGENT
+                or acceptance.projection_scope.persona_id != acceptance.persona_id
+            ):
+                status, reasons = ProjectionStatus.REJECTED, ("invalid_projection_scope_owner",)
             elif c.kind in self._rules and acceptance.projection_scope is None:
                 status, reasons = ProjectionStatus.REJECTED, ("missing_target_scope",)
             routing = SemanticRoutingResult(

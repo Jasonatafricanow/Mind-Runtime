@@ -234,9 +234,11 @@ class ProjectionJournal:
             if self.get_acceptance(acceptance.acceptance_id) != acceptance:
                 raise ValueError("projection has missing acceptance")
             self._validate_source(existing, acceptance, dep)
+            projector.validate_materialized_result(existing, acceptance=acceptance)
             return existing
         result = projector.project(acceptance=acceptance, history=history, persona=persona)
         self._validate_source(result, acceptance, dep)
+        projector.validate_materialized_result(result, acceptance=acceptance)
         with self.connection:
             self._persist_acceptance(acceptance)
             self._insert_immutable(

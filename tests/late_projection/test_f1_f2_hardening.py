@@ -11,7 +11,7 @@ from tests.emotional_transition.test_effects import history, pattern
 from tests.late_projection.test_foundation import accepted, profile
 
 from mind_runtime.contracts import StateDefinition, StateDomain, StateValueType
-from mind_runtime.contracts.late_projection import ProjectionEffect, canonical_json
+from mind_runtime.contracts.late_projection import ProjectionEffect, canonical_json, digest
 from mind_runtime.dynamics.engine import DynamicsEngine
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import (
@@ -62,6 +62,41 @@ def evaluate(rule, *, persona=None, definitions=None, appraisal=None, selected_h
     )
 
 
+def with_scope(record, scope):
+    record = replace(record, projection_scope=scope)
+    return replace(
+        record,
+        acceptance_id="acceptance-"
+        + digest(
+            (
+                record.appraisal,
+                record.candidate,
+                record.interaction_id,
+                record.persona_id,
+                record.trusted_evidence_refs,
+                record.route_abstention_reasons,
+                record.status,
+                record.reason_codes,
+                record.projection_scope,
+            )
+        ),
+    )
+
+
+def test_f1_unmapped_cannot_hide_foreign_projection_scope():
+    record = accepted("novel_semantic_event")
+    foreign = with_scope(record, replace(record.projection_scope, persona_id="other"))
+    instance = projector(EventEffectRule("plan_cancelled", FAST, 0.1))
+    rejected = instance.project(acceptance=foreign, history=None)
+    assert rejected.status == "REJECTED"
+    assert rejected.effects == ()
+    assert rejected.reason_codes != ("no_runtime_projection_rule",)
+    legal = with_scope(record, replace(record.projection_scope, agent_id="agent-instance-7"))
+    unmapped = instance.project(acceptance=legal, history=None)
+    assert unmapped.status == "UNMAPPED"
+    assert unmapped.effects == ()
+
+
 def test_f1_r1_affect_target_cannot_be_absolute():
     rule = EventEffectRule(
         "plan_cancelled",
@@ -97,7 +132,7 @@ def test_f1_r4_foreign_owner_scope_and_runtime_rejected():
         evaluate(rule, persona=PersonaProfile("other", (profile(),), 1), appraisal=record).status
         == "REJECTED"
     )
-    foreign_scope = replace(record.projection_scope, agent_id="other")
+    foreign_scope = replace(record.projection_scope, persona_id="other")
     from mind_runtime.contracts.late_projection import digest
 
     forged = replace(record, projection_scope=foreign_scope)
@@ -121,6 +156,33 @@ def test_f1_r4_foreign_owner_scope_and_runtime_rejected():
     assert evaluate(rule, appraisal=forged).status == "REJECTED"
     bad_runtime = replace(record, candidate=replace(record.candidate, origin_runtime_id="foreign"))
     assert evaluate(rule, appraisal=bad_runtime).status == "REJECTED"
+
+
+def test_f1_agent_identity_can_differ_from_persona_identity():
+    rule = EventEffectRule("plan_cancelled", FAST, 0.1)
+    record = accepted("plan_cancelled")
+    scope = replace(record.projection_scope, agent_id="agent-instance-7")
+    from mind_runtime.contracts.late_projection import digest
+
+    record = replace(record, projection_scope=scope)
+    record = replace(
+        record,
+        acceptance_id="acceptance-"
+        + digest(
+            (
+                record.appraisal,
+                record.candidate,
+                record.interaction_id,
+                record.persona_id,
+                record.trusted_evidence_refs,
+                record.route_abstention_reasons,
+                record.status,
+                record.reason_codes,
+                record.projection_scope,
+            )
+        ),
+    )
+    assert evaluate(rule, appraisal=record).status == "MAPPED"
 
 
 def test_f1_r5_malformed_operation_domain_pair_is_rejected():
@@ -180,6 +242,45 @@ def test_f1_definition_policy_not_dimension_prefix_selects_fast():
     persona = PersonaProfile("test", (replace(profile(), dimension=custom),), 1)
     definitions = registry(fast=definition(custom, "deterministic_affect"))
     assert evaluate(rule, persona=persona, definitions=definitions).status == "MAPPED"
+
+
+@pytest.mark.parametrize("tamper", ("operation", "domain"))
+def test_f1_materialization_rejects_forged_effect_pair(tmp_path, tamper):
+    rule = EventEffectRule("plan_cancelled", FAST, 0.1)
+    record = accepted("plan_cancelled")
+    instance = projector(rule)
+    valid = instance.project(acceptance=record, history=None)
+    effect = valid.effects[0]
+    if tamper == "operation":
+        effect = replace(effect, operation="proposed_value")
+    else:
+        effect = replace(effect, target_scope=None, target_domain="user")
+    forged = replace(valid, effects=(effect,))
+    instance.project = lambda **kwargs: forged
+    journal = ProjectionJournal(tmp_path / "derived.sqlite")
+    with pytest.raises(ValueError, match="projection effect"):
+        journal.materialize(instance, acceptance=record, history=None)
+    assert journal.get_acceptance(record.acceptance_id) is None
+    assert journal.get_projection(forged.projection_id) is None
+    journal.close()
+
+
+def test_f1_materialization_rejects_empty_mapped_result(tmp_path):
+    rule = EventEffectRule("plan_cancelled", FAST, 0.1)
+    record = accepted("plan_cancelled")
+    instance = projector(rule)
+    valid = instance.project(acceptance=record, history=None)
+    forged = replace(
+        valid,
+        effects=(),
+        mapping_json=canonical_json(replace(mapping_from_projection(valid), impulses=())),
+    )
+    instance.project = lambda **kwargs: forged
+    journal = ProjectionJournal(tmp_path / "derived.sqlite")
+    with pytest.raises(ValueError, match="projection effect"):
+        journal.materialize(instance, acceptance=record, history=None)
+    assert journal.get_projection(forged.projection_id) is None
+    journal.close()
 
 
 def test_f1_valid_fast_slow_and_history_outputs_remain_unscaled():
