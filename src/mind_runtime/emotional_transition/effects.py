@@ -4,13 +4,20 @@ from dataclasses import dataclass, field
 from math import isfinite
 
 from mind_runtime.contracts import (
+    AffectiveDimensionProfile,
     AssessmentContribution,
     HistoricalContextBundle,
     SemanticRoutingResult,
+    StateDomain,
+    StateValueType,
 )
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.late_projection import AcceptedAppraisal, AppraisalProjectionResult
+from mind_runtime.contracts.state import state_domain_for_scope
 from mind_runtime.dynamics.engine import Impulse
+from mind_runtime.dynamics.persona import PersonaProfile
+from mind_runtime.state.definitions import StateDefinitionRegistry
+from mind_runtime.state.longitudinal import resolve_longitudinal_target
 
 
 def _require_number(value: float, field_name: str) -> None:
@@ -101,7 +108,14 @@ class MappedEffects:
 class AppraisalProjector:
     """Map one accepted candidate plus bounded history into explicit impulses."""
 
-    def __init__(self, *, rules: tuple[EventEffectRule, ...], version: str = "1") -> None:
+    def __init__(
+        self,
+        *,
+        rules: tuple[EventEffectRule, ...],
+        version: str = "1",
+        persona_profile: PersonaProfile | None = None,
+        definitions: StateDefinitionRegistry | None = None,
+    ) -> None:
         require_non_empty(version, "projector version")
         self.version = version
         by_kind: dict[str, EventEffectRule] = {}
@@ -110,27 +124,105 @@ class AppraisalProjector:
                 raise ValueError("event effect rule kinds must be unique")
             by_kind[rule.event_kind] = rule
         self._rules = by_kind
+        self._persona_profile = persona_profile
+        self._definitions = definitions
+
+    def _rule_for(
+        self, acceptance: AcceptedAppraisal | None, routing: SemanticRoutingResult | None
+    ) -> EventEffectRule | None:
+        candidate = acceptance.candidate if acceptance is not None else (
+            routing.candidates[0] if routing is not None and routing.candidates else None
+        )
+        return self._rules.get(candidate.kind) if candidate is not None else None
+
+    def _target_reason(
+        self,
+        acceptance: AcceptedAppraisal | None,
+        rule: EventEffectRule,
+        persona: tuple[AffectiveDimensionProfile, ...],
+    ) -> str | None:
+        owner, definitions = self._persona_profile, self._definitions
+        if owner is None or definitions is None:
+            return "missing_projection_authority"
+        if acceptance is not None:
+            scope = acceptance.projection_scope
+            if (
+                owner.persona_id != acceptance.persona_id
+                or scope is None
+                or scope.persona_id != owner.persona_id
+                or scope.agent_id != owner.persona_id
+                or state_domain_for_scope(scope) is not StateDomain.AGENT
+            ):
+                return "foreign_projection_owner"
+        supplied = tuple(item for item in persona if item.dimension == rule.dimension)
+        if persona and (len(supplied) != 1 or supplied[0] != owner.for_dimension(rule.dimension)):
+            return "persona_snapshot_mismatch"
+        fast = definitions.get(rule.dimension)
+        if (
+            fast is None
+            or fast.domain is not StateDomain.AGENT
+            or fast.value_type is not StateValueType.SCALAR
+            or fast.dynamics_policy != "deterministic_affect"
+            or owner.for_dimension(rule.dimension) is None
+        ):
+            return "invalid_fast_target"
+        if rule.longitudinal_target_dimension is not None:
+            try:
+                slow = resolve_longitudinal_target(definitions, rule.longitudinal_target_dimension)
+            except ValueError:
+                return "invalid_longitudinal_target"
+            if slow.domain is not StateDomain.AGENT or slow.value_type is not StateValueType.SCALAR:
+                return "invalid_longitudinal_target"
+        return None
+
+    @staticmethod
+    def _mapped_reason(mapped: MappedEffects, rule: EventEffectRule) -> str | None:
+        allowed = {rule.dimension}
+        if rule.longitudinal_target_dimension is not None:
+            allowed.add(rule.longitudinal_target_dimension)
+        if any(impulse.dimension not in allowed for impulse in mapped.impulses):
+            return "invalid_effect_target"
+        return None
 
     def dependency_digest(
         self,
         *,
         acceptance: AcceptedAppraisal | None,
         history: HistoricalContextBundle | None,
-        persona: tuple[object, ...] = (),
+        persona: tuple[AffectiveDimensionProfile, ...] = (),
         routing: SemanticRoutingResult | None = None,
     ) -> str:
         from mind_runtime.contracts.late_projection import digest
 
-        return digest(
-            (acceptance, history, persona, routing, tuple(self._rules.values()), self.version)
+        rule = self._rule_for(acceptance, routing)
+        if rule is None:
+            return digest((acceptance, history, routing, None, self.version))
+        owner = self._persona_profile
+        definitions = self._definitions
+        # StateDefinition has no separate revision field: immutable complete
+        # definition content is the exact consumed definition revision.
+        consumed_definitions = tuple(
+            definitions.get(key) if definitions is not None else None
+            for key in (rule.dimension, rule.longitudinal_target_dimension)
+            if key is not None
         )
+        selected_profile = owner.for_dimension(rule.dimension) if owner is not None else None
+        supplied_profile = tuple(item for item in persona if item.dimension == rule.dimension)
+        mismatch = None
+        if supplied_profile and supplied_profile != (selected_profile,):
+            mismatch = supplied_profile
+        bound_owner = (
+            (owner.persona_id, owner.version, selected_profile) if owner is not None else None
+        )
+        return digest((acceptance, history, routing, rule, self.version,
+                       bound_owner, consumed_definitions, mismatch))
 
     def project(
         self,
         *,
         acceptance: AcceptedAppraisal | None = None,
         history: HistoricalContextBundle | None = None,
-        persona: tuple[object, ...] = (),
+        persona: tuple[AffectiveDimensionProfile, ...] = (),
         routing: SemanticRoutingResult | None = None,
     ) -> AppraisalProjectionResult:
         from mind_runtime.contracts import AppraisalPath, AppraisalRouteDecision
@@ -150,6 +242,7 @@ class AppraisalProjector:
         candidate_ref = None
         provenance: tuple[str, ...] = ()
         status = None
+        rule = self._rule_for(acceptance, routing)
         if acceptance is not None:
             c, a = acceptance.candidate, acceptance.appraisal
             candidate_ref, source = c.candidate_id, a.appraisal_id
@@ -178,13 +271,24 @@ class AppraisalProjector:
             )
         if routing is None:
             raise ValueError("projection requires accepted appraisal or legacy route")
+        if status is None and rule is not None:
+            target_reason = self._target_reason(acceptance, rule, persona)
+            if target_reason is not None:
+                status, reasons = ProjectionStatus.REJECTED, (target_reason,)
         if status is not None:
             mapped = MappedEffects((), (), (), abstention_reasons=reasons)
         else:
             mapped = self._map_legacy(routing=routing, history=history)
+            if rule is not None:
+                mapped_reason = self._mapped_reason(mapped, rule)
+                if mapped_reason is not None:
+                    status, reasons = ProjectionStatus.REJECTED, (mapped_reason,)
+                    mapped = MappedEffects((), (), (), abstention_reasons=reasons)
             if routing.candidates:
                 candidate_ref = routing.candidates[0].candidate_id
-            if mapped.impulses:
+            if status is ProjectionStatus.REJECTED:
+                pass
+            elif mapped.impulses:
                 status = ProjectionStatus.MAPPED
             elif acceptance is not None and not routing.abstention_reasons:
                 status = ProjectionStatus.UNMAPPED
@@ -208,7 +312,11 @@ class AppraisalProjector:
                     i.dimension,
                     i.amount,
                     i.source_ref,
-                    "proposed_value" if i.source_ref.startswith("longitudinal:") else "delta",
+                    (
+                        "proposed_value"
+                        if rule is not None and i.dimension == rule.longitudinal_target_dimension
+                        else "delta"
+                    ),
                     "agent",
                     acceptance.projection_scope if acceptance is not None else None,
                 )
@@ -222,7 +330,9 @@ class AppraisalProjector:
     def map(
         self, *, routing: SemanticRoutingResult, history: HistoricalContextBundle | None
     ) -> MappedEffects:
-        return mapping_from_projection(self.project(routing=routing, history=history))
+        # Legacy mapping has no accepted appraisal or authoritative snapshot.
+        # It remains the same numerical recipe owned by this one projector.
+        return self._map_legacy(routing=routing, history=history)
 
     def _map_legacy(
         self,

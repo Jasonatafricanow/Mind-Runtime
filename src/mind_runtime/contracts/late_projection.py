@@ -9,6 +9,7 @@ from enum import StrEnum
 from mind_runtime.contracts.appraisal import SemanticAppraisal, SemanticEventCandidate
 from mind_runtime.contracts.historical import HistoricalContextBundle
 from mind_runtime.contracts.scope import Scope
+from mind_runtime.contracts.state import StateDomain, state_domain_for_scope
 
 
 def authorized_history(history: object, scope: Scope, runtime_id: str) -> bool:
@@ -112,6 +113,16 @@ class ProjectionEffect:
     operation: str = "delta"
     target_domain: str = "agent"
     target_scope: Scope | None = None
+
+    def __post_init__(self) -> None:
+        if self.operation not in ("delta", "proposed_value"):
+            raise ValueError("invalid projection operation")
+        try:
+            domain = StateDomain(self.target_domain)
+        except ValueError as error:
+            raise ValueError("invalid projection target domain") from error
+        if self.target_scope is not None and state_domain_for_scope(self.target_scope) != domain:
+            raise ValueError("projection target domain conflicts with target scope")
 
 
 @dataclass(frozen=True, slots=True)

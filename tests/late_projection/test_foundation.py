@@ -49,6 +49,14 @@ def accepted(kind="user_completed_difficult_task_independently"):
 def projector(**kwargs):
     module = importlib.import_module("mind_runtime.emotional_transition.effects")
     assert hasattr(module, "AppraisalProjector"), "single late projector is missing"
+    from mind_runtime.contracts import StateDefinition, StateDomain, StateValueType
+    from mind_runtime.dynamics.persona import PersonaProfile
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+
+    kwargs.setdefault("persona_profile", PersonaProfile("test", (profile(),), 1))
+    kwargs.setdefault("definitions", StateDefinitionRegistry((StateDefinition(
+        rule().dimension, StateDomain.AGENT, StateValueType.SCALAR,
+        "deterministic_affect", None, (0.0, 1.0)),)))
     return module.AppraisalProjector(rules=(rule(),), **kwargs)
 
 
