@@ -18,7 +18,7 @@ import pytest
 
 from mind_runtime.validation.digest import canonical_json_bytes
 
-REPO = Path("C:/projects/Mind Runtime")
+REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "certification" / "d11s" / "inputs" / "runtime-config.json"
 SEAM = REPO / "xiyue" / "mr_seam.py"
 
