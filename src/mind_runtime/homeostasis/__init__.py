@@ -1,1 +1,24 @@
-"""State update policy package.\n\nHistorical Homeostasis* names remain exported as compatibility aliases.\n"""\n\nfrom mind_runtime.homeostasis.contracts import (\n    CandidateStateDelta,\n    StateUpdateDecision,\n    StateUpdateDisposition,\n    StateUpdatePolicy,\n    HomeostasisDecision,\n    HomeostasisDisposition,\n    HomeostasisGate,\n)\n\n__all__ = [\n    "CandidateStateDelta",\n    "StateUpdateDecision",\n    "StateUpdateDisposition",\n    "StateUpdatePolicy",\n    "HomeostasisDecision",\n    "HomeostasisDisposition",\n    "HomeostasisGate",\n]\n
+"""State update policy package.
+
+Historical Homeostasis* names remain exported as compatibility aliases.
+"""
+
+from mind_runtime.homeostasis.contracts import (
+    CandidateStateDelta,
+    HomeostasisDecision,
+    HomeostasisDisposition,
+    HomeostasisGate,
+    StateUpdateDecision,
+    StateUpdateDisposition,
+    StateUpdatePolicy,
+)
+
+__all__ = [
+    "CandidateStateDelta",
+    "HomeostasisDecision",
+    "HomeostasisDisposition",
+    "HomeostasisGate",
+    "StateUpdateDecision",
+    "StateUpdateDisposition",
+    "StateUpdatePolicy",
+]
