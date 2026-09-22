@@ -25,11 +25,14 @@ import argparse
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
 from observation_window.web import LiveTraceCache
+
+if TYPE_CHECKING:
+    from observation_window.binding import StateSurface
 from observation_window.web.wiring import (
     OrchestratorLiveTraceSink,
     build_dashboard_data_sources,
@@ -258,91 +261,3 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Binding anchor dir (defaults to the compat adapter's production runtime dir)",
     )
-    parser.add_argument(
-        "--persona-id",
-        default=None,
-        help="Explicit persona authority for binding discovery (compat default: kayla_v0)",
-    )
-    parser.add_argument(
-        "--binding-ref",
-        default=None,
-        help="Explicit binding reference file (same chain as MR_RUNTIME_BINDING)",
-    )
-    parser.add_argument(
-        "--host", default="127.0.0.1",
-        help="Bind host (default 127.0.0.1, not 0.0.0.0 — local access only)",
-    )
-    parser.add_argument(
-        "--port", default=8765, type=int,
-        help="HTTP port (default 8765)",
-    )
-    parser.add_argument(
-        "--maxlen", default=200, type=int,
-        help="Live-trace ring-buffer size (default 200 turns)",
-    )
-    args = parser.parse_args(argv)
-
-    if args.db_dir is not None:
-        print("EXPLICIT-SOURCE compat composition (no binding discovery)")
-        app, sink = build_ow_app_from_db_dir(
-            db_dir=args.db_dir,
-            maxlen=args.maxlen,
-        )
-    else:
-        try:
-            from mind_runtime.binding_registry_composition import (
-                open_production_binding_registry_reader,
-            )
-            from observation_window.binding import (
-                ObservationBindingCatalog,
-                ProductionObservationBindingResolver,
-            )
-            from mind_runtime.runtime_binding import RuntimeEnvironment
-
-            reader = open_production_binding_registry_reader()
-            live_trace_provider = _default_live_trace_provider()
-            anchor = Path(args.runtime_dir) if args.runtime_dir is not None else None
-            resolver = ProductionObservationBindingResolver(production_root=anchor)
-            catalog = ObservationBindingCatalog(
-                reader=reader,
-                environment=RuntimeEnvironment.PRODUCTION,
-                resolver=resolver,
-                live_trace_provider=live_trace_provider,
-            )
-            scoped_default = catalog.resolve_default()
-            resolved = scoped_default.resolved_binding
-            print("Binding catalog: upstream production registry reader connected")
-        except Exception as exc:
-            log.error("Production BindingRegistry unavailable; refusing singleton fallback: %s", exc)
-            raise RuntimeError(
-                "production BindingRegistry is unavailable; refusing legacy singleton fallback"
-            ) from exc
-
-        app, sink = compose_ow_app(
-            resolved,
-            maxlen=args.maxlen,
-            live_trace_provider=live_trace_provider,
-            catalog=catalog,
-        )
-        binding = resolved.runtime_binding
-        print(f"Binding   : {scoped_default.binding_id} "
-              f"(agent={binding.agent_id}, "
-              f"env={binding.environment.value})")
-        print("Binding-registry composition (explicit production default)")
-        print(f"State DB  : {resolved.state_db}")
-        print(f"Facts DB  : {resolved.facts_db}")
-
-    print(f"Backend   : SqliteStateBackend + SqliteFactBackend + SqliteCommitMarkerStore")
-    print(f"Live cache: maxlen={args.maxlen}")
-    print(f"URL       : http://{args.host}:{args.port}")
-    print()
-    print("READ ONLY — no writes to MR state or facts")
-    print()
-
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    import sys
-    sys.exit(main())
