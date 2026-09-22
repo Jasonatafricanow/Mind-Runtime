@@ -136,7 +136,7 @@ class ObservedContribution:
     source_kind: str   # "appraisal" | "event" | "history" | "recovery" | etc.
     source_ref: SourceRef
     amount: float
-    confidence: float
+    confidence: float | None
     applied: bool
     reason_code: str | None
 
