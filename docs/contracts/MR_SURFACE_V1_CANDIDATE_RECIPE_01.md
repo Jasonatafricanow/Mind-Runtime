@@ -10,11 +10,19 @@ Companion expression map: [MR_SURFACE_V1_CANDIDATE_EXPRESSION_MAP_01.md](MR_SURF
 
 ---
 
-## 1. Identity and Lifecycle
+## 1. Admission History & Identity
 
+### Admission History
+- **Revision 1** (`content_digest: 6ae29e53568ca91a08a2140a05ede3e5a32f79cd1bad28e69d8f81b5c241d32a`):  
+  **INVALID_ADMISSION / NEVER_CERTIFIED**.  
+  *Reason*: Declared formula and frozen acceptance vectors were inconsistent due to manual calculation discrepancies in initial vector transcription. Preserved for audit trail; never admitted for production or W3 certification.
+- **Revision 2** (Current Authoritative Candidate Revision):  
+  Admitted under `MR-W3-B0-TARGETED-FIX-01`. All acceptance vectors independently recalculated and verified directly from the authoritative declarative graph.
+
+### Current Identity (Revision 2)
 - `recipe_id`: `surface-v1-candidate`
-- `revision`: `1` (integer positive, immutable)
-- `content_digest`: `6ae29e53568ca91a08a2140a05ede3e5a32f79cd1bad28e69d8f81b5c241d32a`
+- `revision`: `2` (integer positive, immutable)
+- `content_digest`: `4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`
 - `projector_id`: `surface-affect`
 - `projector_version`: `1`
 - `status`: `SURFACE_V1_CANDIDATE`
@@ -24,7 +32,7 @@ Companion expression map: [MR_SURFACE_V1_CANDIDATE_EXPRESSION_MAP_01.md](MR_SURF
 ### Immutability & Conflict Policy
 1. This recipe specification is strictly immutable once admitted.
 2. An evaluation presenting the same `(recipe_id, revision)` but a differing content digest **FAILS CLOSED** immediately (`SURFACE_RECIPE_CONTENT_CONFLICT`).
-3. Any behavioral modification (changing coefficients, graph edges, clamp boundaries, or roots) requires minting a new revision (e.g., `revision: 2`) with its own distinct content digest. No in-place mutation is permitted.
+3. Any behavioral modification (changing coefficients, graph edges, clamp boundaries, or roots) requires minting a new revision (e.g., `revision: 3`) with its own distinct content digest. No in-place mutation is permitted.
 
 ---
 
@@ -92,13 +100,6 @@ expressive_restraint = clamp(
 )
 ```
 
-### AST Representation
-Formulas are serialized as ordered tree nodes:
-- `["const", finite_float]`
-- `["lookup", fully_qualified_typed_root]`
-- `["add" | "sub" | "mul", left_node, right_node]`
-- `["clamp", target_node, ["const", 0.0], ["const", 1.0]]`
-
 ---
 
 ## 5. Directional Invariants
@@ -118,11 +119,9 @@ Within non-saturated intervals (where clamp boundaries `0.0` and `1.0` are not a
 6. **Trait Expressive Restraint on Control Restraint**: $\frac{\partial \text{expressive\_restraint}}{\partial P.\text{expressive\_restraint}} = +0.75 \ge 0$.  
    *Increasing trait expressive_restraint must not decrease control expressive_restraint.*
 
-*Note*: Saturation at `0.0` or `1.0` permits equality. Additional candidate directional choices (e.g., anger inhibiting warmth/contact, sadness dampening initiative) are candidate-specific and not universal psychological claims.
-
 ---
 
-## 6. Static Acceptance Vectors
+## 6. Static Acceptance Vectors (Revision 2)
 
 ### Baseline Scenario (`persona-fixture-a` + baseline dynamics)
 - **Persona Traits**:
@@ -140,11 +139,11 @@ Within non-saturated intervals (where clamp boundaries `0.0` and `1.0` are not a
   - `diligence_pressure`: `0.40`
   - `social_pull`: `0.20` (unrelated fast state)
 - **Expected Controls**:
-  - `contact_seeking`: `0.365`
-  - `initiative`: `0.405`
-  - `confrontation`: `0.200`
-  - `expressive_warmth`: `0.235`
-  - `expressive_restraint`: `0.340`
+  - `contact_seeking`: `0.500`
+  - `initiative`: `0.560`
+  - `confrontation`: `0.290`
+  - `expressive_warmth`: `0.410`
+  - `expressive_restraint`: `0.440`
 - **All controls are within `(0.0, 1.0)`**: `unclamped == value`, `clamped == false`.
 
 ### Persona Counterfactual Scenario (`persona-fixture-b`)
@@ -153,24 +152,42 @@ Within non-saturated intervals (where clamp boundaries `0.0` and `1.0` are not a
   - `confrontation_readiness`: `0.80`
   - `expressive_restraint`: `0.10`
   - `expressive_warmth_bias`: `0.80`
-- **Same Dynamics as Baseline**
+- **Same Dynamics, Affect Scope, Owner, and Runtime as Baseline**
 - **Expected Controls**:
-  - `contact_seeking`: `0.470` (changed)
-  - `initiative`: `0.405` (strictly unchanged; no persona root in V1)
-  - `confrontation`: `0.365` (changed)
-  - `expressive_warmth`: `0.340` (changed)
-  - `expressive_restraint`: `0.160` (changed)
+  - `contact_seeking`: `0.650` (changed)
+  - `initiative`: `0.560` (strictly unchanged; no persona root in V1)
+  - `confrontation`: `0.500` (changed)
+  - `expressive_warmth`: `0.575` (changed)
+  - `expressive_restraint`: `0.215` (changed)
 
-### Saturation & Clamp Scenarios
-- **Upper Saturation**: All positive roots = `1.0`, all negative roots = `0.0`  
-  - `contact_seeking`: unclamped `1.10` $\to$ clamped `1.0`
-  - `initiative`: unclamped `1.10` $\to$ clamped `1.0`
-  - `confrontation`: unclamped `1.10` $\to$ clamped `1.0`
-  - `expressive_warmth`: unclamped `1.05` $\to$ clamped `1.0`
-  - `expressive_restraint`: unclamped `1.10` $\to$ clamped `1.0`
-- **Lower Saturation**: All positive roots = `0.0`, all negative roots = `1.0`  
-  - `contact_seeking`: unclamped `-0.40` $\to$ clamped `0.0`
-  - `initiative`: unclamped `-0.25` $\to$ clamped `0.0`
-  - `confrontation`: unclamped `-0.30` $\to$ clamped `0.0`
-  - `expressive_warmth`: unclamped `-0.45` $\to$ clamped `0.0`
-  - `expressive_restraint`: unclamped `0.00` $\to$ clamped `0.0`
+### Root Isolation Static Vectors (delta +0.20 from Baseline)
+- `anger` (+0.20): `contact_seeking=0.460`, `confrontation=0.430`, `expressive_warmth=0.360`; others unchanged.
+- `attachment_approach` (+0.20): `contact_seeking=0.560`; others unchanged.
+- `closeness_craving` (+0.20): `contact_seeking=0.570`, `expressive_warmth=0.510`; others unchanged.
+- `confrontation_readiness` (+0.20): `confrontation=0.370`; others unchanged.
+- `curiosity` (+0.20): `initiative=0.660`; others unchanged.
+- `diligence_pressure` (+0.20): `expressive_restraint=0.510`; others unchanged.
+- `expressive_restraint` (trait +0.20): `contact_seeking=0.460`, `confrontation=0.230`, `expressive_restraint=0.590`; others unchanged.
+- `expressive_warmth_bias` (+0.20): `expressive_warmth=0.520`; others unchanged.
+- `longing` (+0.20): `contact_seeking=0.590`; others unchanged.
+- `sadness` (+0.20): `initiative=0.510`, `expressive_warmth=0.370`; others unchanged.
+- `sharing_urge` (+0.20): `initiative=0.680`; others unchanged.
+
+### Per-Control Admissible Saturation Fixtures
+Rather than asserting an impossible simultaneous 5-control saturation, each control has an admissible fixture driving it to its upper or lower bound:
+
+1. **`contact_seeking`**:
+   - Upper: `longing=1.0, closeness_craving=1.0, attachment_approach=1.0, anger=0.0, expressive_restraint=0.0` $\to$ unclamped `1.10`, clamped `1.0`.
+   - Lower: `longing=0.0, closeness_craving=0.0, attachment_approach=0.0, anger=1.0, expressive_restraint=1.0` $\to$ unclamped `-0.40`, clamped `0.0`.
+2. **`initiative`**:
+   - Upper: `sharing_urge=1.0, curiosity=1.0, sadness=0.0` $\to$ unclamped `1.10`, clamped `1.0`.
+   - Lower: `sharing_urge=0.0, curiosity=0.0, sadness=1.0` $\to$ unclamped `-0.25`, clamped `0.0`.
+3. **`confrontation`**:
+   - Upper: `anger=1.0, confrontation_readiness=1.0, expressive_restraint=0.0` $\to$ unclamped `1.10`, clamped `1.0`.
+   - Lower: `anger=0.0, confrontation_readiness=0.0, expressive_restraint=1.0` $\to$ unclamped `-0.30`, clamped `0.0`.
+4. **`expressive_warmth`**:
+   - Upper: `expressive_warmth_bias=1.0, closeness_craving=1.0, anger=0.0, sadness=0.0` $\to$ unclamped `1.05`, clamped `1.0`.
+   - Lower: `expressive_warmth_bias=0.0, closeness_craving=0.0, anger=1.0, sadness=1.0` $\to$ unclamped `-0.45`, clamped `0.0`.
+5. **`expressive_restraint`**:
+   - Upper: `expressive_restraint=1.0, diligence_pressure=1.0` $\to$ unclamped `1.10`, clamped `1.0`.
+   - Lower: `expressive_restraint=0.0, diligence_pressure=0.0` $\to$ unclamped `0.00`, clamped `0.0` (`clamped=False`).

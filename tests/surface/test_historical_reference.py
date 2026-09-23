@@ -10,12 +10,18 @@ from copy import deepcopy
 import pytest
 
 from tests.surface.spec_support import (
+    HistoricalReferenceEvaluator,
     digest,
     expect_ok,
     sample_reference,
     state,
     trait,
 )
+
+
+@pytest.fixture
+def surface() -> HistoricalReferenceEvaluator:
+    return HistoricalReferenceEvaluator()
 
 
 @pytest.mark.reference_only

@@ -10,14 +10,21 @@ Companion recipe: [MR_SURFACE_V1_CANDIDATE_RECIPE_01.md](MR_SURFACE_V1_CANDIDATE
 
 ---
 
-## 1. Identity and Binding
+## 1. Admission History & Identity
 
+### Admission History
+- **Revision 1** (`content_digest: 00bb976c15ffee1759c2c4baa1640dc42ce5ebb9dfa061b581cbb6b0f1f1ac90`):  
+  **SUPERSEDED**. Bound to Candidate Recipe Revision 1. Since Recipe Revision 1 was marked `INVALID_ADMISSION`, Expression Map Revision 1 is retired from W3 certification.
+- **Revision 2** (Current Authoritative Revision):  
+  Admitted under `MR-W3-B0-TARGETED-FIX-01`. Binds strictly to Candidate Recipe Revision 2.
+
+### Current Identity (Revision 2)
 - `map_id`: `surface-v1-candidate-map`
-- `revision`: `1` (positive integer, immutable)
-- `content_digest`: `00bb976c15ffee1759c2c4baa1640dc42ce5ebb9dfa061b581cbb6b0f1f1ac90`
+- `revision`: `2` (positive integer, immutable)
+- `content_digest`: `bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3`
 - `supported_recipe_id`: `surface-v1-candidate`
-- `supported_recipe_version`: `1`
-- `supported_recipe_digest`: `6ae29e53568ca91a08a2140a05ede3e5a32f79cd1bad28e69d8f81b5c241d32a`
+- `supported_recipe_version`: `2`
+- `supported_recipe_digest`: `4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`
 - `serialization`: `MR-surface-c14n-1`
 
 ### Immutability & Conflict Policy
@@ -73,27 +80,27 @@ Each consumed control maps monotonically into a three-level qualitative guidance
 
 ---
 
-## 5. Acceptance Vectors
+## 5. Acceptance Vectors (Revision 2)
 
-### Baseline Scenario (Baseline Controls from Candidate Recipe)
+### Baseline Scenario (Baseline Controls from Candidate Recipe Revision 2)
 - Input controls:
-  - `confrontation`: `0.200`
-  - `expressive_warmth`: `0.235`
-  - `expressive_restraint`: `0.340`
+  - `confrontation`: `0.290`
+  - `expressive_warmth`: `0.410`
+  - `expressive_restraint`: `0.440`
 - Expected Guidance Bundle:
-  - `directness`: `low` (`0.200 < 0.33`)
-  - `warmth`: `low` (`0.235 < 0.33`)
-  - `restraint`: `moderate` (`0.33 <= 0.340 < 0.66`)
+  - `directness`: `low` (`0.290 < 0.33`)
+  - `warmth`: `moderate` (`0.33 <= 0.410 < 0.66`)
+  - `restraint`: `moderate` (`0.33 <= 0.440 < 0.66`)
 
 ### Persona Counterfactual Scenario (`persona-fixture-b`)
 - Input controls:
-  - `confrontation`: `0.365`
-  - `expressive_warmth`: `0.340`
-  - `expressive_restraint`: `0.160`
+  - `confrontation`: `0.500`
+  - `expressive_warmth`: `0.575`
+  - `expressive_restraint`: `0.215`
 - Expected Guidance Bundle:
-  - `directness`: `moderate` (`0.33 <= 0.365 < 0.66`)
-  - `warmth`: `moderate` (`0.33 <= 0.340 < 0.66`)
-  - `restraint`: `low` (`0.160 < 0.33`)
+  - `directness`: `moderate` (`0.33 <= 0.500 < 0.66`)
+  - `warmth`: `moderate` (`0.33 <= 0.575 < 0.66`)
+  - `restraint`: `low` (`0.215 < 0.33`)
 
 ### Boundary Edge Cases
 - `confrontation = 0.33` $\to$ `directness: moderate`

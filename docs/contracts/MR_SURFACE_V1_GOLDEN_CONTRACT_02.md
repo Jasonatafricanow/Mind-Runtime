@@ -90,9 +90,9 @@ These invariants hold universally across all future recipe revisions and calibra
 
 ---
 
-## Layer B: Candidate Conformance (`CANDIDATE_RECIPE_V1`)
+## Layer B: Candidate Conformance (`CANDIDATE_RECIPE_V1` Revision 2)
 
-Bound strictly to `surface-v1-candidate:1` and `surface-v1-candidate-map:1`.  
+Bound strictly to `surface-v1-candidate:2` and `surface-v1-candidate-map:2`.  
 **Hard Rule**: All test oracles are statically frozen literals. Tests must **never** compute expected values via a copy of the production formula.
 
 ### B1. Baseline Static Vector
@@ -101,18 +101,18 @@ Bound strictly to `surface-v1-candidate:1` and `surface-v1-candidate-map:1`.
 - **Expected Controls**:
   ```python
   {
-      "contact_seeking": 0.365,
-      "initiative": 0.405,
-      "confrontation": 0.200,
-      "expressive_warmth": 0.235,
-      "expressive_restraint": 0.340,
+      "contact_seeking": 0.500,
+      "initiative": 0.560,
+      "confrontation": 0.290,
+      "expressive_warmth": 0.410,
+      "expressive_restraint": 0.440,
   }
   ```
 - **Audit**: All controls have `unclamped == value` and `clamped == False`.
 - **Expression Guidance**:
-  - `directness`: `low` (`0.200 < 0.33`)
-  - `warmth`: `low` (`0.235 < 0.33`)
-  - `restraint`: `moderate` (`0.33 <= 0.340 < 0.66`)
+  - `directness`: `low` (`0.290 < 0.33`)
+  - `warmth`: `moderate` (`0.33 <= 0.410 < 0.66`)
+  - `restraint`: `moderate` (`0.33 <= 0.440 < 0.66`)
 
 ### B2. Persona Counterfactual Static Vector
 - **Persona**: `persona-fixture-b` (`attachment_approach=0.80`, `confrontation_readiness=0.80`, `expressive_restraint=0.10`, `expressive_warmth_bias=0.80`)
@@ -120,40 +120,53 @@ Bound strictly to `surface-v1-candidate:1` and `surface-v1-candidate-map:1`.
 - **Expected Controls**:
   ```python
   {
-      "contact_seeking": 0.470,
-      "initiative": 0.405,      # Strictly unchanged: initiative has no persona root
-      "confrontation": 0.365,
-      "expressive_warmth": 0.340,
-      "expressive_restraint": 0.160,
+      "contact_seeking": 0.650,
+      "initiative": 0.560,      # Strictly unchanged: initiative has no persona root
+      "confrontation": 0.500,
+      "expressive_warmth": 0.575,
+      "expressive_restraint": 0.215,
   }
   ```
 - **Expression Guidance**:
-  - `directness`: `moderate` (`0.33 <= 0.365 < 0.66`)
-  - `warmth`: `moderate` (`0.33 <= 0.340 < 0.66`)
-  - `restraint`: `low` (`0.160 < 0.33`)
+  - `directness`: `moderate` (`0.33 <= 0.500 < 0.66`)
+  - `warmth`: `moderate` (`0.33 <= 0.575 < 0.66`)
+  - `restraint`: `low` (`0.215 < 0.33`)
 
 ### B3. Root Isolation Static Vectors
 Varying each declared root by `+0.20` from baseline must change **only** its declared dependent controls:
 
 | Root Changed (`+0.20`) | Intended Affected Controls & Static Expected Values | Unaffected Controls (remain at baseline) |
 |---|---|---|
-| `longing` (`0.70 -> 0.90`) | `contact_seeking`: `0.435` | `initiative=0.405`, `confrontation=0.200`, `warmth=0.235`, `restraint=0.340` |
-| `closeness_craving` (`0.50 -> 0.70`) | `contact_seeking`: `0.415`<br>`expressive_warmth`: `0.295` | `initiative=0.405`, `confrontation=0.200`, `restraint=0.340` |
-| `anger` (`0.30 -> 0.50`) | `contact_seeking`: `0.335`<br>`confrontation`: `0.300`<br>`expressive_warmth`: `0.195` | `initiative=0.405`, `restraint=0.340` |
-| `attachment_approach` (`0.50 -> 0.70`) | `contact_seeking`: `0.405` | `initiative=0.405`, `confrontation=0.200`, `warmth=0.235`, `restraint=0.340` |
-| `expressive_restraint` (trait) (`0.40 -> 0.60`) | `contact_seeking`: `0.335`<br>`confrontation`: `0.150`<br>`expressive_restraint`: `0.460` | `initiative=0.405`, `warmth=0.235` |
-| `sharing_urge` (`0.60 -> 0.80`) | `initiative`: `0.495` | `contact=0.365`, `confrontation=0.200`, `warmth=0.235`, `restraint=0.340` |
-| `curiosity` (`0.50 -> 0.70`) | `initiative`: `0.475` | `contact=0.365`, `confrontation=0.200`, `warmth=0.235`, `restraint=0.340` |
-| `sadness` (`0.20 -> 0.40`) | `initiative`: `0.365`<br>`expressive_warmth`: `0.205` | `contact=0.365`, `confrontation=0.200`, `restraint=0.340` |
-| `confrontation_readiness` (`0.50 -> 0.70`) | `confrontation`: `0.260` | `contact=0.365`, `initiative=0.405`, `warmth=0.235`, `restraint=0.340` |
-| `expressive_warmth_bias` (`0.50 -> 0.70`) | `expressive_warmth`: `0.305` | `contact=0.365`, `initiative=0.405`, `confrontation=0.200`, `restraint=0.340` |
-| `diligence_pressure` (`0.40 -> 0.60`) | `expressive_restraint`: `0.390` | `contact=0.365`, `initiative=0.405`, `confrontation=0.200`, `warmth=0.235` |
+| `longing` (`0.70 -> 0.90`) | `contact_seeking`: `0.590` | `initiative=0.560`, `confrontation=0.290`, `warmth=0.410`, `restraint=0.440` |
+| `closeness_craving` (`0.50 -> 0.70`) | `contact_seeking`: `0.570`<br>`expressive_warmth`: `0.510` | `initiative=0.560`, `confrontation=0.290`, `restraint=0.440` |
+| `anger` (`0.30 -> 0.50`) | `contact_seeking`: `0.460`<br>`confrontation`: `0.430`<br>`expressive_warmth`: `0.360` | `initiative=0.560`, `restraint=0.440` |
+| `attachment_approach` (`0.50 -> 0.70`) | `contact_seeking`: `0.560` | `initiative=0.560`, `confrontation=0.290`, `warmth=0.410`, `restraint=0.440` |
+| `expressive_restraint` (trait) (`0.40 -> 0.60`) | `contact_seeking`: `0.460`<br>`confrontation`: `0.230`<br>`expressive_restraint`: `0.590` | `initiative=0.560`, `warmth=0.410` |
+| `sharing_urge` (`0.60 -> 0.80`) | `initiative`: `0.680` | `contact=0.500`, `confrontation=0.290`, `warmth=0.410`, `restraint=0.440` |
+| `curiosity` (`0.50 -> 0.70`) | `initiative`: `0.660` | `contact=0.500`, `confrontation=0.290`, `warmth=0.410`, `restraint=0.440` |
+| `sadness` (`0.20 -> 0.40`) | `initiative`: `0.510`<br>`expressive_warmth`: `0.370` | `contact=0.500`, `confrontation=0.290`, `restraint=0.440` |
+| `confrontation_readiness` (`0.50 -> 0.70`) | `confrontation`: `0.370` | `contact=0.500`, `initiative=0.560`, `warmth=0.410`, `restraint=0.440` |
+| `expressive_warmth_bias` (`0.50 -> 0.70`) | `expressive_warmth`: `0.520` | `contact=0.500`, `initiative=0.560`, `confrontation=0.290`, `restraint=0.440` |
+| `diligence_pressure` (`0.40 -> 0.60`) | `expressive_restraint`: `0.510` | `contact=0.500`, `initiative=0.560`, `confrontation=0.290`, `warmth=0.410` |
 
-### B4. Clamp & Saturation Static Vectors
-- **Upper Saturation**: (all positive roots = `1.0`, all negative roots = `0.0`)  
-  All 5 controls evaluate to clamped `1.000` with audit `clamped == True`.
-- **Lower Saturation**: (all positive roots = `0.0`, all negative roots = `1.0`)  
-  All 5 controls evaluate to clamped `0.000` with audit `clamped == True` (except `expressive_restraint` where unclamped is `0.000` and `clamped == False`).
+### B4. Per-Control Admissible Saturation Static Vectors
+Simultaneous 5-control saturation is inadmissible because `anger` exerts opposite sign on `confrontation` (+0.70) versus `contact_seeking` (-0.20) and `expressive_warmth` (-0.25). Each control is certified against an admissible per-control saturation fixture:
+
+1. **`contact_seeking`**:
+   - Upper (`longing=1.0, closeness_craving=1.0, attachment_approach=1.0, anger=0.0, expressive_restraint=0.0`): unclamped `1.10`, clamped `1.000` (`clamped == True`).
+   - Lower (`longing=0.0, closeness_craving=0.0, attachment_approach=0.0, anger=1.0, expressive_restraint=1.0`): unclamped `-0.40`, clamped `0.000` (`clamped == True`).
+2. **`initiative`**:
+   - Upper (`sharing_urge=1.0, curiosity=1.0, sadness=0.0`): unclamped `1.10`, clamped `1.000` (`clamped == True`).
+   - Lower (`sharing_urge=0.0, curiosity=0.0, sadness=1.0`): unclamped `-0.25`, clamped `0.000` (`clamped == True`).
+3. **`confrontation`**:
+   - Upper (`anger=1.0, confrontation_readiness=1.0, expressive_restraint=0.0`): unclamped `1.10`, clamped `1.000` (`clamped == True`).
+   - Lower (`anger=0.0, confrontation_readiness=0.0, expressive_restraint=1.0`): unclamped `-0.30`, clamped `0.000` (`clamped == True`).
+4. **`expressive_warmth`**:
+   - Upper (`expressive_warmth_bias=1.0, closeness_craving=1.0, anger=0.0, sadness=0.0`): unclamped `1.05`, clamped `1.000` (`clamped == True`).
+   - Lower (`expressive_warmth_bias=0.0, closeness_craving=0.0, anger=1.0, sadness=1.0`): unclamped `-0.45`, clamped `0.000` (`clamped == True`).
+5. **`expressive_restraint`**:
+   - Upper (`expressive_restraint=1.0, diligence_pressure=1.0`): unclamped `1.10`, clamped `1.000` (`clamped == True`).
+   - Lower (`expressive_restraint=0.0, diligence_pressure=0.0`): unclamped `0.00`, clamped `0.000` (`clamped == False`).
 
 ---
 

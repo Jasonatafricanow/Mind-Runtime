@@ -39,12 +39,12 @@ ENABLED = sorted(MANIFEST)
 DEFERRED = ["reassurance_seeking", "withdrawal"]
 
 CANDIDATE_RECIPE_ID = "surface-v1-candidate"
-CANDIDATE_RECIPE_VERSION = 1
-CANDIDATE_RECIPE_DIGEST = "6ae29e53568ca91a08a2140a05ede3e5a32f79cd1bad28e69d8f81b5c241d32a"
+CANDIDATE_RECIPE_VERSION = 2
+CANDIDATE_RECIPE_DIGEST = "4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55"
 
 CANDIDATE_MAP_ID = "surface-v1-candidate-map"
-CANDIDATE_MAP_VERSION = 1
-CANDIDATE_MAP_DIGEST = "00bb976c15ffee1759c2c4baa1640dc42ce5ebb9dfa061b581cbb6b0f1f1ac90"
+CANDIDATE_MAP_VERSION = 2
+CANDIDATE_MAP_DIGEST = "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
 
 REFERENCE_RECIPE_ID = "surface-reference-v1"
 REFERENCE_RECIPE_VERSION = 1
@@ -56,109 +56,109 @@ PERSONA_A_DIGEST = "a828cb3c92aa9f88c9370f6eda4c6da8443b2d19339bbe745eff48830d55
 PERSONA_B_DIGEST = "a725d748712dc7d6a5ea4d75ca1a6fd696d7de7d04e8c538690fc00ff7b767f5"
 DEP_A_DIGEST = "f32c0114a01f639a1c73055cc27202ec8cc136248c6df5a0d993bd0dd25a4dc1"
 BASELINE_CONTROLS_ID = (
-    "surface:d08bb9968ba7edf2e47be6045916993b13ab1a40ed16186b5838511f6b49d0fb"
+    "surface:f819caec79ce592566c67b25112d7d801ebe1a08bd8a8594f424fa898995ca60"
 )
 
 # Statically frozen candidate vectors (LITERALS ONLY, no algorithmic derivation in tests)
 STATIC_BASELINE_CONTROLS = {
-    "contact_seeking": 0.365,
-    "initiative": 0.405,
-    "confrontation": 0.200,
-    "expressive_warmth": 0.235,
-    "expressive_restraint": 0.340,
+    "contact_seeking": 0.500,
+    "initiative": 0.560,
+    "confrontation": 0.290,
+    "expressive_warmth": 0.410,
+    "expressive_restraint": 0.440,
 }
 
 STATIC_PERSONA_COUNTERFACTUAL_CONTROLS = {
-    "contact_seeking": 0.470,
-    "initiative": 0.405,  # initiative has no persona root in V1
-    "confrontation": 0.365,
-    "expressive_warmth": 0.340,
-    "expressive_restraint": 0.160,
+    "contact_seeking": 0.650,
+    "initiative": 0.560,  # initiative has no persona root in V1
+    "confrontation": 0.500,
+    "expressive_warmth": 0.575,
+    "expressive_restraint": 0.215,
 }
 
 STATIC_ROOT_ISOLATION_CONTROLS: dict[str, dict[str, float]] = {
     "longing": {
-        "contact_seeking": 0.435,
-        "initiative": 0.405,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.590,
+        "initiative": 0.560,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.440,
     },
     "closeness_craving": {
-        "contact_seeking": 0.415,
-        "initiative": 0.405,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.295,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.570,
+        "initiative": 0.560,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.510,
+        "expressive_restraint": 0.440,
     },
     "anger": {
-        "contact_seeking": 0.335,
-        "initiative": 0.405,
-        "confrontation": 0.300,
-        "expressive_warmth": 0.195,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.460,
+        "initiative": 0.560,
+        "confrontation": 0.430,
+        "expressive_warmth": 0.360,
+        "expressive_restraint": 0.440,
     },
     "attachment_approach": {
-        "contact_seeking": 0.405,
-        "initiative": 0.405,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.560,
+        "initiative": 0.560,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.440,
     },
     "expressive_restraint": {
-        "contact_seeking": 0.335,
-        "initiative": 0.405,
-        "confrontation": 0.150,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.460,
+        "contact_seeking": 0.460,
+        "initiative": 0.560,
+        "confrontation": 0.230,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.590,
     },
     "sharing_urge": {
-        "contact_seeking": 0.365,
-        "initiative": 0.495,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.500,
+        "initiative": 0.680,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.440,
     },
     "curiosity": {
-        "contact_seeking": 0.365,
-        "initiative": 0.475,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.500,
+        "initiative": 0.660,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.440,
     },
     "sadness": {
-        "contact_seeking": 0.365,
-        "initiative": 0.365,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.205,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.500,
+        "initiative": 0.510,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.370,
+        "expressive_restraint": 0.440,
     },
     "confrontation_readiness": {
-        "contact_seeking": 0.365,
-        "initiative": 0.405,
-        "confrontation": 0.260,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.500,
+        "initiative": 0.560,
+        "confrontation": 0.370,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.440,
     },
     "expressive_warmth_bias": {
-        "contact_seeking": 0.365,
-        "initiative": 0.405,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.305,
-        "expressive_restraint": 0.340,
+        "contact_seeking": 0.500,
+        "initiative": 0.560,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.520,
+        "expressive_restraint": 0.440,
     },
     "diligence_pressure": {
-        "contact_seeking": 0.365,
-        "initiative": 0.405,
-        "confrontation": 0.200,
-        "expressive_warmth": 0.235,
-        "expressive_restraint": 0.390,
+        "contact_seeking": 0.500,
+        "initiative": 0.560,
+        "confrontation": 0.290,
+        "expressive_warmth": 0.410,
+        "expressive_restraint": 0.510,
     },
 }
 
 STATIC_BASELINE_EXPRESSION_BUNDLE = {
     "directness": "low",
-    "warmth": "low",
+    "warmth": "moderate",
     "restraint": "moderate",
 }
 
@@ -166,6 +166,29 @@ STATIC_COUNTERFACTUAL_EXPRESSION_BUNDLE = {
     "directness": "moderate",
     "warmth": "moderate",
     "restraint": "low",
+}
+
+STATIC_PER_CONTROL_SATURATION = {
+    "contact_seeking": {
+        "upper": {"unclamped": 1.10, "clamped": True, "value": 1.0},
+        "lower": {"unclamped": -0.40, "clamped": True, "value": 0.0},
+    },
+    "initiative": {
+        "upper": {"unclamped": 1.10, "clamped": True, "value": 1.0},
+        "lower": {"unclamped": -0.25, "clamped": True, "value": 0.0},
+    },
+    "confrontation": {
+        "upper": {"unclamped": 1.10, "clamped": True, "value": 1.0},
+        "lower": {"unclamped": -0.30, "clamped": True, "value": 0.0},
+    },
+    "expressive_warmth": {
+        "upper": {"unclamped": 1.05, "clamped": True, "value": 1.0},
+        "lower": {"unclamped": -0.45, "clamped": True, "value": 0.0},
+    },
+    "expressive_restraint": {
+        "upper": {"unclamped": 1.10, "clamped": True, "value": 1.0},
+        "lower": {"unclamped": 0.00, "clamped": False, "value": 0.0},
+    },
 }
 
 
@@ -461,14 +484,14 @@ def bind_recipe(x: SurfaceProjectionInput) -> None:
 def sample_candidate(persona_name: str = "persona-fixture-a") -> SurfaceProjectionInput:
     scope = {
         "domain": "agent",
-        "agent_id": persona_name,
-        "persona_id": persona_name,
+        "agent_id": "fixture-persona",
+        "persona_id": "fixture-persona",
         "user_id": None,
         "relationship_id": None,
         "world_id": None,
         "interaction_id": None,
     }
-    owner = {"owner_runtime_id": "fixture-runtime", "owner_persona_id": persona_name}
+    owner = {"owner_runtime_id": "fixture-runtime", "owner_persona_id": "fixture-persona"}
     vals = dict(
         longing=0.70,
         closeness_craving=0.50,
@@ -746,3 +769,104 @@ def expect_ok(adapter: SurfaceSpecAdapter, x: SurfaceProjectionInput) -> dict[st
 
 def expect_error(adapter: SurfaceSpecAdapter, x: SurfaceProjectionInput, code: str) -> None:
     assert adapter.project(x) == {"status": "UNAVAILABLE", "reasons": [code], "controls": None}
+
+
+class HistoricalReferenceEvaluator:
+    """Test-only AST evaluator strictly for historical reference-v1 fixture tests."""
+
+    def project(self, supplied: SurfaceProjectionInput) -> dict[str, Any]:
+        r = normalized_recipe(supplied["recipe"])
+        if (
+            r["recipe_id"] != REFERENCE_RECIPE_ID
+            or r["recipe_version"] != REFERENCE_RECIPE_VERSION
+        ):
+            return {
+                "status": "UNAVAILABLE",
+                "reasons": ["SURFACE_RECIPE_UNSUPPORTED"],
+                "controls": None,
+            }
+        states = {s["dimension"]: s for s in supplied["projected_dynamics"]["states"]}
+        traits = supplied["persona"]["content"].get("behavioral_disposition", {})
+
+        def eval_ast(node: list[Any]) -> float:
+            op = node[0]
+            if op == "const":
+                return float(node[1])
+            if op == "lookup":
+                path = node[1]
+                if path.startswith(D):
+                    if path not in states:
+                        raise KeyError(f"missing state {path}")
+                    return float(states[path]["value"])
+                if path.startswith(P):
+                    name = path.removeprefix(P)
+                    if name not in traits:
+                        raise KeyError(f"missing trait {name}")
+                    return float(traits[name])
+                raise ValueError(f"unknown lookup path: {path}")
+            if op == "add":
+                return eval_ast(node[1]) + eval_ast(node[2])
+            if op == "sub":
+                return eval_ast(node[1]) - eval_ast(node[2])
+            if op == "mul":
+                return eval_ast(node[1]) * eval_ast(node[2])
+            raise ValueError(f"unknown op: {op}")
+
+        values: dict[str, float] = {}
+        audit: dict[str, dict[str, Any]] = {}
+        for rule in r["rules"]:
+            k = rule["control_id"]
+            formula = rule["formula"]
+            assert formula[0] == "clamp"
+            raw = eval_ast(formula[1])
+            lo = eval_ast(formula[2])
+            hi = eval_ast(formula[3])
+            clamped = raw < lo or raw > hi
+            val = max(lo, min(hi, raw))
+            if val == 0.0:
+                val = 0.0
+            values[k] = val
+            audit[k] = {"unclamped": raw, "clamped": clamped}
+
+        payload = dependency_payload(supplied)
+        roots = sorted({d for m in MANIFEST.values() for d in m["dynamics"]})
+        source_states = [
+            {
+                "dimension": d,
+                "state_id": states[d]["state_id"],
+                "version": states[d]["version"],
+                "value_digest": digest("state-value", states[d]["value"]),
+            }
+            for d in roots
+        ]
+
+        out: dict[str, Any] = {
+            "runtime_id": supplied["runtime_id"],
+            "scope": supplied["scope"],
+            "owner": supplied["owner"],
+            "interaction_or_tick_ref": supplied["interaction_or_tick_ref"],
+            "persona_id": supplied["persona"]["persona_id"],
+            "persona_version": supplied["persona"]["persona_version"],
+            "persona_content_digest": supplied["persona"]["persona_content_digest"],
+            "source_projection_id": supplied["projected_dynamics"]["source_projection_id"],
+            "source_phase": supplied["projected_dynamics"]["source_phase"],
+            "source_states": source_states,
+            "projector_id": supplied["recipe"]["projector_id"],
+            "projector_version": supplied["recipe"]["projector_version"],
+            "recipe_id": supplied["recipe"]["recipe_id"],
+            "recipe_version": supplied["recipe"]["recipe_version"],
+            "recipe_digest": digest("recipe", r),
+            "dependency_digest": digest("dependencies", payload),
+            "dependency_digests_by_control": {
+                k: digest("control-dependencies", v) for k, v in payload.items()
+            },
+            "values": values,
+            "dependencies_by_control": MANIFEST,
+            "evaluation_ref": supplied["evaluation_ref"],
+            "audit": audit,
+            "derived_only": True,
+            "canonical": False,
+        }
+        semantic = {k: v for k, v in out.items() if k not in ("controls_id", "evaluation_ref")}
+        out["controls_id"] = "surface:" + digest("controls", semantic)
+        return {"status": "AVAILABLE", "reasons": [], "controls": out}

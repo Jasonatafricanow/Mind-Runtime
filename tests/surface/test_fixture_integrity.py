@@ -207,3 +207,21 @@ def test_static_vectors_self_consistency():
         STATIC_ROOT_ISOLATION_CONTROLS["expressive_restraint"]["expressive_restraint"]
         > STATIC_BASELINE_CONTROLS["expressive_restraint"]
     )
+
+
+def test_static_per_control_saturation_integrity():
+    from tests.surface.spec_support import STATIC_PER_CONTROL_SATURATION
+
+    assert sorted(STATIC_PER_CONTROL_SATURATION) == ENABLED
+    for ctrl, sat in STATIC_PER_CONTROL_SATURATION.items():
+        assert set(sat) == {"upper", "lower"}
+        assert sat["upper"]["value"] == 1.0
+        assert sat["lower"]["value"] == 0.0
+        assert sat["upper"]["unclamped"] >= 1.0
+        assert sat["lower"]["unclamped"] <= 0.0
+        assert sat["upper"]["clamped"] is True
+        if ctrl == "expressive_restraint":
+            assert sat["lower"]["clamped"] is False
+            assert sat["lower"]["unclamped"] == 0.0
+        else:
+            assert sat["lower"]["clamped"] is True

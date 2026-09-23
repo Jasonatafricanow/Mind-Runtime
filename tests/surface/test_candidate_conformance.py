@@ -81,51 +81,114 @@ def test_candidate_root_isolation_all_declared_roots(surface, root_name):
     assert out["values"] == expected
 
 
-def test_candidate_saturation_upper(surface):
-    """Layer B: Upper clamp saturation with unclamped > 1.0."""
+def test_candidate_per_control_saturation_upper(surface):
+    """Layer B: Upper clamp saturation for each control (unclamped >= 1.0, clamped == True)."""
+    # 1. contact_seeking: longing=1, closeness=1, attachment=1, anger=0, restraint=0 -> 1.10 -> 1.0
     x = sample_candidate("persona-fixture-a")
-    # Set all positive roots to 1.0, all negative roots to 0.0
-    positive_roots = (
-        "longing",
-        "closeness_craving",
-        "sharing_urge",
-        "curiosity",
-        "anger",
-        "diligence_pressure",
-    )
-    for name in positive_roots:
-        state(x, name)["value"] = 0.0 if name in ("anger", "sadness") else 1.0
-    state(x, "anger")["value"] = 1.0  # anger is positive for confrontation
-    state(x, "sadness")["value"] = 0.0
-
+    state(x, "longing")["value"] = 1.0
+    state(x, "closeness_craving")["value"] = 1.0
+    state(x, "anger")["value"] = 0.0
     trait(x, "attachment_approach", 1.0)
+    trait(x, "expressive_restraint", 0.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["contact_seeking"] == 1.0
+    assert out["audit"]["contact_seeking"]["clamped"] is True
+    assert out["audit"]["contact_seeking"]["unclamped"] == 1.10
+
+    # 2. initiative: sharing=1, curiosity=1, sadness=0 -> 1.10 -> 1.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "sharing_urge")["value"] = 1.0
+    state(x, "curiosity")["value"] = 1.0
+    state(x, "sadness")["value"] = 0.0
+    out = expect_ok(surface, x)
+    assert out["values"]["initiative"] == 1.0
+    assert out["audit"]["initiative"]["clamped"] is True
+    assert out["audit"]["initiative"]["unclamped"] == 1.10
+
+    # 3. confrontation: anger=1, readiness=1, restraint=0 -> 1.10 -> 1.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "anger")["value"] = 1.0
     trait(x, "confrontation_readiness", 1.0)
     trait(x, "expressive_restraint", 0.0)
-    trait(x, "expressive_warmth_bias", 1.0)
-
     out = expect_ok(surface, x)
-    # With restraint=0 and positive terms=1.0:
-    # contact_seeking unclamped: 0.45*1 + 0.35*1 + 0.30*1 - 0.20*1 = 0.90 (in range)
-    # confrontation unclamped: 0.70*1 + 0.40*1 - 0 = 1.10 -> clamped 1.0
-    # expressive_restraint unclamped: 0.75*0 + 0.35*1 = 0.35
     assert out["values"]["confrontation"] == 1.0
     assert out["audit"]["confrontation"]["clamped"] is True
     assert out["audit"]["confrontation"]["unclamped"] == 1.10
 
-
-def test_candidate_saturation_lower(surface):
-    """Layer B: Lower clamp saturation with unclamped < 0.0."""
+    # 4. expressive_warmth: warmth_bias=1, closeness=1, anger=0, sadness=0 -> 1.05 -> 1.0
     x = sample_candidate("persona-fixture-a")
-    # In confrontation: 0.70*anger + 0.40*readiness - 0.30*restraint
-    # Set anger=0, readiness=0, restraint=1.0 -> 0 - 0.30 = -0.30 -> clamped to 0.0
+    state(x, "closeness_craving")["value"] = 1.0
+    state(x, "anger")["value"] = 0.0
+    state(x, "sadness")["value"] = 0.0
+    trait(x, "expressive_warmth_bias", 1.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["expressive_warmth"] == 1.0
+    assert out["audit"]["expressive_warmth"]["clamped"] is True
+    assert out["audit"]["expressive_warmth"]["unclamped"] == 1.05
+
+    # 5. expressive_restraint: restraint=1, diligence=1 -> 1.10 -> 1.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "diligence_pressure")["value"] = 1.0
+    trait(x, "expressive_restraint", 1.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["expressive_restraint"] == 1.0
+    assert out["audit"]["expressive_restraint"]["clamped"] is True
+    assert out["audit"]["expressive_restraint"]["unclamped"] == 1.10
+
+
+def test_candidate_per_control_saturation_lower(surface):
+    """Layer B: Lower clamp saturation for each control (unclamped <= 0.0)."""
+    # 1. contact_seeking: longing=0, closeness=0, attachment=0, anger=1, restraint=1 -> -0.40 -> 0.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "longing")["value"] = 0.0
+    state(x, "closeness_craving")["value"] = 0.0
+    state(x, "anger")["value"] = 1.0
+    trait(x, "attachment_approach", 0.0)
+    trait(x, "expressive_restraint", 1.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["contact_seeking"] == 0.0
+    assert out["audit"]["contact_seeking"]["clamped"] is True
+    assert out["audit"]["contact_seeking"]["unclamped"] == -0.40
+
+    # 2. initiative: sharing=0, curiosity=0, sadness=1 -> -0.25 -> 0.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "sharing_urge")["value"] = 0.0
+    state(x, "curiosity")["value"] = 0.0
+    state(x, "sadness")["value"] = 1.0
+    out = expect_ok(surface, x)
+    assert out["values"]["initiative"] == 0.0
+    assert out["audit"]["initiative"]["clamped"] is True
+    assert out["audit"]["initiative"]["unclamped"] == -0.25
+
+    # 3. confrontation: anger=0, readiness=0, restraint=1 -> -0.30 -> 0.0
+    x = sample_candidate("persona-fixture-a")
     state(x, "anger")["value"] = 0.0
     trait(x, "confrontation_readiness", 0.0)
     trait(x, "expressive_restraint", 1.0)
-
     out = expect_ok(surface, x)
     assert out["values"]["confrontation"] == 0.0
     assert out["audit"]["confrontation"]["clamped"] is True
     assert out["audit"]["confrontation"]["unclamped"] == -0.30
+
+    # 4. expressive_warmth: warmth_bias=0, closeness=0, anger=1, sadness=1 -> -0.45 -> 0.0
+    x = sample_candidate("persona-fixture-a")
+    state(x, "closeness_craving")["value"] = 0.0
+    state(x, "anger")["value"] = 1.0
+    state(x, "sadness")["value"] = 1.0
+    trait(x, "expressive_warmth_bias", 0.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["expressive_warmth"] == 0.0
+    assert out["audit"]["expressive_warmth"]["clamped"] is True
+    assert out["audit"]["expressive_warmth"]["unclamped"] == -0.45
+
+    # 5. expressive_restraint: restraint=0, diligence=0 -> 0.00 -> 0.0 (clamped == False)
+    x = sample_candidate("persona-fixture-a")
+    state(x, "diligence_pressure")["value"] = 0.0
+    trait(x, "expressive_restraint", 0.0)
+    out = expect_ok(surface, x)
+    assert out["values"]["expressive_restraint"] == 0.0
+    assert out["audit"]["expressive_restraint"]["clamped"] is False
+    assert out["audit"]["expressive_restraint"]["unclamped"] == 0.00
 
 
 @pytest.mark.parametrize("dimension", sorted({d for m in MANIFEST.values() for d in m["dynamics"]}))
