@@ -50,6 +50,7 @@ from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
 from mind_runtime.emotional_transition.appraisal import SemanticAppraisalProducer
 from mind_runtime.emotional_transition.effects import EventEffectRule
+from mind_runtime.emotional_transition.projection_journal import ProjectionJournal
 from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
     SemanticRouter,
@@ -264,6 +265,8 @@ def build_runtime_stack(
     else:
         fact_service = FactIngestService(clock=clock, backend=SqliteFactBackend(facts_db))
     state_backend = SqliteStateBackend(state_db)
+    if appraisal_producer is not None:
+        state_backend.enable_application_receipts()
     marker_store = SqliteCommitMarkerStore(state_db, connection=state_backend.connection)
     if situation is None:
         bound_situation = SituationBuilder(runtime_id=origin_runtime_id)
@@ -291,12 +294,17 @@ def build_runtime_stack(
     if definitions is not None:
         for definition in definitions.all():
             state_backend.save_definition(definition)
+    projection_journal = (
+        ProjectionJournal(Path(state_db).with_name("appraisal_journal.sqlite"))
+        if appraisal_producer is not None else None
+    )
     decision_context_compiler = None
     context_renderer = None
     if decision_context_config is not None:
         decision_context_compiler = DecisionContextCompiler(
             config=decision_context_config,
             definitions=definitions,
+            appraisal_journal=projection_journal,
         )
         context_renderer = DeterministicContextRenderer(decision_context_config)
     # Emotional-composition wiring: when a persona is supplied together with
@@ -316,6 +324,8 @@ def build_runtime_stack(
             semantic_router=SemanticRouter(provider=semantic_provider),
             homeostasis_gate=homeostasis_gate,
             appraisal_producer=appraisal_producer,
+            projection_journal=projection_journal,
+            state_definitions=definitions,
             telemetry_sink=telemetry_sink,
         )
     orchestrator = TurnOrchestrator(

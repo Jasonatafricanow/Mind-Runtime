@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from dataclasses import replace as _replace
 from datetime import datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
+from typing import Any
 
 from mind_runtime.contracts import (
     ActionDecision,
@@ -44,6 +46,13 @@ from mind_runtime.contracts import (
     TurnStage,
 )
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol, TelemetryStage
+from mind_runtime.contracts.late_projection import (
+    ApplicationReceipt,
+    ApplicationStatus,
+    ProjectionStatus,
+    application_identity,
+    digest,
+)
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import EventEffectRule
 from mind_runtime.emotional_transition.factory import (
@@ -861,6 +870,10 @@ class TurnOrchestrator:
             scope=turn.interaction.scope,
             clock=now,
         )
+        if self._persona is not None:
+            if situation.persona_id not in (None, self._persona.persona_id):
+                raise ValueError("Situation Persona conflicts with turn Persona")
+            situation = _replace(situation, persona_id=self._persona.persona_id)
         historical_context = self.historical_context.read(
             interaction_id=turn.interaction.interaction_id,
             context=situation,
@@ -1092,6 +1105,7 @@ class TurnOrchestrator:
             rewrite_reason_codes=(),
             slow_state_records=slow_state_records,
             state_definitions=self._definitions,
+            accepted_appraisals=transition_result.accepted_appraisals,
         )
         context, compile_trace = self.decision_context_compiler.compile(compiler_input)
         turn.decision_context = context
@@ -1174,6 +1188,129 @@ class TurnOrchestrator:
             # aborts the turn; abort's release is idempotent).
             self._release_admission_lease()
 
+    def _prepare_appraisal_receipts(
+        self, turn: _Turn, slow_plans: tuple[Any, ...]
+    ) -> tuple[ApplicationReceipt, ...]:
+        transition = turn.transition_result
+        if transition is None or not transition.accepted_appraisals:
+            return ()
+        journal = getattr(self.emotional_transition, "projection_journal", None)
+        if journal is None:
+            raise CanonicalPersistenceError("accepted appraisal has no derived journal")
+        receipts: list[ApplicationReceipt] = []
+        for acceptance, projection_ref in zip(
+            transition.accepted_appraisals, transition.projection_refs, strict=True
+        ):
+            if (
+                not acceptance.valid_lineage()
+                or acceptance.interaction_id != turn.interaction.interaction_id
+                or acceptance.candidate.scope != turn.interaction.scope
+                or acceptance.candidate.origin_runtime_id != self._runtime_id
+                or acceptance.projection_scope != transition.projected.scope
+            ):
+                raise CanonicalPersistenceError("cross-interaction appraisal application rejected")
+            projection = journal.get_projection(projection_ref)
+            if (
+                projection is None
+                or journal.get_acceptance(acceptance.acceptance_id) != acceptance
+                or projection.source_appraisal_ref != acceptance.appraisal.appraisal_id
+                or projection.source_candidate_ref != acceptance.candidate.candidate_id
+            ):
+                raise CanonicalPersistenceError(
+                    "projection or accepted source is not journal-resolvable"
+                )
+            if projection.status is not ProjectionStatus.MAPPED:
+                continue
+            projector = getattr(self.emotional_transition, "_projector", None)
+            if projector is None:
+                raise CanonicalPersistenceError("one AppraisalProjector is required")
+            projector.validate_materialized_result(projection, acceptance=acceptance)
+            authorized_effects = tuple(
+                effect for effect in projection.effects
+                if effect.operation == "delta"
+                or any(
+                    decision.candidate.source_event_ref == effect.source_ref
+                    and decision.candidate.target_dimension == effect.dimension
+                    and decision.decision.value == "slow_accept"
+                    for decision in turn.slow_decisions
+                )
+            )
+            accepted_slow = tuple(
+                decision for decision in turn.slow_decisions
+                if decision.decision.value == "slow_accept"
+                and any(
+                    effect.operation == "proposed_value"
+                    and decision.candidate.source_event_ref == effect.source_ref
+                    and decision.candidate.target_dimension == effect.dimension
+                    for effect in projection.effects
+                )
+            )
+            if accepted_slow:
+                if (
+                    self._slow_writer is None
+                    or getattr(self._slow_writer, "_backend", None) is not self._state_backend
+                    or any(
+                        not any(
+                            plan.target_dimension == decision.candidate.target_dimension
+                            and row["source_event_ref"] == decision.candidate.source_event_ref
+                            for plan in slow_plans for row in plan.new_rows
+                        )
+                        for decision in accepted_slow
+                    )
+                ):
+                    raise CanonicalPersistenceError(
+                        "accepted appraisal Slow effect has no shared canonical flush plan"
+                    )
+            if not authorized_effects:
+                continue
+            if not isinstance(self._state_backend, SqliteStateBackend) or not (
+                isinstance(self.commit_marker_store, SqliteCommitMarkerStore)
+                and self.commit_marker_store._conn is self._state_backend.connection
+            ):
+                raise CanonicalPersistenceError(
+                    "appraisal application requires shared canonical transaction and marker"
+                )
+            group_id = "group-" + digest((projection.admission_mode, authorized_effects))
+            receipts.append(
+                ApplicationReceipt(
+                    application_id=application_identity(
+                        self._runtime_id, acceptance.acceptance_id,
+                        group_id, turn.interaction.interaction_id,
+                    ),
+                    projection_id=projection.projection_id,
+                    acceptance_id=acceptance.acceptance_id,
+                    interaction_id=turn.interaction.interaction_id,
+                    effect_group_id=group_id,
+                    runtime_id=self._runtime_id,
+                    scope=transition.projected.scope,
+                    status=ApplicationStatus.EVALUATED,
+                    commit_ref=None,
+                    transition_refs=(),
+                )
+            )
+        return tuple(receipts)
+
+    def _publish_committed_states(
+        self, projected_states: tuple[RuntimeState, ...], slow_plans: tuple[Any, ...]
+    ) -> None:
+        for projected_state in projected_states:
+            for old_id in [
+                state_id for state_id, current in self._canonical.items()
+                if current.scope == projected_state.scope
+                and current.dimension == projected_state.dimension
+            ]:
+                del self._canonical[old_id]
+            self._canonical[projected_state.state_id] = projected_state
+        if slow_plans and hasattr(self._slow_writer, "apply_flush_plan"):
+            slow_states = self._slow_writer.apply_flush_plan(slow_plans)
+            for state in slow_states:
+                for old_id in [
+                    state_id for state_id, current in self._canonical.items()
+                    if current.scope == state.scope and current.dimension == state.dimension
+                ]:
+                    del self._canonical[old_id]
+                self._canonical[state.state_id] = state
+
     def _commit_turn_admitted(self) -> None:
         turn = self._require_turn()
         _mr_thread_trace("ORCH_COMMIT_ENTRY", self, turn.interaction.interaction_id)
@@ -1223,6 +1360,7 @@ class TurnOrchestrator:
             slow_plans: tuple[Any, ...] = ()
             accepted: list[Any] = []
             routable: list[Any] = []
+            appraisal_receipts: tuple[ApplicationReceipt, ...] = ()
 
             try:
                 # 1. Stage slow transient inputs
@@ -1252,13 +1390,22 @@ class TurnOrchestrator:
                         else:
                             slow_plans = ()
 
+                appraisal_receipts = self._prepare_appraisal_receipts(turn, slow_plans)
+
                 # 2. Atomic durable transaction
                 tx_context = (
                     self._state_backend.transaction()
-                    if self._state_backend is not None and hasattr(self._state_backend, "transaction")
+                    if self._state_backend is not None
+                    and hasattr(self._state_backend, "transaction")
                     else nullcontext()
                 )
                 with tx_context:
+                    if appraisal_receipts:
+                        assert isinstance(self._state_backend, SqliteStateBackend)
+                        for receipt in appraisal_receipts:
+                            self._state_backend.stage_application_receipt(
+                                _replace(receipt, status=ApplicationStatus.PENDING)
+                            )
                     if self._state_backend is not None:
                         for projected_state in projected_states:
                             self._persist_state_idempotent(projected_state)
@@ -1308,38 +1455,57 @@ class TurnOrchestrator:
                                 "was not recorded (storage failure); refusing to "
                                 "report a successful admission (MR-RUNTIME-05 §10)"
                             )
+                    if appraisal_receipts:
+                        assert isinstance(self._state_backend, SqliteStateBackend)
+                        committed_refs = tuple(state.state_id for state in projected_states)
+                        committed_refs += tuple(plan.state.state_id for plan in slow_plans)
+                        for receipt in appraisal_receipts:
+                            self._state_backend.commit_application_receipt(
+                                _replace(
+                                    receipt,
+                                    status=ApplicationStatus.COMMITTED,
+                                    commit_ref=f"commit:{turn.interaction.interaction_id}",
+                                    transition_refs=committed_refs,
+                                )
+                            )
 
             except BaseException as exc:
+                for receipt in appraisal_receipts:
+                    aborted = _replace(receipt, status=ApplicationStatus.ABORTED)
+                    self._trace.record(
+                        turn.interaction.interaction_id,
+                        "application_aborted",
+                        ref=aborted.application_id,
+                        at=self._clock.now(),
+                    )
                 if self._slow_writer is not None and slow_scope is not None:
                     if hasattr(self._slow_writer, "discard_pending"):
                         self._slow_writer.discard_pending(slow_scope)
                 if not isinstance(exc, CanonicalPersistenceError):
                     raise CanonicalPersistenceError(
-                        f"atomic cognitive admission failed for {turn.interaction.interaction_id}: {exc}"
+                        "atomic cognitive admission failed for "
+                        f"{turn.interaction.interaction_id}: {exc}"
                     ) from exc
                 raise
 
-            # 3. Post-commit memory advance (ONLY reached if transaction committed!)
-            for projected_state in projected_states:
-                for old_id in [
-                    state_id
-                    for state_id, current in self._canonical.items()
-                    if current.scope == projected_state.scope
-                    and current.dimension == projected_state.dimension
-                ]:
-                    del self._canonical[old_id]
-                self._canonical[projected_state.state_id] = projected_state
-
-            if slow_plans and hasattr(self._slow_writer, "apply_flush_plan"):
-                slow_states = self._slow_writer.apply_flush_plan(slow_plans)
-                for s in slow_states:
-                    for old_id in [
-                        state_id
-                        for state_id, current in self._canonical.items()
-                        if current.scope == s.scope and current.dimension == s.dimension
-                    ]:
-                        del self._canonical[old_id]
-                    self._canonical[s.state_id] = s
+            # 3. Publish only after COMMIT. A publication failure cannot undo
+            # the durable receipt; reload from the committed backend and expose
+            # an explicit recovery event to the caller/audit trace.
+            try:
+                self._publish_committed_states(projected_states, slow_plans)
+            except Exception as exc:
+                self._refresh_canonical_from_backend()
+                self.state = TurnState.COMMITTED
+                self._trace.record(
+                    turn.interaction.interaction_id,
+                    "post_commit_publication_failed",
+                    outcome="reloaded_from_canonical",
+                    at=self._clock.now(),
+                )
+                raise CanonicalPersistenceError(
+                    f"post-commit publication failed for {turn.interaction.interaction_id}; "
+                    "canonical state reloaded from durable commit"
+                ) from exc
 
             # Telemetry (best-effort, fail-open)
             if self._telemetry_sink is not None:

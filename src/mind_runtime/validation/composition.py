@@ -38,6 +38,7 @@ from mind_runtime.emotional_transition.history import (
     HistoryProviderUnavailable,
 )
 from mind_runtime.emotional_transition.provider import ChatTransport
+from mind_runtime.emotional_transition.projection_journal import ProjectionJournal
 from mind_runtime.emotional_transition.semantic import SemanticRouter
 from mind_runtime.expression.context import DecisionContextCompiler
 from mind_runtime.expression.coordinator import DeterministicExpressionCoordinator
@@ -62,7 +63,7 @@ from mind_runtime.pipeline.ports import AgentPort
 from mind_runtime.pipeline.receipts import ReceiptRegistry
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.slow_plasticity.writer import SlowPlasticityWriter
-from mind_runtime.state.persistence import SqliteStateBackend
+from mind_runtime.state.persistence import SqliteCommitMarkerStore, SqliteStateBackend
 from mind_runtime.state.ports import ResolverEffectiveStatePort
 from mind_runtime.state.resolver import EffectiveStateResolver
 from mind_runtime.validation.contracts import (
@@ -91,6 +92,9 @@ _EXPECTED_TABLES = {
     "intents": ("intent_transitions", "intents"),
     "checkpoints": ("checkpoints",),
 }
+_W2_STATE_TABLES = tuple(
+    sorted((*_EXPECTED_TABLES["state"], "commit_markers", "application_receipts"))
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,8 +497,12 @@ def _current_source_head(repository_root: Path) -> str:
 
 
 def _require_table_inventory(plane: str, actual: tuple[str, ...]) -> None:
+    # A prior certified run has the W2 receipt and existing shared marker
+    # tables. Preserve the exact-table check for both fresh and restarted DBs.
+    if plane == "state" and actual == _W2_STATE_TABLES:
+        return
     if actual != _EXPECTED_TABLES[plane]:
-        raise ValueError(f"{plane} SQLite table inventory must exactly match D11S")
+        raise ValueError(f"{plane} SQLite table inventory must exactly match D11S/W2")
 
 
 def _require_unambiguous_current_states(states: tuple[RuntimeState, ...]) -> None:
@@ -537,6 +545,10 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
         state_backend = SqliteStateBackend(config.durable_paths.state_db)
         owners.append(state_backend)
         _require_table_inventory("state", state_backend.table_names())
+        state_backend.enable_application_receipts()
+        commit_markers = SqliteCommitMarkerStore(
+            config.durable_paths.state_db, connection=state_backend.connection
+        )
         intent_backend = SqliteIntentBackend(config.durable_paths.intents_db)
         owners.append(intent_backend)
         _require_table_inventory("intents", intent_backend.table_names())
@@ -571,7 +583,15 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
                 f"unsupported appraisal strategy: {strategy_config.strategy}"
             )
 
-        appraisal_producer = SemanticAppraisalProducer(model=appraisal_model)
+        # Offline certification supplies no model transport. Its historical
+        # candidate-only path is explicitly LEGACY_NO_APPRAISAL; a configured
+        # or transport-backed producer must never fall back after rejection.
+        appraisal_producer = (
+            None
+            if strategy_config.strategy == "model_backed"
+            and config.appraisal_transport is None
+            else SemanticAppraisalProducer(model=appraisal_model)
+        )
         homeostasis_config = FixedSalienceThresholdConfig(
             salience_floor_fast_apply=decoded.homeostasis.salience_floor_fast_apply,
             salience_floor_slow_accept=decoded.homeostasis.salience_floor_slow_accept,
@@ -579,6 +599,10 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
         )
         homeostasis_gate = SalienceThresholdPolicy(config=homeostasis_config)
 
+        projection_journal = ProjectionJournal(
+            config.durable_paths.state_db.with_name("appraisal_journal.sqlite")
+        )
+        owners.append(projection_journal)
         transition = EngineEmotionalTransitionPort(
             engine=DynamicsEngine(persona=decoded.persona_profile),
             runtime_id=decoded.intent_engine.runtime_id,
@@ -590,6 +614,8 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
             ),
             homeostasis_gate=homeostasis_gate,
             appraisal_producer=appraisal_producer,
+            projection_journal=projection_journal,
+            state_definitions=decoded.state_definitions,
         )
         history_provider = _ScheduledHistoricalProvider()
         history = BoundedHistoricalContextAdapter(
@@ -609,6 +635,7 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
         compiler = DecisionContextCompiler(
             decoded.decision_context,
             definitions=decoded.state_definitions,
+            appraisal_journal=projection_journal,
         )
         renderer = DeterministicContextRenderer(decoded.decision_context)
         guard = DeterministicExpressionGuardChain(decoded.expression_guard)
@@ -657,6 +684,7 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
             receipts=receipts,
             persona=decoded.persona_profile,
             state_backend=state_backend,
+            commit_markers=commit_markers,
             historical_context=history,
             effect_rules=decoded.emotional_effects,
             semantic_provider=None,

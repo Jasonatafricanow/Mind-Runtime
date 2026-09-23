@@ -87,6 +87,8 @@ def test_composition_uses_real_orchestrator_and_existing_backends(tmp_path: Path
         assert composition.table_inventory() == {
             "facts": ("evidence", "interactions", "observations"),
             "state": (
+                "application_receipts",
+                "commit_markers",
                 "slow_contribution_window",
                 "sqlite_sequence",
                 "state_definitions",
@@ -118,6 +120,7 @@ def test_composition_uses_real_orchestrator_and_existing_backends(tmp_path: Path
 
     assert {path.name for path in tmp_path.iterdir()} == {
         "facts.sqlite",
+        "appraisal_journal.sqlite",
         "state.sqlite",
         "intents.sqlite",
         "checkpoints.sqlite",
@@ -631,7 +634,7 @@ def test_production_appraisal_activation_e2e_persists_slow_state_with_value_proo
 def test_production_appraisal_negative_e2e_forced_failure_zero_slow_write(
     tmp_path: Path,
 ) -> None:
-    """Negative E2E: forced model failure -> salience=None -> REJECT -> zero slow write."""
+    """Producer failure cannot borrow the legacy mapper or write Slow state."""
     class FailingAppraisalTransport:
         def post_json(
             self, url: str, framed: dict[str, object], timeout_s: float
@@ -650,11 +653,11 @@ def test_production_appraisal_negative_e2e_forced_failure_zero_slow_write(
 
         turn = composition.orchestrator._turn
         assert turn is not None
-        assert turn.slow_decisions
-
-        for decision in turn.slow_decisions:
-            assert decision.decision.value == "reject"
-            assert decision.reason_code == "salience_unavailable_reject"
+        assert turn.slow_decisions == ()
+        assert turn.transition_result is not None
+        assert turn.transition_result.accepted_appraisals == ()
+        assert turn.transition_result.accepted_events == ()
+        assert turn.transition_result.legacy_no_appraisal is False
 
         # Verify zero writes to SQLite state backend
         state_backend = SqliteStateBackend(config.durable_paths.state_db)

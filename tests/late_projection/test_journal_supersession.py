@@ -146,4 +146,5 @@ def test_projection_with_wrong_source_is_rejected_before_persistence():
     p.project = lambda **kwargs: replace(original(**kwargs), source_candidate_ref="foreign")
     with pytest.raises(ValueError, match="source|identity"):
         journal.materialize(p, acceptance=old, history=None)
-    assert journal.get_acceptance(old.acceptance_id) is None
+    # W2 journals acceptance first; forged projection remains rejected.
+    assert journal.get_acceptance(old.acceptance_id) == old

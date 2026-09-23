@@ -51,6 +51,7 @@ class EventEffectRule:
     # (no scaling by confidence or salience).
     longitudinal_target_dimension: str | None = None
     longitudinal_proposed_value: float | None = None
+    admission_mode: str = "legacy_independent"
 
     def __post_init__(self) -> None:
         require_non_empty(self.event_kind, "event_kind")
@@ -82,6 +83,8 @@ class EventEffectRule:
             _require_number(self.longitudinal_proposed_value, "longitudinal_proposed_value")
             if not 0.0 <= self.longitudinal_proposed_value <= 1.0:
                 raise ValueError("longitudinal_proposed_value must be in [0, 1]")
+        if self.admission_mode not in ("legacy_independent", "required_joint"):
+            raise ValueError("invalid effect group admission mode")
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +190,8 @@ class AppraisalProjector:
         return None
 
     def validate_materialized_result(
-        self, result: AppraisalProjectionResult, *, acceptance: AcceptedAppraisal
+        self, result: AppraisalProjectionResult, *, acceptance: AcceptedAppraisal,
+        same_recipe_version: bool = False,
     ) -> None:
         """Reject forged mapped effects before durable evaluation or cache reuse."""
         from mind_runtime.contracts.late_projection import ProjectionStatus
@@ -199,6 +203,8 @@ class AppraisalProjector:
         rule = self._rule_for(acceptance, None)
         if rule is None or self._target_reason(acceptance, rule, ()) is not None:
             raise ValueError("projection effect has no valid target authority")
+        if same_recipe_version and result.admission_mode != rule.admission_mode:
+            raise ValueError("projection effect group mode conflicts with recipe authority")
         for effect in result.effects:
             if effect.dimension == rule.dimension:
                 operation = "delta"
@@ -369,6 +375,7 @@ class AppraisalProjector:
             reasons,
             provenance,
             canonical_json(mapped),
+            rule.admission_mode if rule is not None else "legacy_independent",
         )
 
     def map(

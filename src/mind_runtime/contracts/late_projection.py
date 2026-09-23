@@ -60,6 +60,50 @@ class ProjectionStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ApplicationStatus(StrEnum):
+    EVALUATED = "EVALUATED"
+    PENDING = "APPLICATION_PENDING"
+    COMMITTED = "COMMITTED"
+    ABORTED = "ABORTED"
+
+
+def application_identity(
+    runtime_id: str, acceptance_id: str, effect_group_id: str, original_interaction_id: str
+) -> str:
+    """One original admission identity, independent of projection version."""
+    return "application-" + digest(
+        (runtime_id, acceptance_id, effect_group_id, original_interaction_id)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationReceipt:
+    application_id: str
+    projection_id: str
+    acceptance_id: str
+    interaction_id: str
+    effect_group_id: str
+    runtime_id: str
+    scope: Scope
+    status: ApplicationStatus
+    commit_ref: str | None
+    transition_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, ApplicationStatus):
+            raise ValueError("application status must be typed")
+        if self.application_id != application_identity(
+            self.runtime_id, self.acceptance_id, self.effect_group_id, self.interaction_id
+        ):
+            raise ValueError("application identity does not match original interaction")
+        if self.scope.domain.value != "agent":
+            raise ValueError("appraisal application must target an agent scope")
+        if self.status is ApplicationStatus.COMMITTED and self.commit_ref is None:
+            raise ValueError("committed application requires commit ref")
+        if self.status is not ApplicationStatus.COMMITTED and self.commit_ref is not None:
+            raise ValueError("uncommitted application cannot claim commit")
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptedAppraisal:
     acceptance_id: str
@@ -140,8 +184,11 @@ class AppraisalProjectionResult:
     # Canonical JSON snapshot preserves the complete old mapper payload without
     # mutable dictionaries in this immutable materialized result.
     mapping_json: str
+    admission_mode: str = "legacy_independent"
 
     def __post_init__(self) -> None:
+        if self.admission_mode not in ("legacy_independent", "required_joint"):
+            raise ValueError("invalid materialized effect group admission mode")
         if self.status != ProjectionStatus.MAPPED and self.effects:
             raise ValueError("non-mapped projection cannot contain effects")
         canonical_json(self.effects)

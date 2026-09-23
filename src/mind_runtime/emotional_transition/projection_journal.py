@@ -44,6 +44,7 @@ def decode_acceptance(payload: str) -> AcceptedAppraisal:
 
 def decode_projection(payload: str) -> AppraisalProjectionResult:
     data = json.loads(payload)
+    data.setdefault("admission_mode", "legacy_independent")
     data["status"] = ProjectionStatus(data["status"])
     for item in data["effects"]:
         if item.get("target_scope") is not None:
@@ -103,6 +104,51 @@ class ProjectionJournal:
             raise ValueError("corrupt acceptance identity")
         return record
 
+    def accepted_for_interaction(self, interaction_id: str) -> tuple[AcceptedAppraisal, ...]:
+        rows = self.connection.execute(
+            "SELECT acceptance_id FROM appraisal_evaluations WHERE interaction_id=? "
+            "ORDER BY candidate_id, acceptance_id",
+            (interaction_id,),
+        ).fetchall()
+        records = tuple(self.get_acceptance(row[0]) for row in rows)
+        current = tuple(
+            record for record in records
+            if record is not None and record.status == "ACCEPTED"
+            and self._successor(record.acceptance_id) is None
+        )
+        if len({record.candidate.candidate_id for record in current}) != len(current):
+            raise ValueError("ambiguous accepted appraisal replay")
+        return current
+
+    def replay_projection(
+        self, projector: "AppraisalProjector", *, acceptance: AcceptedAppraisal
+    ) -> AppraisalProjectionResult:
+        """Read the original evaluation for this admission without new dependencies."""
+        result = self.projection_for_acceptance(projector, acceptance=acceptance)
+        if result is None:
+            raise ValueError("accepted appraisal has no persisted projection")
+        return result
+
+    def projection_for_acceptance(
+        self, projector: "AppraisalProjector", *, acceptance: AcceptedAppraisal
+    ) -> AppraisalProjectionResult | None:
+        """Return the original result, or None when acceptance awaits evaluation."""
+        if self.get_acceptance(acceptance.acceptance_id) != acceptance:
+            raise ValueError("accepted appraisal is not journal-resolvable")
+        row = self.connection.execute(
+            "SELECT projection_id FROM appraisal_projections WHERE acceptance_id=? "
+            "ORDER BY rowid LIMIT 1",
+            (acceptance.acceptance_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        result = self.get_projection(row[0])
+        if result is None:
+            raise ValueError("persisted projection is missing")
+        self._validate_source(result, acceptance, result.dependency_digest)
+        projector.validate_materialized_result(result, acceptance=acceptance)
+        return result
+
     def get_projection(self, projection_id: str) -> AppraisalProjectionResult | None:
         row = self.connection.execute(
             "SELECT payload,content_digest,acceptance_id,dependency_digest "
@@ -113,7 +159,7 @@ class ProjectionJournal:
             return None
         result = decode_projection(row[0])
         if (
-            digest(result) != row[1]
+            digest(json.loads(row[0])) != row[1]
             or result.projection_id != projection_id
             or result.dependency_digest != row[3]
             or row[2] not in result.provenance
@@ -228,19 +274,26 @@ class ProjectionJournal:
         )
         if current is not None and current != acceptance:
             raise ValueError("acceptance conflict requires explicit supersession")
+        # Semantic acceptance is durable before projection evaluation. A
+        # projection crash leaves an auditable, retryable accepted source.
+        with self.connection:
+            self._persist_acceptance(acceptance)
         dep = projector.dependency_digest(acceptance=acceptance, history=history, persona=persona)
         existing = self.get_projection("projection-" + dep)
         if existing is not None:
             if self.get_acceptance(acceptance.acceptance_id) != acceptance:
                 raise ValueError("projection has missing acceptance")
             self._validate_source(existing, acceptance, dep)
-            projector.validate_materialized_result(existing, acceptance=acceptance)
+            projector.validate_materialized_result(
+                existing, acceptance=acceptance, same_recipe_version=True
+            )
             return existing
         result = projector.project(acceptance=acceptance, history=history, persona=persona)
         self._validate_source(result, acceptance, dep)
-        projector.validate_materialized_result(result, acceptance=acceptance)
+        projector.validate_materialized_result(
+            result, acceptance=acceptance, same_recipe_version=True
+        )
         with self.connection:
-            self._persist_acceptance(acceptance)
             self._insert_immutable(
                 "appraisal_projections",
                 "projection_id",

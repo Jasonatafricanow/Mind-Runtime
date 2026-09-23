@@ -862,6 +862,11 @@ def _event_effect(value: object, context: str) -> EventEffectRule:
         "minimum_history_confidence",
     }
     long_keys = {"longitudinal_target_dimension", "longitudinal_proposed_value"}
+    mode_keys = {"admission_mode"}
+    admission_mode = "legacy_independent"
+    if "admission_mode" in keys:
+        admission_mode = _string(value["admission_mode"], f"{context}.admission_mode")
+        keys -= mode_keys
     if keys == base_keys:
         raw = value
         long_dim = None
@@ -890,6 +895,7 @@ def _event_effect(value: object, context: str) -> EventEffectRule:
         ),
         longitudinal_target_dimension=long_dim,
         longitudinal_proposed_value=long_val,
+        admission_mode=admission_mode,
     )
 
 

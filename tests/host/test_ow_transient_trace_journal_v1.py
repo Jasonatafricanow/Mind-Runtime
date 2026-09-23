@@ -331,6 +331,11 @@ def test_semantic_abstention_captured(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_appraisal_captured(tmp_path):
+    from mind_runtime.contracts.appraisal import AppraisalModelProposal
+    from mind_runtime.emotional_transition.appraisal import SemanticAppraisalProducer
+    from mind_runtime.emotional_transition.projection_journal import ProjectionJournal
+    from mind_runtime.state.definitions import StateDefinitionRegistry
+
     journal_path = tmp_path / "observation_trace.sqlite"
     journal = TransientTraceJournal(journal_path)
 
@@ -352,19 +357,18 @@ def test_appraisal_captured(tmp_path):
         abstention_reasons=(),
     )
 
-    mock_producer = MagicMock()
-    mock_producer.assemble.return_value = SemanticAppraisal(
-        appraisal_id="app-row-003",
-        scope=USER_SCOPE,
-        origin_runtime_id="runtime-test",
-        situation_ref="sit-test-1",
-        meanings=("boundary_crossing", "disrespect"),
-        valence="-0.75",
-        relationship_relevance="high",
-        confidence=0.92,
-        salience=0.85,
-        evidence_refs=("ev-viol-1",),
-    )
+    class FixedAppraisalModel:
+        def propose(self, **kwargs):
+            return AppraisalModelProposal(
+                meanings=("boundary_crossing", "disrespect"),
+                valence="-0.75",
+                relationship_relevance="high",
+                salience=0.85,
+                appraisal_confidence=0.92,
+                supporting_evidence_refs=("ev-viol-1",),
+            )
+
+    appraisal_journal = ProjectionJournal(tmp_path / "appraisal_journal.sqlite")
 
     dims = (make_profile("agent.affect.irritation", baseline=0.2),)
     port = EngineEmotionalTransitionPort(
@@ -376,7 +380,9 @@ def test_appraisal_captured(tmp_path):
         ),
         runtime_id="runtime-test",
         semantic_router=mock_router,
-        appraisal_producer=mock_producer,
+        appraisal_producer=SemanticAppraisalProducer(model=FixedAppraisalModel()),
+        projection_journal=appraisal_journal,
+        state_definitions=StateDefinitionRegistry(),
         telemetry_sink=journal,
     )
 
@@ -387,6 +393,7 @@ def test_appraisal_captured(tmp_path):
     )
 
     port.transition(tx_input)
+    appraisal_journal.close()
 
     events = journal.get_events_for_interaction("ix-appraisal-003")
     app_events = [e for e in events if e["stage"] == TelemetryStage.APPRAISAL]
@@ -394,7 +401,7 @@ def test_appraisal_captured(tmp_path):
 
     ev = app_events[0]
     assert ev["status"] == "ACCEPTED"
-    assert ev["payload"]["appraisal_id"] == "app-row-003"
+    assert ev["payload"]["appraisal_id"] == "appraisal-cand-app-003"
     assert ev["payload"]["valence"] == "-0.75"
     assert ev["payload"]["salience"] == 0.85
     assert ev["payload"]["confidence"] == 0.92

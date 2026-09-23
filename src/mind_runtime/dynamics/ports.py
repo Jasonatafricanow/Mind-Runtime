@@ -29,8 +29,15 @@ from mind_runtime.contracts import (
 from mind_runtime.contracts.state import state_domain_for_scope
 from mind_runtime.dynamics.engine import Contribution, DynamicsEngine
 from mind_runtime.emotional_transition.appraisal import SemanticAppraisalProducer
-from mind_runtime.emotional_transition.effects import EffectMapper, EventEffectRule
+from mind_runtime.emotional_transition.effects import (
+    AppraisalProjector,
+    EventEffectRule,
+    MappedEffects,
+    mapping_from_projection,
+)
+from mind_runtime.emotional_transition.projection_journal import ProjectionJournal
 from mind_runtime.emotional_transition.semantic import SemanticRouter
+from mind_runtime.state.definitions import StateDefinitionRegistry
 from mind_runtime.homeostasis.contracts import (
     CandidateStateDelta,
     HomeostasisDecision,
@@ -106,18 +113,34 @@ class EngineEmotionalTransitionPort:
         semantic_router: SemanticRouter | None = None,
         homeostasis_gate: HomeostasisGate | None = None,
         appraisal_producer: SemanticAppraisalProducer | None = None,
+        projection_journal: ProjectionJournal | None = None,
+        state_definitions: StateDefinitionRegistry | None = None,
         telemetry_sink: TelemetrySinkProtocol | None = None,
     ) -> None:
         self._engine = engine
         self._runtime_id = runtime_id
-        self._effects = EffectMapper(rules=effect_rules)
         self._semantic_router = semantic_router or SemanticRouter()
         self._homeostasis_gate = homeostasis_gate
         self._appraisal_producer = appraisal_producer
+        self._projection_journal = projection_journal
+        self._projector = AppraisalProjector(
+            rules=effect_rules,
+            persona_profile=engine.persona,
+            definitions=state_definitions,
+        )
+        self._effects = self._projector
+        if appraisal_producer is not None and (
+            projection_journal is None or state_definitions is None
+        ):
+            raise ValueError("accepted appraisal projection requires durable journal and definitions")
         self._telemetry_sink = telemetry_sink
 
     def transition(self, transition_input: EmotionalTransitionInput) -> EmotionalTransitionResult:
         return self.transition_with_gate(transition_input).transition_result
+
+    @property
+    def projection_journal(self) -> ProjectionJournal | None:
+        return self._projection_journal
 
     def transition_with_gate(
         self, transition_input: EmotionalTransitionInput
@@ -138,11 +161,31 @@ class EngineEmotionalTransitionPort:
             or transition_input.persona != persona.dimensions
         ):
             raise ValueError("transition persona metadata must match engine persona metadata")
+        cached_acceptances = (
+            self._projection_journal.accepted_for_interaction(transition_input.interaction_id)
+            if self._projection_journal is not None else ()
+        )
+        if cached_acceptances:
+            if any(
+                record.candidate.scope != transition_input.scope
+                or record.candidate.origin_runtime_id != self._runtime_id
+                or record.persona_id != persona.persona_id
+                or record.projection_scope != transition_input.projection_scope
+                for record in cached_acceptances
+            ):
+                raise ValueError("cached appraisal replay lineage mismatch")
+            cached_candidates = tuple(record.candidate for record in cached_acceptances)
+            if transition_input.semantic_candidates and (
+                transition_input.semantic_candidates != cached_candidates
+            ):
+                raise ValueError("cached appraisal candidate conflict")
+        else:
+            cached_candidates = ()
         try:
             routing = self._semantic_router.route(
                 observations=transition_input.observations,
                 context=transition_input.context,
-                supplied_candidates=transition_input.semantic_candidates,
+                supplied_candidates=cached_candidates or transition_input.semantic_candidates,
                 telemetry_sink=self._telemetry_sink,
             )
         except Exception as exc:
@@ -195,6 +238,18 @@ class EngineEmotionalTransitionPort:
 
         # ADR-0019-R4 APPRAISAL-2: Producer sits after SemanticRouter.route()
         # and before EffectMapper.map(). Populate appraisals_by_candidate_id.
+        projection_scope = _projection_scope_for(
+            self._engine,
+            turn_scope=transition_input.scope,
+            explicit=transition_input.projection_scope,
+        )
+        accepted_appraisals = []
+        projection_refs = []
+        materialized_projections = []
+        mapped_parts = []
+        cached_by_candidate = {
+            record.candidate.candidate_id: record for record in cached_acceptances
+        }
         if self._appraisal_producer is not None and routing.candidates:
             appraisals = dict(routing.appraisals_by_candidate_id)
             for candidate in routing.candidates:
@@ -206,11 +261,42 @@ class EngineEmotionalTransitionPort:
                     current_affect=transition_input.current_affect,
                 )
                 try:
-                    assembled_appraisal = self._appraisal_producer.assemble(
-                        candidate=candidate,
-                        context=appraisal_ctx,
-                    )
+                    acceptance = cached_by_candidate.get(candidate.candidate_id)
+                    if acceptance is None:
+                        acceptance = self._appraisal_producer.accept(
+                            candidate=candidate,
+                            context=appraisal_ctx,
+                            interaction_id=transition_input.interaction_id,
+                            persona_id=transition_input.persona_id,
+                            route_abstention_reasons=routing.abstention_reasons,
+                            projection_scope=projection_scope,
+                        )
+                    assembled_appraisal = acceptance.appraisal
                     appraisals[candidate.candidate_id] = assembled_appraisal
+                    if acceptance.status == "ACCEPTED":
+                        assert self._projection_journal is not None
+                        if acceptance.candidate.candidate_id in cached_by_candidate:
+                            projection = self._projection_journal.projection_for_acceptance(
+                                self._projector, acceptance=acceptance
+                            )
+                            if projection is None:
+                                projection = self._projection_journal.materialize(
+                                    self._projector,
+                                    acceptance=acceptance,
+                                    history=transition_input.history_context,
+                                    persona=transition_input.persona,
+                                )
+                        else:
+                            projection = self._projection_journal.materialize(
+                                self._projector,
+                                acceptance=acceptance,
+                                history=transition_input.history_context,
+                                persona=transition_input.persona,
+                            )
+                        accepted_appraisals.append(acceptance)
+                        projection_refs.append(projection.projection_id)
+                        materialized_projections.append(projection)
+                        mapped_parts.append(mapping_from_projection(projection))
                     if self._telemetry_sink is not None:
                         try:
                             self._telemetry_sink.record(
@@ -262,10 +348,34 @@ class EngineEmotionalTransitionPort:
                 + tuple(ref for candidate in routing.candidates for ref in candidate.evidence_refs)
             )
         )
-        mapped = self._effects.map(
-            routing=routing,
-            history=transition_input.history_context,
-        )
+        # A producer-owned rejection/error is never a legacy caller. Only a
+        # caller with no appraisal producer may use the compatibility mapper.
+        legacy_no_appraisal = self._appraisal_producer is None
+        if not legacy_no_appraisal:
+            mapped = MappedEffects(
+                impulses=tuple(i for part in mapped_parts for i in part.impulses),
+                audit_contributions=tuple(
+                    c for part in mapped_parts for c in part.audit_contributions
+                ),
+                source_confidences=tuple(
+                    c for part in mapped_parts for c in part.source_confidences
+                ),
+                salience_by_source={
+                    k: v for part in mapped_parts for k, v in part.salience_by_source.items()
+                },
+                evidence_refs_by_source={
+                    k: v for part in mapped_parts for k, v in part.evidence_refs_by_source.items()
+                },
+                abstention_reasons=tuple(
+                    dict.fromkeys(r for part in mapped_parts for r in part.abstention_reasons)
+                ),
+            )
+        else:
+            # Explicit LEGACY_NO_APPRAISAL compatibility route.
+            mapped = self._effects.map(
+                routing=routing,
+                history=transition_input.history_context,
+            )
         if self._telemetry_sink is not None and mapped.impulses:
             try:
                 self._telemetry_sink.record(
@@ -303,11 +413,6 @@ class EngineEmotionalTransitionPort:
         )
         if not result.proposed:
             raise ValueError("engine projected no affect dimensions")
-        projection_scope = _projection_scope_for(
-            self._engine,
-            turn_scope=transition_input.scope,
-            explicit=transition_input.projection_scope,
-        )
         current_by_dimension = {state.dimension: state for state in transition_input.current_affect}
         states: list[RuntimeState] = []
         for dimension, value in result.proposed:
@@ -444,7 +549,9 @@ class EngineEmotionalTransitionPort:
             created_at=transition_input.clock,
         )
         accepted_events = (
-            routing.candidates[:1]
+            tuple(acceptance.candidate for acceptance in accepted_appraisals)
+            if not legacy_no_appraisal
+            else routing.candidates[:1]
             if routing.candidates
             and mapped.impulses
             and not routing.abstention_reasons
@@ -460,6 +567,21 @@ class EngineEmotionalTransitionPort:
             mapped=mapped,
             projected=projected,
         )
+        for projection in materialized_projections:
+            if projection.admission_mode != "required_joint":
+                continue
+            for effect in projection.effects:
+                allowed = (
+                    ("fast_apply", "slow_accept")
+                    if effect.operation == "delta" else ("slow_accept",)
+                )
+                if not any(
+                    decision.candidate.source_event_ref == effect.source_ref
+                    and decision.candidate.target_dimension == effect.dimension
+                    and decision.decision.value in allowed
+                    for decision in slow_decisions
+                ):
+                    raise ValueError("required-joint effect group admission denied")
 
         # Emit human-explainable affect computation breakdown
         if self._telemetry_sink is not None:
@@ -661,6 +783,9 @@ class EngineEmotionalTransitionPort:
                 projected=projected,
                 accepted_events=accepted_events,
                 assessment_trace=trace,
+                accepted_appraisals=tuple(accepted_appraisals),
+                projection_refs=tuple(projection_refs),
+                legacy_no_appraisal=legacy_no_appraisal,
             ),
             slow_decisions=slow_decisions,
         )

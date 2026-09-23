@@ -260,7 +260,8 @@ def test_f1_materialization_rejects_forged_effect_pair(tmp_path, tamper):
     journal = ProjectionJournal(tmp_path / "derived.sqlite")
     with pytest.raises(ValueError, match="projection effect"):
         journal.materialize(instance, acceptance=record, history=None)
-    assert journal.get_acceptance(record.acceptance_id) is None
+    # W2 persists semantic acceptance before evaluating the projection.
+    assert journal.get_acceptance(record.acceptance_id) == record
     assert journal.get_projection(forged.projection_id) is None
     journal.close()
 
