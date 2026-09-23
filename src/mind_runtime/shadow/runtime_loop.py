@@ -455,6 +455,7 @@ def build_runtime_stack(
             policy_resources=policy_resources,
             intent_db=intent_db,
             cognitive_tick_config=cognitive_tick_config,
+            delivery_backend=surface_delivery_backend,
         )
     return orchestrator, bridge
 
@@ -468,6 +469,7 @@ def build_cognitive_components(
     policy_resources: tuple[str, ...] | None,
     intent_db: str | Path | None,
     cognitive_tick_config: CognitiveTickConfig | None = None,
+    delivery_backend: Any = None,
 ) -> dict[str, object]:
     """Wire the real Intent/Policy authorities for the cognitive tick.
 
@@ -493,6 +495,7 @@ def build_cognitive_components(
         raise ValueError("cognitive tick requires a Persona-backed orchestrator")
     from mind_runtime.cognition import build_cognitive_ticker
 
+    resolved_delivery_backend = delivery_backend or getattr(orchestrator, "_surface_delivery_backend", None)
     ticker = build_cognitive_ticker(
         orchestrator=orchestrator,
         persona=persona,
@@ -502,6 +505,7 @@ def build_cognitive_components(
         intent_lifecycle=lifecycle,
         runtime_id=origin_runtime_id,
         config=cognitive_tick_config,
+        delivery_backend=resolved_delivery_backend,
     )
     return {
         "ticker": ticker,
@@ -510,6 +514,7 @@ def build_cognitive_components(
         "engine": engine,
         "policy": policy,
         "resources": resources,
+        "delivery_backend": resolved_delivery_backend,
     }
 
 

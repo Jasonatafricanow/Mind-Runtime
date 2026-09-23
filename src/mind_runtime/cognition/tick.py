@@ -30,6 +30,7 @@ path — the tick never fabricates policy inputs.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -40,6 +41,7 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionArtifact,
     ProactiveExpressionPreparer,
 )
+from mind_runtime.delivery import DeliveryRequest
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPolicyInput,
@@ -182,6 +184,7 @@ class CognitiveTickReport:
     state_rows_persisted: int = 0
     persistent_duplicates_skipped: int = 0
     proactive_expression: ProactiveExpressionArtifact | None = None
+    delivery_request: Any = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -201,6 +204,11 @@ class CognitiveTickReport:
             "proactive_expression": (
                 self.proactive_expression.as_dict()
                 if self.proactive_expression is not None
+                else None
+            ),
+            "delivery_request_id": (
+                self.delivery_request.request_id
+                if self.delivery_request is not None
                 else None
             ),
         }
@@ -233,6 +241,7 @@ class CognitiveTicker:
         expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
+        delivery_backend: Any = None,
     ) -> None:
         composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
         if (
@@ -258,8 +267,13 @@ class CognitiveTicker:
             raise ValueError("config must be a CognitiveTickConfig")
         self._config = config or CognitiveTickConfig()
         self._state_backend = _resolve_state_backend(orchestrator)
+        self._delivery_backend = delivery_backend or getattr(orchestrator, "_surface_delivery_backend", None)
         if intent_engine._runtime_id != runtime_id:
             raise ValueError("intent engine runtime_id must match ticker runtime_id")
+
+    @property
+    def delivery_backend(self) -> Any:
+        return self._delivery_backend
 
     # ── public entrypoint ────────────────────────────────────────────────
 
@@ -329,6 +343,19 @@ class CognitiveTicker:
             interaction_id=interaction_id,
             now=now,
         )
+        delivery_request: DeliveryRequest | None = None
+        if selection is not None:
+            intent, policy_result = selection
+            if policy_result.decision is ActionDecision.ALLOW:
+                delivery_request = self._dispatch_delivery(
+                    intent=intent,
+                    policy_result=policy_result,
+                    scope=scope,
+                    interaction_id=interaction_id,
+                    now=now,
+                    expression_artifact=expression_artifact,
+                )
+                counters.delivery_request = delivery_request
         self._orchestrator.trace.record(
             interaction_id,
             "cognitive_tick",
@@ -337,7 +364,11 @@ class CognitiveTicker:
             at=now,
         )
         return counters.freeze(
-            scope=scope, now=now, tick_ref=interaction_id, expression=expression_artifact
+            scope=scope,
+            now=now,
+            tick_ref=interaction_id,
+            expression=expression_artifact,
+            delivery_request=delivery_request,
         )
 
     # ── stage 1: durable affect + elapsed wall-clock truth ───────────────
@@ -707,6 +738,79 @@ class CognitiveTicker:
             )
             return replace(base, skip_reason="agent_failure")
 
+    def _dispatch_delivery(
+        self,
+        *,
+        intent: Intent,
+        policy_result: ActionPolicyResult,
+        scope: Scope,
+        interaction_id: str,
+        now: datetime,
+        expression_artifact: ProactiveExpressionArtifact | None,
+    ) -> DeliveryRequest | None:
+        """Hand outbound proactive message to the durable carrier."""
+        if self._delivery_backend is None:
+            return None
+        if policy_result.decision is not ActionDecision.ALLOW:
+            return None
+        if expression_artifact is not None:
+            if expression_artifact.skip_reason is not None:
+                return None
+            if expression_artifact.disposition is not None:
+                if getattr(expression_artifact.disposition, "value", str(expression_artifact.disposition)) != "accept":
+                    return None
+
+        permission = policy_result.permission
+        action_type = permission.action_type if permission is not None else intent.kind
+        if scope.domain == ScopeDomain.USER:
+            target = scope.user_id or "user"
+        elif scope.domain == ScopeDomain.AGENT:
+            target = scope.agent_id or "agent"
+        else:
+            target = "default"
+
+        if expression_artifact is not None and expression_artifact.would_send:
+            payload_bytes = expression_artifact.would_send.encode("utf-8")
+        else:
+            payload_bytes = f"proactive:{intent.intent_id}".encode("utf-8")
+
+        delivery_id = f"delivery-{interaction_id}"
+        request = DeliveryRequest(
+            request_id=delivery_id,
+            message_id=delivery_id,
+            scope=scope,
+            origin_runtime_id=self._runtime_id,
+            channel="chat",
+            target=target,
+            action_type=action_type,
+            payload_bytes=payload_bytes,
+            created_at=now,
+            sync=SyncFields(
+                scope=scope,
+                origin_runtime_id=self._runtime_id,
+                object_id=delivery_id,
+                version=1,
+                idempotency_key=f"idem-{delivery_id}",
+            ),
+        )
+        if hasattr(self._delivery_backend, "record_request"):
+            from mind_runtime.delivery.state import DeliveryLifecycleState
+            self._delivery_backend.record_request(
+                request, lifecycle_state=DeliveryLifecycleState.PENDING
+            )
+        elif hasattr(self._delivery_backend, "record"):
+            self._delivery_backend.record(request)
+        elif hasattr(self._delivery_backend, "deliver"):
+            self._delivery_backend.deliver(request)
+
+        self._orchestrator.trace.record(
+            interaction_id,
+            "proactive_delivery_dispatched",
+            ref=delivery_id,
+            at=now,
+        )
+        return request
+
     def _count_status(self, scope: Scope, status: IntentStatus) -> int:
         return sum(
             1 for intent in self._intent_lifecycle.backend.current(scope) if intent.status is status
@@ -738,6 +842,7 @@ class _MutableCounters:
         self.denied = 0
         self.superseded = 0
         self.deduped = 0
+        self.delivery_request: Any = None
 
     def freeze(
         self,
@@ -746,6 +851,7 @@ class _MutableCounters:
         now: datetime,
         tick_ref: str,
         expression: ProactiveExpressionArtifact | None = None,
+        delivery_request: Any = None,
     ) -> CognitiveTickReport:
         return CognitiveTickReport(
             tick_ref=tick_ref,
@@ -764,6 +870,7 @@ class _MutableCounters:
             state_rows_persisted=self.persisted_rows,
             persistent_duplicates_skipped=self.deduped,
             proactive_expression=expression,
+            delivery_request=delivery_request if delivery_request is not None else self.delivery_request,
         )
 
 
@@ -798,6 +905,7 @@ def build_cognitive_ticker(
     fact_reader: PolicyFactReader | None = None,
     expression: ProactiveExpressionPreparer | None = None,
     config: CognitiveTickConfig | None = None,
+    delivery_backend: Any = None,
 ) -> CognitiveTicker:
     """Assemble a ticker from explicitly injected real components.
 
@@ -840,4 +948,5 @@ def build_cognitive_ticker(
         projection_scope=projection_scope,
         expression=expression,
         config=config,
+        delivery_backend=delivery_backend,
     )
