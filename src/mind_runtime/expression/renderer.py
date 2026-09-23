@@ -17,6 +17,8 @@ SECTION_ORDER = {
     ExpressionContextKind.COGNITIVE_MEANING: 2,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
+    ExpressionContextKind.SURFACE_GUIDANCE: 3,
+    ExpressionContextKind.SURFACE_CONTROL: 3,
     ExpressionContextKind.PERSONA_STYLE: 4,
     ExpressionContextKind.HISTORY: 5,
     ExpressionContextKind.PRIOR_EXPRESSION: 6,
@@ -29,6 +31,8 @@ _SECTION_LABEL = {
     ExpressionContextKind.COGNITIVE_MEANING: "COGNITIVE_MEANING",
     ExpressionContextKind.INTERNAL_STATE: "INTERNAL_STATE",
     ExpressionContextKind.POLICY_CONSTRAINT: "POLICY_CONSTRAINT",
+    ExpressionContextKind.SURFACE_GUIDANCE: "SURFACE_GUIDANCE",
+    ExpressionContextKind.SURFACE_CONTROL: "SURFACE_GUIDANCE",
     ExpressionContextKind.PERSONA_STYLE: "PERSONA_STYLE",
     ExpressionContextKind.HISTORY: "HISTORY",
     ExpressionContextKind.PRIOR_EXPRESSION: "PRIOR_EXPRESSION",
@@ -40,6 +44,8 @@ _TRUSTED_KINDS = {
     ExpressionContextKind.POLICY_CONSTRAINT,
     ExpressionContextKind.PERSONA_STYLE,
     ExpressionContextKind.REWRITE_GUIDANCE,
+    ExpressionContextKind.SURFACE_GUIDANCE,
+    ExpressionContextKind.SURFACE_CONTROL,
 }
 
 _DATA_KINDS = {
@@ -56,6 +62,8 @@ _UNTRUSTED_KINDS = {
 _ESSENTIAL_KINDS = {
     ExpressionContextKind.ACTION,
     ExpressionContextKind.POLICY_CONSTRAINT,
+    ExpressionContextKind.SURFACE_GUIDANCE,
+    ExpressionContextKind.SURFACE_CONTROL,
 }
 
 
@@ -100,6 +108,102 @@ class DeterministicContextRenderer:
             and item.item_id in admitted
         ]
         return _render_text(sorted(meanings, key=_item_sort_key)) if meanings else None
+
+    @classmethod
+    def render_surface_bundle(cls, context: DecisionContext) -> dict[str, str]:
+        """Extract admitted qualitative guidance bundle from DecisionContext."""
+        guidance: dict[str, str] = {}
+        if not hasattr(context, "expression_context"):
+            return guidance
+        for item in context.expression_context:
+            if item.kind in (
+                ExpressionContextKind.SURFACE_GUIDANCE,
+                ExpressionContextKind.SURFACE_CONTROL,
+            ):
+                guidance[item.key] = item.value
+        return guidance
+
+    @staticmethod
+    def format_surface_guidance(guidance: dict[str, str]) -> str:
+        """Format qualitative guidance dictionary into bounded provider lines."""
+        lines = ["Expression guidance:"]
+        for key in sorted(guidance.keys()):
+            lines.append(f"- {key}: {guidance[key]}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def verify_provider_information_isolation(text: str) -> bool:
+        """Verify that provider context contains ZERO raw numbers, traits, dynamics, or digests."""
+        import re
+
+        # 1. Zero raw floats (e.g. 0.41, 0.410, 1.05, -0.4, 0.500)
+        # 1. Zero raw Persona trait names
+        forbidden_traits = [
+            "stability",
+            "expressiveness",
+            "relational_acuity",
+            "assertiveness",
+        ]
+        for trait in forbidden_traits:
+            if re.search(rf"\b{re.escape(trait)}\b\s*[:=]", text):
+                raise AssertionError(
+                    f"Information isolation violation: raw trait '{trait}' "
+                    "assignment found in provider text"
+                )
+
+        # 2. Zero raw affect/dynamics dimension names
+        forbidden_dynamics = [
+            "attachment_approach",
+            "longing",
+            "closeness_craving",
+            "anger",
+            "sharing_urge",
+            "curiosity",
+            "sadness",
+            "diligence_pressure",
+            "confrontation_readiness",
+            "expressive_warmth_bias",
+            "social_pull",
+        ]
+        for dim in forbidden_dynamics:
+            if re.search(rf"\b{re.escape(dim)}\b", text):
+                raise AssertionError(
+                    f"Information isolation violation: raw dynamics dimension '{dim}' "
+                    "found in provider text"
+                )
+
+        # 3. Zero excluded surface controls (contact_seeking, initiative)
+        for excluded in ("contact_seeking", "initiative"):
+            if re.search(rf"\b{re.escape(excluded)}\b", text):
+                raise AssertionError(
+                    f"Information isolation violation: excluded surface control '{excluded}' "
+                    "found in provider text"
+                )
+
+        # 4. Zero Slow numeric state references
+        if re.search(r"slow_\w+\s*=\s*\d+", text) or re.search(r"slow_state\s*:", text):
+            raise AssertionError(
+                "Information isolation violation: slow numeric state found in provider text"
+            )
+
+        # 5. Zero internal cryptographic hashes (64-char hex strings)
+        hex_hashes = re.findall(r"\b[0-9a-f]{64}\b", text)
+        if hex_hashes:
+            raise AssertionError(
+                "Information isolation violation: internal content digests found in "
+                f"provider text: {hex_hashes}"
+            )
+
+        # 6. Zero raw floats (e.g. 0.41, 0.410, 1.05, -0.4, 0.500)
+        # Matches decimal numbers
+        float_matches = re.findall(r"(?<![a-zA-Z0-9_])[-+]?\d+\.\d+(?![a-zA-Z0-9_])", text)
+        if float_matches:
+            raise AssertionError(
+                "Information isolation violation: raw floats found in provider "
+                f"text: {float_matches}"
+            )
+
+        return True
 
     def render_diagnostic(self, context: DecisionContext) -> DiagnosticExpressionContext:
         if not isinstance(context, DecisionContext):

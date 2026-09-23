@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from mind_runtime.contracts import (
     ActionDecision,
@@ -22,7 +22,6 @@ from mind_runtime.contracts import (
     Situation,
     SlowStateProjection,
     StateDefinition,
-    StateDomain,
 )
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.late_projection import AcceptedAppraisal
@@ -53,6 +52,8 @@ _SECTION_ORDER = {
     ExpressionContextKind.COGNITIVE_MEANING: 2,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
+    ExpressionContextKind.SURFACE_GUIDANCE: 3,
+    ExpressionContextKind.SURFACE_CONTROL: 3,
     ExpressionContextKind.PERSONA_STYLE: 4,
     ExpressionContextKind.HISTORY: 5,
     ExpressionContextKind.PRIOR_EXPRESSION: 6,
@@ -61,6 +62,26 @@ _SECTION_ORDER = {
 _ESSENTIAL_KINDS = {
     ExpressionContextKind.ACTION,
     ExpressionContextKind.POLICY_CONSTRAINT,
+}
+_SURFACE_ESSENTIAL_KINDS = {
+    ExpressionContextKind.ACTION,
+    ExpressionContextKind.POLICY_CONSTRAINT,
+    ExpressionContextKind.SURFACE_GUIDANCE,
+    ExpressionContextKind.SURFACE_CONTROL,
+}
+_BEHAVIORAL_STYLE_KEYS = {
+    "attitude",
+    "behavior",
+    "directness",
+    "emotion",
+    "emotional_tone",
+    "expressiveness",
+    "mood",
+    "personality",
+    "restraint",
+    "style",
+    "tone",
+    "warmth",
 }
 
 
@@ -125,6 +146,7 @@ class DecisionContextConfig:
     meaning_policy: str = "allowed"
     max_meaning_items: int = 2
     max_meaning_chars: int = 512
+    mode: str = "LEGACY"
 
     def __post_init__(self) -> None:
         _require_unique_strings(self.allowed_situation_facts, "allowed_situation_facts")
@@ -160,6 +182,8 @@ class DecisionContextConfig:
             _require_positive_integer(getattr(self, field_name), field_name)
         if self.meaning_policy not in ("allowed", "policy_denied"):
             raise ValueError("meaning_policy must be allowed or policy_denied")
+        if self.mode not in ("LEGACY", "SURFACE_V1"):
+            raise ValueError("mode must be LEGACY or SURFACE_V1")
 
 
 def _require_unique_strings(values: tuple[str, ...], field_name: str) -> None:
@@ -193,6 +217,8 @@ class DecisionContextCompilerInput:
     slow_state_records: SlowStateProjection = ()
     state_definitions: StateDefinitionRegistry | None = None
     accepted_appraisals: tuple[AcceptedAppraisal, ...] = ()
+    surface: Any = None
+    mode: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -207,6 +233,8 @@ class DecisionContextCompilerInput:
             self.state_definitions, StateDefinitionRegistry
         ):
             raise ValueError("state_definitions must be a StateDefinitionRegistry")
+        if self.mode is not None and self.mode not in ("LEGACY", "SURFACE_V1"):
+            raise ValueError("mode must be LEGACY or SURFACE_V1")
         # C10-C1: validate each slow record has non-empty state_id and
         # dimension; origin_runtime_id and scope are validated against
         # the compiler input authority in _validate_authority().
@@ -239,25 +267,194 @@ class DecisionContextCompiler:
         self, compiler_input: DecisionContextCompilerInput
     ) -> tuple[DecisionContext, DecisionContextCompileTrace]:
         self._validate_authority(compiler_input)
+        effective_mode = compiler_input.mode or getattr(self._config, "mode", "LEGACY")
         candidates = self._action_items(compiler_input)
         candidates += self._fact_items(compiler_input.situation)
         meaning_items, meaning_reasons = self._meaning_items(compiler_input.accepted_appraisals)
         candidates += meaning_items
-        candidates += self._affect_items(compiler_input.projected_agent_state)
-        # C10-C1: emit slow-state items from the authoritative projection.
-        candidates += self._slow_state_items(compiler_input.slow_state_records)
-        candidates += self._style_items(compiler_input.persona_ref)
+
+        if effective_mode == "SURFACE_V1":
+            if compiler_input.surface is None:
+                raise ValueError("SURFACE_V1 mode requires surface in compiler_input")
+            surface_items = self.admit_surface_controls(compiler_input.surface, compiler_input)
+            candidates += surface_items
+            # Raw affect bands and slow numeric summaries are suppressed in SURFACE_V1
+            # Behavioral persona style is filtered out in SURFACE_V1
+            candidates += self._style_items(compiler_input.persona_ref, exclude_behavioral=True)
+        else:
+            candidates += self._affect_items(compiler_input.projected_agent_state)
+            # C10-C1: emit slow-state items from the authoritative projection.
+            candidates += self._slow_state_items(compiler_input.slow_state_records)
+            candidates += self._style_items(compiler_input.persona_ref)
+
         candidates += self._history_items(
             compiler_input.situation.historical_context, compiler_input
         )
         candidates += self._prior_expression_items(compiler_input.prior_expression, compiler_input)
         candidates += self._rewrite_items(compiler_input.rewrite_reason_codes)
-        included, omitted = self._fit_item_budget(candidates)
+
+        if effective_mode == "SURFACE_V1" and self.withhold_on_budget_overflow(
+            candidates, self._config, mode="SURFACE_V1"
+        ):
+            raise ValueError("essential context items exceed configured budget (dispatch withheld)")
+
+        included, omitted = self._fit_item_budget(candidates, mode=effective_mode)
         context = self._context(compiler_input, included)
         if any(item.kind is ExpressionContextKind.COGNITIVE_MEANING for item in omitted):
             meaning_reasons += ("budget_exhausted",)
         reasons = tuple(dict.fromkeys(compiler_input.rewrite_reason_codes + meaning_reasons))
         return context, self._trace(context, included, omitted, reasons)
+
+    def compile_surface_v1(
+        self, compiler_input: DecisionContextCompilerInput
+    ) -> tuple[DecisionContext, DecisionContextCompileTrace]:
+        """Compile context in strict SURFACE_V1 mode."""
+        from dataclasses import replace
+
+        if compiler_input.mode != "SURFACE_V1":
+            compiler_input = replace(compiler_input, mode="SURFACE_V1")
+        return self.compile(compiler_input)
+
+    @classmethod
+    def admit_surface_controls(
+        cls,
+        surface: Any,
+        compiler_input: DecisionContextCompilerInput | None = None,
+    ) -> list[ExpressionContextItem]:
+        """Validate surface lineage and produce admitted qualitative guidance items."""
+        from mind_runtime.expression.expression_map import (
+            CANDIDATE_MAP_ID,
+            CANDIDATE_MAP_VERSION,
+            CANDIDATE_RECIPE_DIGEST,
+            CANDIDATE_RECIPE_ID,
+            CANDIDATE_RECIPE_VERSION,
+            map_surface_to_qualitative_guidance,
+        )
+
+        if surface is None:
+            raise ValueError("surface must not be None")
+
+        if hasattr(surface, "status") and hasattr(surface, "controls"):
+            if surface.status != "AVAILABLE" or surface.controls is None:
+                raise ValueError(f"Surface projection is not AVAILABLE: {surface.status}")
+            controls = surface.controls
+        elif isinstance(surface, dict):
+            if surface.get("status") != "AVAILABLE":
+                raise ValueError(f"Surface projection is not AVAILABLE: {surface.get('status')}")
+            controls = surface.get("controls")
+            if not isinstance(controls, dict):
+                raise ValueError("Surface controls missing")
+        else:
+            raise TypeError("surface must be a SurfaceProjectionResult or dict")
+
+        if compiler_input is not None:
+            # 1. origin_runtime_id match
+            runtime_id = controls.get("runtime_id")
+            if runtime_id != compiler_input.origin_runtime_id:
+                raise ValueError(
+                    f"SURFACE_LINEAGE_MISMATCH: runtime mismatch; "
+                    f"expected {compiler_input.origin_runtime_id}, got {runtime_id}"
+                )
+
+            # 2. source_projection_id match
+            proj_id = controls.get("source_projection_id")
+            if proj_id != compiler_input.projected_agent_state.projection_id:
+                raise ValueError(
+                    f"SURFACE_LINEAGE_MISMATCH: projection mismatch; "
+                    f"expected {compiler_input.projected_agent_state.projection_id}, got {proj_id}"
+                )
+
+            # 3. source_phase must be 'projected'
+            phase = controls.get("source_phase")
+            if phase != "projected":
+                raise ValueError(
+                    f"SURFACE_LINEAGE_MISMATCH: source_phase must be 'projected', got {phase}"
+                )
+
+            # 4. persona_id match
+            if compiler_input.persona_ref is not None:
+                persona_id = controls.get("persona_id")
+                if persona_id != compiler_input.persona_ref:
+                    raise ValueError(
+                        f"SURFACE_LINEAGE_MISMATCH: persona mismatch; "
+                        f"expected {compiler_input.persona_ref}, got {persona_id}"
+                    )
+
+            # 5. recipe identity and digest match
+            recipe_id = controls.get("recipe_id")
+            recipe_ver = controls.get("recipe_version")
+            recipe_dig = controls.get("recipe_digest")
+            if (
+                recipe_id != CANDIDATE_RECIPE_ID
+                or recipe_ver != CANDIDATE_RECIPE_VERSION
+                or recipe_dig != CANDIDATE_RECIPE_DIGEST
+            ):
+                raise ValueError(
+                    f"SURFACE_LINEAGE_MISMATCH: recipe mismatch; "
+                    f"expected {CANDIDATE_RECIPE_ID}:{CANDIDATE_RECIPE_VERSION} "
+                    f"({CANDIDATE_RECIPE_DIGEST}), "
+                    f"got {recipe_id}:{recipe_ver} ({recipe_dig})"
+                )
+
+            # 6. state versions match
+            projected_states = {
+                s.dimension: s.version
+                for s in compiler_input.projected_agent_state.projected_states
+            }
+            source_states = controls.get("source_states", ())
+            for state_info in source_states:
+                dim = state_info.get("dimension")
+                ver = state_info.get("version")
+                if dim in projected_states and projected_states[dim] != ver:
+                    raise ValueError(
+                        f"SURFACE_LINEAGE_MISMATCH: state {dim} version mismatch; "
+                        f"surface has v{ver}, projected has v{projected_states[dim]}"
+                    )
+
+        guidance = map_surface_to_qualitative_guidance(surface)
+        controls_id = controls.get("controls_id", "surface:controls")
+        items: list[ExpressionContextItem] = []
+        for dim in sorted(guidance.keys()):
+            items.append(
+                ExpressionContextItem(
+                    item_id=f"surface_guidance-{dim}",
+                    kind=ExpressionContextKind.SURFACE_GUIDANCE,
+                    key=dim,
+                    value=guidance[dim],
+                    source_refs=(controls_id, CANDIDATE_MAP_ID, f"rev:{CANDIDATE_MAP_VERSION}"),
+                    priority=5,
+                )
+            )
+        return items
+
+    @classmethod
+    def withhold_on_budget_overflow(
+        cls,
+        items: Any = None,
+        config: DecisionContextConfig | None = None,
+        mode: str = "SURFACE_V1",
+    ) -> bool:
+        """Check whether essential context items exceed configured limits."""
+        if items is None:
+            return True
+        essential_kinds = _SURFACE_ESSENTIAL_KINDS if mode == "SURFACE_V1" else _ESSENTIAL_KINDS
+        if hasattr(items, "expression_context"):
+            item_list = list(items.expression_context)
+        elif isinstance(items, (list, tuple)):
+            item_list = list(items)
+        else:
+            return True
+        if not config:
+            return False
+        essential_items = [it for it in item_list if getattr(it, "kind", None) in essential_kinds]
+        if any(len(it.value) > config.max_item_chars for it in essential_items):
+            return True
+        if len(essential_items) > config.max_items:
+            return True
+        total_chars = sum(len(it.value) for it in essential_items)
+        if total_chars > config.max_render_chars:
+            return True
+        return False
 
     def _meaning_items(
         self, appraisals: tuple[AcceptedAppraisal, ...]
@@ -418,7 +615,10 @@ class DecisionContextCompiler:
 
             if compiler_input.persona_ref is not None:
                 has_agent_context = True
-                if persona_id != compiler_input.persona_ref and agent_id != compiler_input.persona_ref:
+                if (
+                    persona_id != compiler_input.persona_ref
+                    and agent_id != compiler_input.persona_ref
+                ):
                     raise ValueError(
                         f"slow_state agent identity mismatch: "
                         f"expected {compiler_input.persona_ref!r}, got {slow_state.scope!r}"
@@ -451,13 +651,15 @@ class DecisionContextCompiler:
             # and matching domain.
             if definitions is None:
                 raise ValueError(
-                    f"cross-scope slow_state {slow_state.dimension!r} requires StateDefinitionRegistry"
+                    f"cross-scope slow_state {slow_state.dimension!r} "
+                    "requires StateDefinitionRegistry"
                 )
 
             defn = definitions.get(slow_state.dimension)
             if defn is None:
                 raise ValueError(
-                    f"slow_state dimension {slow_state.dimension!r} has no registered StateDefinition"
+                    f"slow_state dimension {slow_state.dimension!r} "
+                    "has no registered StateDefinition"
                 )
             if defn.dynamics_policy != "accumulator":
                 raise ValueError(
@@ -563,7 +765,11 @@ class DecisionContextCompiler:
         items: list[ExpressionContextItem] = []
         for state in slow_records:
             value = state.value
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+            ):
                 raise ValueError(
                     f"slow_state value for {state.dimension} must be a finite number"
                 )
@@ -579,20 +785,26 @@ class DecisionContextCompiler:
             )
         return items
 
-    def _style_items(self, persona_ref: str | None) -> list[ExpressionContextItem]:
+    def _style_items(
+        self, persona_ref: str | None, *, exclude_behavioral: bool = False
+    ) -> list[ExpressionContextItem]:
         if persona_ref is None:
             return []
-        return [
-            ExpressionContextItem(
-                f"persona_style-{key}",
-                ExpressionContextKind.PERSONA_STYLE,
-                key,
-                value,
-                (persona_ref,),
-                20,
+        items: list[ExpressionContextItem] = []
+        for key, value in self._config.persona_style_constraints:
+            if exclude_behavioral and key.lower() in _BEHAVIORAL_STYLE_KEYS:
+                continue
+            items.append(
+                ExpressionContextItem(
+                    f"persona_style-{key}",
+                    ExpressionContextKind.PERSONA_STYLE,
+                    key,
+                    value,
+                    (persona_ref,),
+                    20,
+                )
             )
-            for key, value in self._config.persona_style_constraints
-        ]
+        return items
 
     def _history_items(
         self, history: object, compiler_input: DecisionContextCompilerInput
@@ -686,15 +898,16 @@ class DecisionContextCompiler:
             raise ValueError("rewrite reason codes must be unique")
 
     def _fit_item_budget(
-        self, candidates: list[ExpressionContextItem]
+        self, candidates: list[ExpressionContextItem], *, mode: str = "LEGACY"
     ) -> tuple[tuple[ExpressionContextItem, ...], tuple[ExpressionContextItem, ...]]:
         ordered = tuple(sorted(candidates, key=_item_sort_key))
         included: list[ExpressionContextItem] = []
         omitted: list[ExpressionContextItem] = []
         total_chars = 0
+        essential_kinds = _SURFACE_ESSENTIAL_KINDS if mode == "SURFACE_V1" else _ESSENTIAL_KINDS
         for item in ordered:
             item_chars = len(item.value)
-            essential = item.kind in _ESSENTIAL_KINDS
+            essential = item.kind in essential_kinds
             if item_chars > self._config.max_item_chars:
                 if essential:
                     raise ValueError("essential context item exceeds max_item_chars")

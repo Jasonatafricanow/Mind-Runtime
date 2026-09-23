@@ -1107,6 +1107,9 @@ class TurnOrchestrator:
         # config has zero agent.slow.* definitions).
         slow_scope = self._derive_slow_scope(turn)
         slow_state_records = self._read_slow_state_records(slow_scope)
+        compiler_mode = "LEGACY"
+        if hasattr(self.decision_context_compiler, "_config"):
+            compiler_mode = getattr(self.decision_context_compiler._config, "mode", "LEGACY")
         compiler_input = DecisionContextCompilerInput(
             interaction_id=turn.interaction.interaction_id,
             scope=turn.interaction.scope,
@@ -1124,6 +1127,8 @@ class TurnOrchestrator:
             slow_state_records=slow_state_records,
             state_definitions=self._definitions,
             accepted_appraisals=transition_result.accepted_appraisals,
+            surface=getattr(turn, "surface", None),
+            mode=compiler_mode,
         )
         context, compile_trace = self.decision_context_compiler.compile(compiler_input)
         turn.decision_context = context

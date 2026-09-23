@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
 from mind_runtime.contracts import (
     Authority,
@@ -57,14 +56,12 @@ from mind_runtime.contracts.host import (
     HostTurnResult,
     HostTurnStatus,
 )
-from mind_runtime.contracts.scope import Scope, ScopeDomain
 from mind_runtime.pipeline.orchestrator import (
     StaleProjectionError,
     TurnOrchestrator,
     TurnState,
 )
 from mind_runtime.pipeline.trace import TraceRecorder
-
 
 _logger = logging.getLogger(__name__)
 
@@ -150,7 +147,12 @@ def _situation_ref(orchestrator: TurnOrchestrator) -> str | None:
 def _to_turn_status(state: TurnState) -> HostTurnStatus:
     if state is TurnState.BEGIN:
         return HostTurnStatus.BEGIN
-    if state in (TurnState.INGESTING, TurnState.PROCESSING, TurnState.DISPATCHING, TurnState.AWAITING_COMMIT):
+    if state in (
+        TurnState.INGESTING,
+        TurnState.PROCESSING,
+        TurnState.DISPATCHING,
+        TurnState.AWAITING_COMMIT,
+    ):
         return HostTurnStatus.PROCESSING
     if state is TurnState.COMMITTED:
         return HostTurnStatus.COMMITTED
@@ -200,11 +202,26 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
     # ResolvedAppraisal, or any other MR internal object.
     intent_summary = ctx.selected_intent_kind
     # C2 (STEP 2-B): append the MR slow-state projection (authoritative
-    # provider-visible context, verbatim from MR) to the emotional_state slot.
-    slow_summary = _step_slow_state_summary(ctx)
-    emotional_state = f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}"
-    if slow_summary:
-        emotional_state += f"; slow_state: {slow_summary}"
+    # provider-visible context, verbatim from MR) to the emotional_state slot,
+    # UNLESS in SURFACE_V1 mode where slow numeric summaries are suppressed and
+    # qualitative guidance is surfaced instead.
+    surface_items = [
+        it for it in ctx.expression_context
+        if getattr(it, "kind", None) == "surface_guidance"
+    ]
+    if surface_items:
+        guidance_parts = [
+            f"{it.key}={it.value}" for it in sorted(surface_items, key=lambda x: x.key)
+        ]
+        emotional_state = (
+            f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}; "
+            f"guidance: {', '.join(guidance_parts)}"
+        )
+    else:
+        slow_summary = _step_slow_state_summary(ctx)
+        emotional_state = f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}"
+        if slow_summary:
+            emotional_state += f"; slow_state: {slow_summary}"
     situation_summary = f"situation_ref={ctx.situation_ref}"
     renderer = orchestrator.context_renderer
     meaning = renderer.render_cognitive_meaning(ctx) if hasattr(
