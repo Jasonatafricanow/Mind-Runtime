@@ -6,7 +6,10 @@ Surface is pure derived projection, non-canonical, and never persisted.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -44,37 +47,72 @@ SURFACE_SCHEMA_MISMATCH = "SURFACE_SCHEMA_MISMATCH"
 SURFACE_RECIPE_UNSUPPORTED = "SURFACE_RECIPE_UNSUPPORTED"
 
 
-class SurfaceProjectionResult(dict[str, Any]):
-    """Derived, non-canonical, immutable projection result.
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(k): _freeze(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return _FrozenSequence(_freeze(v) for v in value)
+    return value
 
-    Subclasses dict for transparent JSON/wire/mapping compatibility.
-    """
+
+class _FrozenSequence(tuple):
+    """Immutable wire sequence retaining JSON-list comparison semantics."""
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, (list, tuple)):
+            return tuple(self) == tuple(other)
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        equal = self.__eq__(other)
+        return NotImplemented if equal is NotImplemented else not equal
+
+    __hash__ = tuple.__hash__
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceProjectionResult(Mapping[str, Any]):
+    """Deeply immutable derived view with read-only mapping compatibility."""
+
+    status: str
+    reasons: tuple[str, ...]
+    controls: Mapping[str, Any] | None = None
+    _wire: Mapping[str, Any] = field(init=False, repr=False, compare=False)
 
     def __init__(
-        self,
-        *,
-        status: SurfaceProjectionStatus | str,
+        self, *, status: SurfaceProjectionStatus | str,
         reasons: list[str] | tuple[str, ...],
-        controls: dict[str, Any] | None = None,
+        controls: Mapping[str, Any] | None = None,
     ) -> None:
-        stat_val = status.value if hasattr(status, "value") else str(status)
-        super().__init__(
-            status=stat_val,
-            reasons=list(reasons),
-            controls=controls,
+        stat_val = status.value if isinstance(status, SurfaceProjectionStatus) else str(status)
+        frozen_controls = None if controls is None else _freeze(controls)
+        immutable_reasons = tuple(reasons)
+        object.__setattr__(self, "status", stat_val)
+        object.__setattr__(self, "reasons", immutable_reasons)
+        object.__setattr__(self, "controls", frozen_controls)
+        object.__setattr__(
+            self, "_wire", MappingProxyType({
+                "status": stat_val, "reasons": immutable_reasons,
+                "controls": frozen_controls,
+            }),
         )
 
-    @property
-    def status(self) -> str:
-        return self["status"]
+    def __getitem__(self, key: str) -> Any:
+        return self._wire[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._wire)
+
+    def __len__(self) -> int:
+        return len(self._wire)
 
     @property
-    def reasons(self) -> list[str]:
-        return self["reasons"]
+    def is_available(self) -> bool:
+        """Typed admission predicate for consumers outside the Surface layer."""
+        return self.status == SurfaceProjectionStatus.AVAILABLE and self.controls is not None
 
-    @property
-    def controls(self) -> dict[str, Any] | None:
-        return self.get("controls")
+    def __deepcopy__(self, memo: dict[int, Any]) -> SurfaceProjectionResult:
+        return self
 
 
 @runtime_checkable

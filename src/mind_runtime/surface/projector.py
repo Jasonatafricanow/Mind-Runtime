@@ -18,6 +18,7 @@ from mind_runtime.contracts.surface import (
     SURFACE_NUMERIC_TYPE,
     SURFACE_PERSONA_CONTENT_MISMATCH,
     SURFACE_RANGE,
+    SURFACE_SCHEMA_MISMATCH,
     SurfaceProjectionResult,
     SurfaceProjectionStatus,
 )
@@ -33,6 +34,97 @@ from mind_runtime.surface.recipe import (
 )
 
 
+def _authority_failure(
+    supplied: Mapping[str, Any], recipe: Mapping[str, Any],
+    persona: Mapping[str, Any], content: Mapping[str, Any],
+    projected: Mapping[str, Any], states: list[Any],
+) -> str | None:
+    """Validate the orchestration binding before evaluating any recipe root."""
+    runtime = supplied.get("runtime_id")
+    scope = supplied.get("scope")
+    owner = supplied.get("owner")
+    ref = supplied.get("interaction_or_tick_ref")
+    if not isinstance(runtime, str) or not runtime or not isinstance(ref, str) or not ref:
+        return "SURFACE_LINEAGE_MISMATCH"
+    if not isinstance(scope, Mapping) or not isinstance(owner, Mapping):
+        return "SURFACE_LINEAGE_MISMATCH"
+    if scope.get("domain") != "agent" or not isinstance(scope.get("persona_id"), str):
+        return "SURFACE_SCOPE_MISMATCH"
+    pid = persona.get("persona_id")
+    version = persona.get("persona_version")
+    digest = persona.get("persona_content_digest")
+    if (
+        not isinstance(pid, str) or not pid or type(version) is not int or version < 1
+        or scope.get("persona_id") != pid
+        or owner.get("owner_persona_id") != pid
+        or owner.get("owner_runtime_id") != runtime
+        or content.get("persona_id") != pid
+        or content.get("profile_version") != version
+        or not isinstance(digest, str) or not digest
+    ):
+        return "SURFACE_PERSONA_BINDING_MISMATCH"
+    if (
+        projected.get("runtime_id") != runtime
+        or projected.get("scope") != scope
+        or projected.get("owner") != owner
+        or projected.get("interaction_or_tick_ref") != ref
+    ):
+        return "SURFACE_LINEAGE_MISMATCH"
+    source_id = projected.get("source_projection_id")
+    if (
+        not isinstance(source_id, str) or not source_id
+        or supplied.get("expected_source_projection_id") != source_id
+    ):
+        return "SURFACE_SOURCE_PROJECTION_MISMATCH"
+    if projected.get("source_phase") not in ("projected", "committed"):
+        return "SURFACE_SOURCE_PHASE_INVALID"
+    if projected.get("persona_binding") != {
+        "persona_id": pid, "persona_version": version,
+        "persona_content_digest": digest,
+    }:
+        return "SURFACE_PERSONA_BINDING_MISMATCH"
+    expected_recipe = {
+        "recipe_id": recipe.get("recipe_id"),
+        "recipe_version": recipe.get("recipe_version"),
+        "recipe_digest": surface_digest("recipe", normalized_recipe(dict(recipe))),
+    }
+    if supplied.get("recipe_bindings") != [expected_recipe]:
+        return "SURFACE_RECIPE_BINDING_MISMATCH"
+    dimensions = content.get("dimensions")
+    if not isinstance(dimensions, list):
+        return "SURFACE_STATE_DEFINITION_MISMATCH"
+    definitions = {
+        d.get("dimension"): d for d in dimensions if isinstance(d, Mapping)
+    }
+    if len(definitions) != len(dimensions) or not isinstance(states, list):
+        return "SURFACE_STATE_DEFINITION_MISMATCH"
+    seen: set[str] = set()
+    for state in states:
+        if not isinstance(state, Mapping):
+            return "SURFACE_STATE_AUTHORITY_MISMATCH"
+        dimension = state.get("dimension")
+        if not isinstance(dimension, str) or dimension in seen:
+            return "SURFACE_STATE_AUTHORITY_MISMATCH"
+        seen.add(dimension)
+        definition = definitions.get(dimension)
+        if not isinstance(definition, Mapping):
+            return "SURFACE_STATE_DEFINITION_MISMATCH"
+        if (
+            not isinstance(state.get("state_id"), str) or not state["state_id"]
+            or type(state.get("version")) is not int or state["version"] < 1
+            or state.get("runtime_id") != runtime
+            or state.get("scope") != scope
+            or state.get("owner") != owner
+        ):
+            return "SURFACE_STATE_AUTHORITY_MISMATCH"
+        if (
+            state.get("value_type") != "scalar"
+            or state.get("bounds") != [definition.get("floor"), definition.get("ceiling")]
+        ):
+            return "SURFACE_STATE_DEFINITION_MISMATCH"
+    return None
+
+
 class DeterministicSurfaceProjector:
     """Production Surface Projector.
 
@@ -41,7 +133,21 @@ class DeterministicSurfaceProjector:
     """
 
     def project(self, supplied: Mapping[str, Any]) -> SurfaceProjectionResult:
-        """Execute single deterministic surface projection."""
+        """Execute one deterministic projection, failing closed on malformed input."""
+        if not isinstance(supplied, Mapping):
+            return SurfaceProjectionResult(
+                status=SurfaceProjectionStatus.UNAVAILABLE,
+                reasons=[SURFACE_SCHEMA_MISMATCH], controls=None,
+            )
+        try:
+            return self._project_checked(supplied)
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+            return SurfaceProjectionResult(
+                status=SurfaceProjectionStatus.UNAVAILABLE,
+                reasons=[SURFACE_SCHEMA_MISMATCH], controls=None,
+            )
+
+    def _project_checked(self, supplied: Mapping[str, Any]) -> SurfaceProjectionResult:
         recipe = supplied.get("recipe")
         if not isinstance(recipe, Mapping):
             return SurfaceProjectionResult(
@@ -110,6 +216,14 @@ class DeterministicSurfaceProjector:
             )
 
         states_list = projected_dynamics.get("states", [])
+        failure = _authority_failure(
+            supplied, recipe, persona, content, projected_dynamics, states_list
+        )
+        if failure is not None:
+            return SurfaceProjectionResult(
+                status=SurfaceProjectionStatus.UNAVAILABLE,
+                reasons=[failure], controls=None,
+            )
         states_by_dim = {
             s["dimension"]: s for s in states_list if isinstance(s, Mapping) and "dimension" in s
         }

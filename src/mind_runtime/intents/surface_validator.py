@@ -11,6 +11,8 @@ Frozen under ADR-0028 and MR_SURFACE_V1_GOLDEN_CONTRACT_02:
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -34,6 +36,24 @@ def get_control_transitive_roots(control_id: str) -> set[str]:
     return roots
 
 
+def overlap_validation_reference(rule: Any) -> str:
+    """Bind the admitted causal declaration to the exact frozen root graph."""
+    validate_intent_rule_surface_overlap(rule)
+    controls = tuple(getattr(rule, "surface_control_weights"))
+    direct = tuple(getattr(rule, "dimension_weights"))
+    payload = {
+        "rule_id": rule.rule_id,
+        "direct_roots": sorted(name for name, _ in direct),
+        "surface_roots": {
+            name: sorted(get_control_transitive_roots(name)) for name, _ in controls
+        },
+    }
+    digest = hashlib.sha256(json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")).hexdigest()
+    return f"overlap-valid:{digest}"
+
+
 def validate_intent_rule_surface_overlap(rule: Any) -> None:
     """Validate that an Intent rule obeys Surface boundaries and non-overlap constraints.
 
@@ -55,7 +75,7 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
     elif isinstance(scw_raw, (list, tuple)):
         scw_items = list(scw_raw)
     else:
-        scw_items = []
+        raise ValueError("SURFACE_CONTROL_INVALID: declarations must be pairs")
 
     # If no surface controls, nothing to validate for surface boundary
     if not scw_items:
@@ -76,7 +96,7 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
     elif isinstance(ddw_raw, (list, tuple)):
         ddw_items = list(ddw_raw)
     else:
-        ddw_items = []
+        raise ValueError("DIRECT_WEIGHT_INVALID: declarations must be pairs")
 
     # Extract event_bonus
     eb_raw = (
@@ -87,7 +107,7 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
 
     # 1. Eligibility and numeric validity check
     seen_controls: set[str] = set()
-    active_controls: list[str] = []
+    declared_controls: list[str] = []
     for item in scw_items:
         if isinstance(item, (list, tuple)) and len(item) == 2:
             c_name, weight = item
@@ -115,8 +135,9 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
                 f"SURFACE_WEIGHT_INVALID: weight for {c_name!r} must be a finite numeric value"
             )
 
-        if float(weight) != 0.0:
-            active_controls.append(c_name)
+        # Declaration creates a causal path even when this revision's
+        # numerical coefficient is zero. Admission must see every root.
+        declared_controls.append(c_name)
 
     # 2. Event bonus check
     # In SURFACE_V1, Surface-aware rules must have event_bonus == 0.0
@@ -131,32 +152,28 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
             "SURFACE_EVENT_BONUS_FORBIDDEN: Surface-aware rules must declare event_bonus == 0.0"
         )
 
-    # If no active controls (all weights 0.0), no root overlap possible
-    if not active_controls:
-        return
-
     # 3. Direct dynamics roots R
-    active_direct_roots: set[str] = set()
+    declared_direct_roots: set[str] = set()
     for item in ddw_items:
         if isinstance(item, (list, tuple)) and len(item) == 2:
             dim_name, dim_weight = item
         else:
-            continue
-        if isinstance(dim_weight, bool) or not isinstance(dim_weight, (int, float)):
-            continue
-        if float(dim_weight) != 0.0:
-            if isinstance(dim_name, str) and dim_name:
-                active_direct_roots.add(dim_name)
-                if not dim_name.startswith("agent.affect."):
-                    active_direct_roots.add(f"agent.affect.{dim_name}")
-                else:
-                    active_direct_roots.add(dim_name.removeprefix("agent.affect."))
+            raise ValueError("DIRECT_WEIGHT_INVALID: invalid direct root pair")
+        if isinstance(dim_weight, bool) or not isinstance(dim_weight, (int, float)) or not math.isfinite(dim_weight):
+            raise ValueError("DIRECT_WEIGHT_INVALID: direct root weight must be finite numeric")
+        if not isinstance(dim_name, str) or not dim_name:
+            raise ValueError("DIRECT_WEIGHT_INVALID: direct root name must be nonempty")
+        declared_direct_roots.add(dim_name)
+        if not dim_name.startswith("agent.affect."):
+            declared_direct_roots.add(f"agent.affect.{dim_name}")
+        else:
+            declared_direct_roots.add(dim_name.removeprefix("agent.affect."))
 
     # 4. Check R ∩ U_i = ∅
-    for c_name in active_controls:
+    for c_name in declared_controls:
         u_roots = get_control_transitive_roots(c_name)
         overlap = set()
-        for r in active_direct_roots:
+        for r in declared_direct_roots:
             if r in u_roots or f"agent.affect.{r}" in u_roots:
                 overlap.add(r)
         if overlap:
@@ -166,10 +183,10 @@ def validate_intent_rule_surface_overlap(rule: Any) -> None:
             )
 
     # 5. Check U_i ∩ U_j = ∅ for i ≠ j
-    for i in range(len(active_controls)):
-        for j in range(i + 1, len(active_controls)):
-            c1 = active_controls[i]
-            c2 = active_controls[j]
+    for i in range(len(declared_controls)):
+        for j in range(i + 1, len(declared_controls)):
+            c1 = declared_controls[i]
+            c2 = declared_controls[j]
             shared = get_control_transitive_roots(c1) & get_control_transitive_roots(c2)
             if shared:
                 raise ValueError(

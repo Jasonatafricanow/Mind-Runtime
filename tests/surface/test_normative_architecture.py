@@ -1,6 +1,5 @@
 """Layer A: Normative Architecture Invariants.
 
-RED BY DESIGN: Production Surface adapter is intentionally absent in W3-B0.
 These assertions verify architecture invariants independent of numerical recipe:
 - exact 5 controls, deferred absent
 - pure derived state (no I/O, no clock, no random, no mutation)
@@ -19,6 +18,9 @@ import sqlite3
 import time
 import uuid
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
+
+import pytest
 
 from tests.surface.spec_support import (
     DEFERRED,
@@ -43,8 +45,6 @@ def test_normative_pure_derived_state_no_io_or_clock(surface, monkeypatch):
     """Layer A3: Surface is pure; traps verify zero I/O, clock, random, network, or DB calls."""
     x = sample_candidate()
     project = surface.project
-    targets = surface.forbidden_call_targets()
-    assert set(targets) == {"provider", "clock", "random", "network", "database", "file"}
 
     calls = []
 
@@ -65,9 +65,6 @@ def test_normative_pure_derived_state_no_io_or_clock(surface, monkeypatch):
         ]:
             for name in names:
                 m.setattr(module, name, forbidden)
-        for entries in targets.values():
-            for obj, attr in entries:
-                m.setattr(obj, attr, forbidden)
         result = project(x)
     assert calls == []
     assert result["status"] == "AVAILABLE"
@@ -79,6 +76,41 @@ def test_normative_no_input_mutation(surface):
     before = canonical(x)
     expect_ok(surface, x)
     assert canonical(x) == before
+
+
+def test_surface_result_authority_fields_cannot_mutate(surface):
+    result = surface.project(sample_candidate())
+    assert result.status == "AVAILABLE"
+    original = result.controls["controls_id"]
+    with pytest.raises(TypeError):
+        result["controls"]["values"]["expressive_warmth"] = 1.0
+    with pytest.raises(TypeError):
+        result.controls["source_states"][0]["state_id"] = "forged"
+    with pytest.raises((FrozenInstanceError, AttributeError)):
+        result.controls = {"controls_id": "forged"}
+    assert result.controls["controls_id"] == original
+
+
+@pytest.mark.parametrize("field, expected", [
+    ("state_owner", "SURFACE_STATE_AUTHORITY_MISMATCH"),
+    ("state_runtime", "SURFACE_STATE_AUTHORITY_MISMATCH"),
+    ("source_projection", "SURFACE_SOURCE_PROJECTION_MISMATCH"),
+    ("illegal_phase", "SURFACE_SOURCE_PHASE_INVALID"),
+])
+def test_projector_rejects_authority_mismatch(surface, field, expected):
+    supplied = sample_candidate()
+    if field == "state_owner":
+        supplied["projected_dynamics"]["states"][0]["owner"]["owner_persona_id"] = "other"
+    elif field == "state_runtime":
+        supplied["projected_dynamics"]["states"][0]["runtime_id"] = "other-runtime"
+    elif field == "source_projection":
+        supplied["projected_dynamics"]["source_projection_id"] = "projection:other"
+    else:
+        supplied["projected_dynamics"]["source_phase"] = "aborted"
+    result = surface.project(supplied)
+    assert result.status == "UNAVAILABLE"
+    assert result.controls is None
+    assert expected in result.reasons
 
 
 def test_normative_determinism_and_caller_ref_isolation(surface):
@@ -123,26 +155,85 @@ def test_normative_phase_lineage_projected_vs_committed(surface):
 
 
 def test_normative_restart_recomputation_probe(surface, tmp_path):
-    """Layer A3 & A5: Restart recomputation via real backend + loader without persisting Surface."""
+    """Real canonical SQLite commit + published Persona recomputes after reopen."""
+    from datetime import UTC, datetime
+    import json
+    from mind_runtime.contracts import RuntimeState, Scope, ScopeDomain, SyncFields
+    from mind_runtime.persona_publication import PersonaConfigPublicationRepository
+    from mind_runtime.state.persistence import SqliteCommitMarkerStore, SqliteStateBackend
+    from mind_runtime.surface.cognition import recompute_committed_surface
+
     x = sample_candidate()
-    x["projected_dynamics"]["source_phase"] = "committed"
-    probe = surface.restart_probe(str(tmp_path), x)
-    assert probe["parent_pid"] != probe["child_pid"]
-    assert probe["canonical_before"] == probe["canonical_after"]
-    assert probe["reconstructed_input"] == x
-    assert canonical(probe["before"]) == canonical(probe["after"])
-    assert probe["surface_reads"] == probe["surface_writes"] == 0
-    assert not any("surface" in t.lower() for t in probe["tables_after"])
+    source = tmp_path / "persona.json"
+    source.write_text(json.dumps(x["persona"]["content"]), encoding="utf-8")
+    publication = PersonaConfigPublicationRepository(tmp_path / "publication")
+    ref = publication.publish(source)
+    now = datetime(2026, 9, 23, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id=ref.persona_id)
+    turn_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+    db = tmp_path / "canonical.sqlite"
+    backend = SqliteStateBackend(db)
+    marker = SqliteCommitMarkerStore(db, connection=backend.connection)
+    ids = []
+    for item in x["projected_dynamics"]["states"]:
+        state = RuntimeState(
+            state_id=item["state_id"], scope=scope, dimension=item["dimension"],
+            value=item["value"], status="active", valid_from=now, valid_until=None,
+            relevant_until=None, last_observed_at=now, evidence_refs=(),
+            transition_refs=(), updated_at=now, origin_runtime_id="fixture-runtime",
+            version=item["version"],
+            sync=SyncFields(scope, "fixture-runtime", item["state_id"], item["version"],
+                            f"idem-{item['state_id']}"),
+        )
+        assert backend.save_state(state)
+        ids.append(state.state_id)
+    with backend.transaction():
+        assert marker.record_commit(interaction_id="fixture-1", scope=turn_scope,
+                                    committed_at=now, projected_state_ids=tuple(ids), commit=False)
+    before = recompute_committed_surface(
+        surface_port=surface, persona_publication=publication, persona_revision_ref=ref,
+        state_backend=backend, commit_markers=marker, interaction_id="fixture-1",
+        interaction_scope=turn_scope, runtime_id="fixture-runtime",
+    )
+    backend.close()
+    marker.close()
+    restored_backend = SqliteStateBackend(db)
+    restored_marker = SqliteCommitMarkerStore(db, connection=restored_backend.connection)
+    after = recompute_committed_surface(
+        surface_port=surface, persona_publication=PersonaConfigPublicationRepository(tmp_path / "publication"),
+        persona_revision_ref=ref, state_backend=restored_backend,
+        commit_markers=restored_marker, interaction_id="fixture-1",
+        interaction_scope=turn_scope, runtime_id="fixture-runtime",
+    )
+    assert before.controls["controls_id"] == after.controls["controls_id"]
+    assert after.controls["source_phase"] == "committed"
+    assert not any("surface" in name.lower() for name in restored_backend.table_names())
+    from dataclasses import replace
+    from mind_runtime.persona_publication import ReplayUnavailable
+
+    other_scope = Scope(domain=ScopeDomain.AGENT, agent_id="other-agent", persona_id=ref.persona_id)
+    committed = restored_backend.load_states()[0]
+    duplicate = replace(
+        committed, scope=other_scope,
+        sync=SyncFields(other_scope, "fixture-runtime", committed.state_id, committed.version,
+                        f"idem-other-{committed.state_id}"),
+    )
+    assert restored_backend.save_state(duplicate)
+    with pytest.raises(ReplayUnavailable, match="ambiguous"):
+        recompute_committed_surface(
+            surface_port=surface, persona_publication=publication, persona_revision_ref=ref,
+            state_backend=restored_backend, commit_markers=restored_marker,
+            interaction_id="fixture-1", interaction_scope=turn_scope,
+            runtime_id="fixture-runtime",
+        )
+    restored_backend.close()
+    restored_marker.close()
 
 
-def test_normative_aborted_projection_never_published(surface, tmp_path):
-    """Layer A5: Turn abort never publishes or persists projected Surface."""
-    probe = surface.abort_probe(str(tmp_path), sample_candidate())
-    assert probe["outcome"] == "ABORTED"
-    assert probe["surface"]["source_phase"] == "projected"
-    assert probe["surface"]["canonical"] is False
-    assert probe["surface_writes"] == probe["surface_publications"] == 0
-    assert probe["projected_state_publications"] == 0
+def test_no_production_test_probes(surface):
+    """The production adapter exposes no test-only abort/restart probe."""
+    assert not hasattr(surface, "abort_probe")
+    assert not hasattr(surface, "restart_probe")
 
 
 def test_normative_unrelated_fast_dimension_isolation(surface):

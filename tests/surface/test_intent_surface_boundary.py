@@ -1,7 +1,6 @@
 """W3-C Intent Boundary & Overlap Rejection Tests.
 
-RED BY DESIGN: Production Intent Surface input & overlap validator are absent in W3-B0.
-These assertions freeze the W3-C contract requirements:
+These assertions enforce the W3-C contract requirements:
 - R ∩ U rejection (direct Dynamics root intersects Surface control roots)
 - U1 ∩ U2 rejection (scored Surface controls share Dynamics or Persona roots)
 - Ineligible Surface control rejection (restraint/warmth cannot be Intent controls)
@@ -10,6 +9,8 @@ These assertions freeze the W3-C contract requirements:
 """
 
 from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from collections.abc import Mapping
 
 import pytest
 
@@ -56,6 +57,21 @@ def test_intent_pairwise_surface_control_overlap_rejected(intent_surface_validat
     }
     with pytest.raises(ValueError, match="ROOT_OVERLAP"):
         intent_surface_validator(rule)
+
+
+@pytest.mark.parametrize("direct, controls", [
+    ({"agent.affect.longing": 0.0}, {"contact_seeking": 0.4}),
+    ({"agent.affect.longing": 0.4}, {"contact_seeking": 0.0}),
+    ({}, {"contact_seeking": 0.0, "confrontation": 0.4}),
+])
+def test_zero_weight_causal_declarations_still_reject_overlap(
+    intent_surface_validator, direct, controls,
+):
+    with pytest.raises(ValueError, match="ROOT_OVERLAP"):
+        intent_surface_validator({
+            "kind": "reach_out", "direct_dynamics_weights": direct,
+            "surface_control_weights": controls, "event_bonus": 0.0,
+        })
 
 
 def test_intent_ineligible_surface_control_rejected(intent_surface_validator):
@@ -225,7 +241,7 @@ def test_surface_aware_rule_scores_tendency_and_emits_trace():
 
     runtime_id = "fixture-runtime"
     now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
-    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-fixture-a")
 
     x = sample_candidate()
     adapter = SurfaceProductionAdapter()
@@ -284,6 +300,8 @@ def test_surface_aware_rule_scores_tendency_and_emits_trace():
         accepted_events=(),
         clock=now,
         surface=surface,
+        persona_version=x["persona"]["persona_version"],
+        persona_content_digest=x["persona"]["persona_content_digest"],
     )
 
     result = engine.evaluate(engine_input)
@@ -300,12 +318,61 @@ def test_surface_aware_rule_scores_tendency_and_emits_trace():
     assert trace.admitted is True
     assert trace.surface_controls_ref == controls_id
     assert trace.surface_dependency_digest == surface.controls["dependency_digest"]
-    assert trace.overlap_validation_ref == "overlap-valid:reach-out-rule"
+    assert trace.overlap_validation_ref is not None
+    assert trace.overlap_validation_ref.startswith("overlap-valid:")
+    assert len(trace.overlap_validation_ref.removeprefix("overlap-valid:")) == 64
 
     surface_contribs = [c for c in trace.contributions if c.source_kind == "surface"]
     assert len(surface_contribs) == 1
     assert surface_contribs[0].source_ref == "contact_seeking"
     assert surface_contribs[0].amount == 0.2
+
+    # A real typed result with a coherent but different lineage must still be
+    # withheld. A superficial type/status check would admit these controls.
+    def withheld(other_surface):
+        outcome = engine.evaluate(replace(engine_input, surface=other_surface))
+        assert outcome.candidates == ()
+        assert outcome.traces[0].reason_codes == ("surface_stale_or_mismatch",)
+
+    previous = sample_candidate()
+    previous["interaction_or_tick_ref"] = "interaction:previous-turn"
+    previous["projected_dynamics"]["interaction_or_tick_ref"] = "interaction:previous-turn"
+    withheld(adapter.project(previous))
+    withheld(adapter.project(sample_candidate("persona-fixture-b")))
+
+    other_scope = sample_candidate()
+    other_scope["scope"]["agent_id"] = "other-agent"
+    other_scope["projected_dynamics"]["scope"]["agent_id"] = "other-agent"
+    for item in other_scope["projected_dynamics"]["states"]:
+        item["scope"]["agent_id"] = "other-agent"
+    withheld(adapter.project(other_scope))
+
+    other_runtime = sample_candidate()
+    other_runtime["runtime_id"] = "other-runtime"
+    other_runtime["owner"]["owner_runtime_id"] = "other-runtime"
+    other_runtime["projected_dynamics"]["runtime_id"] = "other-runtime"
+    other_runtime["projected_dynamics"]["owner"]["owner_runtime_id"] = "other-runtime"
+    for item in other_runtime["projected_dynamics"]["states"]:
+        item["runtime_id"] = "other-runtime"
+        item["owner"]["owner_runtime_id"] = "other-runtime"
+    withheld(adapter.project(other_runtime))
+
+    def thaw(value):
+        if isinstance(value, Mapping):
+            return {key: thaw(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [thaw(item) for item in value]
+        return value
+
+    from mind_runtime.contracts.surface import SurfaceProjectionResult
+    from mind_runtime.dynamics.persona import surface_digest
+
+    wrong_recipe = thaw(surface.controls)
+    wrong_recipe["recipe_digest"] = "0" * 64
+    semantic = {key: value for key, value in wrong_recipe.items()
+                if key not in ("controls_id", "evaluation_ref")}
+    wrong_recipe["controls_id"] = "surface:" + surface_digest("controls", semantic)
+    withheld(SurfaceProjectionResult(status="AVAILABLE", reasons=(), controls=wrong_recipe))
 
 
 def test_missing_or_unavailable_surface_withholds_candidate():
@@ -558,6 +625,18 @@ def test_intent_engine_input_rejects_bare_dict_surface():
             accepted_events=(),
             clock=now,
             surface={"contact_seeking": 0.5},  # bare dict rejected!
+        )
+
+    class SurfaceProjectionResult:
+        __module__ = "mind_runtime.contracts.surface"
+        status = "AVAILABLE"
+        controls = {"values": {"contact_seeking": 1.0}}
+
+    with pytest.raises(ValueError, match="surface must be a SurfaceProjectionResult"):
+        IntentEngineInput(
+            interaction_id="fixture-1", scope=scope, origin_runtime_id=runtime_id,
+            context=situation, projected=projected, accepted_events=(), clock=now,
+            surface=SurfaceProjectionResult(),
         )
 
 

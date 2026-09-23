@@ -200,7 +200,10 @@ def _build_test_harness(
     config = DecisionContextConfig(
         allowed_situation_facts=("time.daypart",),
         affect_rules=affect_rules,
-        persona_style_constraints=(("tone", "warm_concise"), ("format", "bullets")),
+        persona_style_constraints=(
+            (("format", "bullets"),) if mode == "SURFACE_V1"
+            else (("tone", "warm_concise"), ("format", "bullets"))
+        ),
         allowed_history_kinds=(),
         max_history_items=5,
         max_prior_expression_chars=200,
@@ -228,6 +231,8 @@ def _build_test_harness(
         slow_state_records=slow_records,
         surface=surface,
         mode=mode,
+        persona_version=x["persona"]["persona_version"],
+        persona_content_digest=x["persona"]["persona_content_digest"],
     )
     renderer = DeterministicContextRenderer(config)
     return compiler, inp, renderer, surface
@@ -259,6 +264,15 @@ def test_candidate_expression_map_v2_identity_and_digest():
     }
     dims = CANDIDATE_EXPRESSION_MAP_V2["guidance_dimensions"]
     assert set(dims.keys()) == {"directness", "warmth", "restraint"}
+
+
+def test_expression_map_exact_boundary_partition():
+    from mind_runtime.expression.expression_map import evaluate_control_band
+
+    assert evaluate_control_band(0.329999999) == "low"
+    assert evaluate_control_band(0.33) == "moderate"
+    assert evaluate_control_band(0.659999999) == "moderate"
+    assert evaluate_control_band(0.66) == "high"
 
 
 def test_surface_v1_disables_raw_affect_bands_and_slow_numeric_summary(
@@ -429,46 +443,70 @@ def test_surface_lineage_validation_and_mismatch_withholds_dispatch():
         comp.admit_surface_controls(unavail, inp)
 
     # 2. Runtime mismatch
-    bad_runtime_surface = deepcopy(surface)
-    bad_runtime_surface.controls["runtime_id"] = "different-runtime"
-    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH: runtime mismatch"):
+    def tampered(**changes):
+        def thaw(value):
+            if isinstance(value, dict) or hasattr(value, "items"):
+                return {key: thaw(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [thaw(item) for item in value]
+            return value
+        controls = thaw(surface.controls)
+        controls.update(changes)
+        return SurfaceProjectionResult(status="AVAILABLE", reasons=(), controls=controls)
+
+    bad_runtime_surface = tampered(runtime_id="different-runtime")
+    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH"):
         comp.admit_surface_controls(bad_runtime_surface, inp)
 
     # 3. Projection ID mismatch
-    bad_proj_surface = deepcopy(surface)
-    bad_proj_surface.controls["source_projection_id"] = "projection:mismatched"
-    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH: projection mismatch"):
+    bad_proj_surface = tampered(source_projection_id="projection:mismatched")
+    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH"):
         comp.admit_surface_controls(bad_proj_surface, inp)
 
     # 4. Source phase must be 'projected'
-    bad_phase_surface = deepcopy(surface)
-    bad_phase_surface.controls["source_phase"] = "canonical"
+    bad_phase_surface = tampered(source_phase="canonical")
     with pytest.raises(
-        ValueError, match="SURFACE_LINEAGE_MISMATCH: source_phase must be 'projected'"
+        ValueError, match="SURFACE_LINEAGE_MISMATCH"
     ):
         comp.admit_surface_controls(bad_phase_surface, inp)
 
     # 5. Persona ID mismatch
-    bad_persona_surface = deepcopy(surface)
-    bad_persona_surface.controls["persona_id"] = "persona-different"
-    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH: persona mismatch"):
+    bad_persona_surface = tampered(persona_id="persona-different")
+    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH"):
         comp.admit_surface_controls(bad_persona_surface, inp)
+    _, _, _, coherent_other_persona = _build_test_harness("persona-fixture-b")
+    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH"):
+        comp.admit_surface_controls(coherent_other_persona, inp)
 
     # 6. Recipe digest mismatch
-    bad_digest_surface = deepcopy(surface)
-    bad_digest_surface.controls["recipe_digest"] = "0" * 64
-    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH: recipe mismatch"):
+    bad_digest_surface = tampered(recipe_digest="0" * 64)
+    with pytest.raises(ValueError, match="SURFACE_LINEAGE_MISMATCH"):
         comp.admit_surface_controls(bad_digest_surface, inp)
 
     # 7. State version mismatch
-    bad_ver_surface = deepcopy(surface)
-    bad_ver_surface.controls["source_states"] = (
+    bad_ver_surface = tampered(source_states=[
         {"dimension": "agent.affect.anger", "version": 999},
-    )
+    ])
     with pytest.raises(
-        ValueError, match=r"SURFACE_LINEAGE_MISMATCH: state agent\.affect\.anger version mismatch"
+        ValueError, match="SURFACE_LINEAGE_MISMATCH"
     ):
         comp.admit_surface_controls(bad_ver_surface, inp)
+
+
+@pytest.mark.parametrize("style", [
+    (("affection", "be very warm"),),
+    (("attachment_approach", "0.8"),),
+    (("format", "be very warm"),),
+])
+def test_surface_style_admission_rejects_parallel_behavioral_authority(style):
+    from dataclasses import replace
+
+    compiler, inp, _, _ = _build_test_harness(mode="SURFACE_V1")
+    with pytest.raises(ValueError, match="SURFACE_STYLE_UNADMITTED"):
+        replace(compiler._config, persona_style_constraints=style)
+    legacy, _, _, _ = _build_test_harness(mode="LEGACY")
+    with pytest.raises(ValueError, match="DECISION_CONTEXT_MODE_MISMATCH"):
+        legacy.compile(replace(inp, mode="SURFACE_V1"))
 
 
 def test_coordinator_retry_preserves_surface_and_records_trace():
@@ -535,6 +573,10 @@ def test_host_adapter_parity_and_isolation():
     fake_orchestrator = SimpleNamespace(
         decision_context=ctx,
         context_renderer=renderer,
+        surface_handoff_request=lambda: SimpleNamespace(
+            payload_bytes=renderer.render(ctx).text.encode("utf-8"),
+            surface_handoff=SimpleNamespace(context_id=ctx.context_id),
+        ),
     )
 
     bounded = _bounded_context(fake_orchestrator)
@@ -544,7 +586,12 @@ def test_host_adapter_parity_and_isolation():
     assert host_rendered is not None
 
     # Host text contains qualitative guidance
-    assert "guidance: directness=low, restraint=moderate, warmth=moderate" in host_rendered
+    assert "- directness: low" in host_rendered
+    assert "- restraint: moderate" in host_rendered
+    assert "- warmth: moderate" in host_rendered
+    assert host_rendered == renderer.render(ctx).text
+    assert "[POLICY_CONSTRAINT]" in host_rendered
+    assert "- concise: concise" in host_rendered
 
     # Host text does NOT contain slow numeric state
     assert "slow_state:" not in host_rendered

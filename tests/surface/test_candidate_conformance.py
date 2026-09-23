@@ -37,8 +37,10 @@ def test_candidate_persona_counterfactual_static_vector(surface):
     """Layer B: Persona counterfactual holding Dynamics constant."""
     a = sample_candidate("persona-fixture-a")
     b = sample_candidate("persona-fixture-b")
-    # Verify Dynamics rows are strictly identical
-    assert a["projected_dynamics"]["states"] == b["projected_dynamics"]["states"]
+    # Causal values are identical; owner lineage must follow the selected Persona.
+    assert [(s["dimension"], s["value"], s["version"]) for s in a["projected_dynamics"]["states"]] == [
+        (s["dimension"], s["value"], s["version"]) for s in b["projected_dynamics"]["states"]
+    ]
 
     out_a = expect_ok(surface, a)
     out_b = expect_ok(surface, b)

@@ -3,14 +3,13 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from typing import Any
-
 from mind_runtime.contracts.appraisal import SemanticEventCandidate
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.intent import Intent
 from mind_runtime.contracts.projection import ProjectedMindState
 from mind_runtime.contracts.scope import Scope
 from mind_runtime.contracts.situation import Situation
+from mind_runtime.contracts.surface import SurfaceProjectionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +23,9 @@ class IntentEngineInput:
     projected: ProjectedMindState
     accepted_events: tuple[SemanticEventCandidate, ...]
     clock: datetime
-    surface: Any = None
+    surface: SurfaceProjectionResult | None = None
+    persona_version: int | None = None
+    persona_content_digest: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -40,10 +41,7 @@ class IntentEngineInput:
             seen.add(event.candidate_id)
         require_aware_utc(self.clock, "clock")
         if self.surface is not None:
-            if (
-                type(self.surface).__name__ != "SurfaceProjectionResult"
-                or not getattr(type(self.surface), "__module__", "").endswith(".surface")
-            ):
+            if type(self.surface) is not SurfaceProjectionResult:
                 raise ValueError("surface must be a SurfaceProjectionResult or None")
 
 

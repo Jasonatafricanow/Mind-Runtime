@@ -238,11 +238,10 @@ class CognitiveTicker:
         config: CognitiveTickConfig | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
     ) -> None:
-        self.surface_projection_port = (
-            surface_projection_port
-            if surface_projection_port is not None
-            else getattr(orchestrator, "surface_projection_port", None)
-        )
+        composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
+        if surface_projection_port is not None and surface_projection_port is not composed_surface_port:
+            raise ValueError("ticker Surface port must be the composed turn Surface authority")
+        self.surface_projection_port = composed_surface_port
         self._orchestrator = orchestrator
         self._persona = persona
         self._intent_lifecycle = intent_lifecycle
@@ -290,7 +289,7 @@ class CognitiveTicker:
             persona=self._persona,
             projected=projected,
             runtime_id=self._runtime_id,
-            scope=self._projection_scope or scope,
+            scope=projected.scope,
             interaction_or_tick_ref=f"tick:{interaction_id}",
         )
         engine_result = self._intent_engine.evaluate(
@@ -303,6 +302,8 @@ class CognitiveTicker:
                 accepted_events=(),
                 clock=now,
                 surface=surface_result,
+                persona_version=self._persona.version,
+                persona_content_digest=self._persona.persona_content_digest,
             )
         )
         persisted_rows = self._persist_projection(projected)

@@ -69,19 +69,12 @@ _SURFACE_ESSENTIAL_KINDS = {
     ExpressionContextKind.SURFACE_GUIDANCE,
     ExpressionContextKind.SURFACE_CONTROL,
 }
-_BEHAVIORAL_STYLE_KEYS = {
-    "attitude",
-    "behavior",
-    "directness",
-    "emotion",
-    "emotional_tone",
-    "expressiveness",
-    "mood",
-    "personality",
-    "restraint",
-    "style",
-    "tone",
-    "warmth",
+_SURFACE_V1_NONBEHAVIORAL_STYLE: dict[str, frozenset[str]] = {
+    "language": frozenset({"zh-CN", "en", "pt-BR"}),
+    "format": frozenset({"plain", "bullets", "paragraphs"}),
+    "length": frozenset({"short", "medium", "long"}),
+    "channel": frozenset({"chat", "voice", "sms"}),
+    "safety": frozenset({"standard", "strict"}),
 }
 
 
@@ -184,6 +177,12 @@ class DecisionContextConfig:
             raise ValueError("meaning_policy must be allowed or policy_denied")
         if self.mode not in ("LEGACY", "SURFACE_V1"):
             raise ValueError("mode must be LEGACY or SURFACE_V1")
+        if self.mode == "SURFACE_V1":
+            for key, value in self.persona_style_constraints:
+                if value not in _SURFACE_V1_NONBEHAVIORAL_STYLE.get(key, frozenset()):
+                    raise ValueError(
+                        f"SURFACE_STYLE_UNADMITTED: {key!r} is not a typed nonbehavioral constraint"
+                    )
 
 
 def _require_unique_strings(values: tuple[str, ...], field_name: str) -> None:
@@ -219,6 +218,8 @@ class DecisionContextCompilerInput:
     accepted_appraisals: tuple[AcceptedAppraisal, ...] = ()
     surface: Any = None
     mode: str | None = None
+    persona_version: int | None = None
+    persona_content_digest: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -268,6 +269,8 @@ class DecisionContextCompiler:
     ) -> tuple[DecisionContext, DecisionContextCompileTrace]:
         self._validate_authority(compiler_input)
         effective_mode = compiler_input.mode or getattr(self._config, "mode", "LEGACY")
+        if effective_mode != self._config.mode:
+            raise ValueError("DECISION_CONTEXT_MODE_MISMATCH")
         candidates = self._action_items(compiler_input)
         candidates += self._fact_items(compiler_input.situation)
         meaning_items, meaning_reasons = self._meaning_items(compiler_input.accepted_appraisals)
@@ -279,8 +282,7 @@ class DecisionContextCompiler:
             surface_items = self.admit_surface_controls(compiler_input.surface, compiler_input)
             candidates += surface_items
             # Raw affect bands and slow numeric summaries are suppressed in SURFACE_V1
-            # Behavioral persona style is filtered out in SURFACE_V1
-            candidates += self._style_items(compiler_input.persona_ref, exclude_behavioral=True)
+            candidates += self._style_items(compiler_input.persona_ref)
         else:
             candidates += self._affect_items(compiler_input.projected_agent_state)
             # C10-C1: emit slow-state items from the authoritative projection.
@@ -334,20 +336,27 @@ class DecisionContextCompiler:
         if surface is None:
             raise ValueError("surface must not be None")
 
-        if hasattr(surface, "status") and hasattr(surface, "controls"):
-            if surface.status != "AVAILABLE" or surface.controls is None:
-                raise ValueError(f"Surface projection is not AVAILABLE: {surface.status}")
-            controls = surface.controls
-        elif isinstance(surface, dict):
-            if surface.get("status") != "AVAILABLE":
-                raise ValueError(f"Surface projection is not AVAILABLE: {surface.get('status')}")
-            controls = surface.get("controls")
-            if not isinstance(controls, dict):
-                raise ValueError("Surface controls missing")
-        else:
-            raise TypeError("surface must be a SurfaceProjectionResult or dict")
+        from mind_runtime.contracts.surface import SurfaceProjectionResult
+
+        if type(surface) is not SurfaceProjectionResult:
+            raise TypeError("surface must be a SurfaceProjectionResult")
+        if surface.status != "AVAILABLE" or surface.controls is None:
+            raise ValueError(f"Surface projection is not AVAILABLE: {surface.status}")
+        controls = surface.controls
 
         if compiler_input is not None:
+            from mind_runtime.surface.lineage import validate_projected_surface
+
+            if not validate_projected_surface(
+                surface,
+                projected=compiler_input.projected_agent_state,
+                runtime_id=compiler_input.origin_runtime_id,
+                interaction_or_tick_ref=f"interaction:{compiler_input.interaction_id}",
+                persona_id=compiler_input.persona_ref,
+                persona_version=compiler_input.persona_version,
+                persona_content_digest=compiler_input.persona_content_digest,
+            ):
+                raise ValueError("SURFACE_LINEAGE_MISMATCH: exact projection binding invalid")
             # 1. origin_runtime_id match
             runtime_id = controls.get("runtime_id")
             if runtime_id != compiler_input.origin_runtime_id:
@@ -785,15 +794,11 @@ class DecisionContextCompiler:
             )
         return items
 
-    def _style_items(
-        self, persona_ref: str | None, *, exclude_behavioral: bool = False
-    ) -> list[ExpressionContextItem]:
+    def _style_items(self, persona_ref: str | None) -> list[ExpressionContextItem]:
         if persona_ref is None:
             return []
         items: list[ExpressionContextItem] = []
         for key, value in self._config.persona_style_constraints:
-            if exclude_behavioral and key.lower() in _BEHAVIORAL_STYLE_KEYS:
-                continue
             items.append(
                 ExpressionContextItem(
                     f"persona_style-{key}",

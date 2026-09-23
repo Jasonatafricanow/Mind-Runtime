@@ -87,13 +87,27 @@ class DeterministicContextRenderer:
         if not isinstance(context, DecisionContext):
             raise ValueError("context must be a DecisionContext")
         items = sorted(context.expression_context, key=_item_sort_key)
+        surface_mode = any(item.kind is ExpressionContextKind.SURFACE_GUIDANCE for item in items)
+        if surface_mode:
+            guidance = {item.key for item in items
+                        if item.kind is ExpressionContextKind.SURFACE_GUIDANCE}
+            if guidance != {"directness", "warmth", "restraint"}:
+                raise ValueError("SURFACE_ESSENTIAL_BUNDLE_INCOMPLETE")
+            if sum(item.kind is ExpressionContextKind.ACTION for item in items) != 1:
+                raise ValueError("SURFACE_ESSENTIAL_BUNDLE_INCOMPLETE")
+            if any(item.kind in (ExpressionContextKind.INTERNAL_STATE,
+                                 ExpressionContextKind.SURFACE_CONTROL) for item in items):
+                raise ValueError("SURFACE_PROVIDER_ISOLATION_VIOLATION")
         included, omitted = self._fit_budget(items)
+        rendered_text = _render_text(included)
+        if surface_mode:
+            self.verify_provider_information_isolation(rendered_text)
         return ProviderExpressionContext(
             render_id=f"render-{context.context_id}",
             context_id=context.context_id,
             scope=context.scope,
             origin_runtime_id=context.origin_runtime_id,
-            text=_render_text(included),
+            text=rendered_text,
             included_item_ids=tuple(item.item_id for item in included),
             omitted_item_ids=tuple(item.item_id for item in omitted),
         )
@@ -202,6 +216,14 @@ class DeterministicContextRenderer:
                 "Information isolation violation: raw floats found in provider "
                 f"text: {float_matches}"
             )
+
+        for diagnostic in (
+            r"\battempt\s*=", r"\bsituation_ref\b", r"\bcontrols_id\b",
+            r"\bprojection_id\b", r"\bstate_id\b", r"\bdependency_digest\b",
+            r"\bpersona_content_digest\b", r"\brecipe_digest\b",
+        ):
+            if re.search(diagnostic, text, flags=re.IGNORECASE):
+                raise AssertionError("Information isolation violation: diagnostic reference")
 
         return True
 

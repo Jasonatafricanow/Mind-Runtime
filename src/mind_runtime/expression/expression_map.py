@@ -219,8 +219,10 @@ def map_surface_to_qualitative_guidance(
         )
 
     values = controls_block.get("values")
-    if not isinstance(values, dict):
-        raise ValueError("controls values dict missing")
+    from collections.abc import Mapping
+
+    if not isinstance(values, Mapping):
+        raise ValueError("controls values mapping missing")
 
     guidance: dict[str, str] = {}
     for guidance_dim in sorted(GUIDANCE_TO_CONTROL.keys()):

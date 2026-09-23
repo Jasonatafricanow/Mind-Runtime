@@ -30,7 +30,7 @@ def canonical_surface_c14n(value: Any) -> bytes:
             return {"$f64": (0.0 if x == 0 else x).hex()}
         if x is None or type(x) in (str, bool, int):
             return x
-        if type(x) in (list, tuple):
+        if isinstance(x, (list, tuple)):
             return [wire(v) for v in x]
         if isinstance(x, Mapping) and all(type(k) is str for k in x):
             return {k: wire(v) for k, v in x.items()}

@@ -39,6 +39,7 @@ from mind_runtime.contracts import (
     Authority,
     AuthorityLevel,
     Evidence,
+    ExpressionDisposition,
     Interaction,
     InteractionStatus,
     SyncFields,
@@ -51,6 +52,8 @@ from mind_runtime.contracts.host import (
     HostDecisionContext,
     HostInspectRequest,
     HostInspectResult,
+    HostProviderProseRequest,
+    HostProviderProseResult,
     HostStatus,
     HostTurnRequest,
     HostTurnResult,
@@ -197,31 +200,37 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
     ctx = orchestrator.decision_context
     if ctx is None:
         return None
+    compiler = getattr(orchestrator, "decision_context_compiler", None)
+    configured_surface = getattr(getattr(compiler, "_config", None), "mode", None) == "SURFACE_V1"
+    if configured_surface or any(
+        getattr(it, "kind", None) == "surface_guidance" for it in ctx.expression_context
+    ):
+        request = orchestrator.surface_handoff_request()
+        if request is None or request.surface_handoff.context_id != ctx.context_id:
+            raise ValueError("SURFACE_V1 has no matching durable admitted handoff")
+        envelope_text = request.payload_bytes.decode("utf-8", errors="strict")
+        from mind_runtime.expression.renderer import DeterministicContextRenderer
+
+        DeterministicContextRenderer.verify_provider_information_isolation(envelope_text)
+        return HostDecisionContext(
+            intent_summary=ctx.selected_intent_kind,
+            emotional_state="admitted Surface expression guidance",
+            situation_summary="admitted situation context",
+            action_taken=ctx.selected_action_type,
+            next_steps=None,
+            provider_envelope_text=envelope_text,
+        )
     # The selected_intent_kind is a stable enum-like string; safe to
     # surface. We never expose the underlying numeric affect, the
     # ResolvedAppraisal, or any other MR internal object.
     intent_summary = ctx.selected_intent_kind
-    # C2 (STEP 2-B): append the MR slow-state projection (authoritative
-    # provider-visible context, verbatim from MR) to the emotional_state slot,
-    # UNLESS in SURFACE_V1 mode where slow numeric summaries are suppressed and
-    # qualitative guidance is surfaced instead.
-    surface_items = [
-        it for it in ctx.expression_context
-        if getattr(it, "kind", None) == "surface_guidance"
-    ]
-    if surface_items:
-        guidance_parts = [
-            f"{it.key}={it.value}" for it in sorted(surface_items, key=lambda x: x.key)
-        ]
-        emotional_state = (
-            f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}; "
-            f"guidance: {', '.join(guidance_parts)}"
-        )
-    else:
-        slow_summary = _step_slow_state_summary(ctx)
-        emotional_state = f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}"
-        if slow_summary:
-            emotional_state += f"; slow_state: {slow_summary}"
+    # Legacy C2 forwarding remains here. SURFACE_V1 already returned the
+    # exact renderer-admitted C7 envelope above, so it cannot reconstruct a
+    # parallel guidance string or restore Slow numeric state in this branch.
+    slow_summary = _step_slow_state_summary(ctx)
+    emotional_state = f"intent={ctx.selected_intent_kind}; attempt={ctx.attempt}"
+    if slow_summary:
+        emotional_state += f"; slow_state: {slow_summary}"
     situation_summary = f"situation_ref={ctx.situation_ref}"
     renderer = orchestrator.context_renderer
     meaning = renderer.render_cognitive_meaning(ctx) if hasattr(
@@ -450,6 +459,8 @@ class MindRuntimeHostAdapter:
                 reason_codes=("cannot_commit_aborted",),
             )
         try:
+            if self._orchestrator.surface_handoff_request() is not None:
+                self._orchestrator.acknowledge_surface_delivery()
             self._orchestrator.commit_turn()
         except (StaleProjectionError, RuntimeError, ValueError) as exc:
             _logger.warning("HI-1 commit_turn failed: %s", exc)
@@ -479,6 +490,29 @@ class MindRuntimeHostAdapter:
             commit_marker_ref=f"commit-marker-{request.interaction_id}",
             reason_codes=("projection_committed",),
         )
+
+    def guard_provider_prose(self, request: HostProviderProseRequest) -> HostProviderProseResult:
+        """SURFACE_V1 Guard gate before the Host sends provider prose outward."""
+        try:
+            turn = self._orchestrator._require_turn()
+            if (
+                turn.interaction.interaction_id != request.interaction_id
+                or turn.interaction.turn_id != request.turn_id
+            ):
+                raise ValueError("SURFACE_GUARD_TURN_MISMATCH")
+            verdict = self._orchestrator.guard_surface_provider_prose(request.prose)
+            return HostProviderProseResult(
+                interaction_id=request.interaction_id,
+                status=(HostStatus.OK if verdict.disposition is ExpressionDisposition.ACCEPT
+                        else HostStatus.FAILED),
+                reason_codes=tuple(verdict.violations),
+            )
+        except (ValueError, RuntimeError) as exc:
+            return HostProviderProseResult(
+                interaction_id=request.interaction_id,
+                status=HostStatus.FAILED,
+                reason_codes=(type(exc).__name__,),
+            )
 
     # ----- abort_turn --------------------------------------------------
 

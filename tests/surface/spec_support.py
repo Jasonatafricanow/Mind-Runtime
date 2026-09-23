@@ -7,6 +7,7 @@ This module is not a Persona loader, not a Surface projector, and not a producti
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Literal, Protocol, TypedDict
 
@@ -56,7 +57,7 @@ PERSONA_A_DIGEST = "a828cb3c92aa9f88c9370f6eda4c6da8443b2d19339bbe745eff48830d55
 PERSONA_B_DIGEST = "a725d748712dc7d6a5ea4d75ca1a6fd696d7de7d04e8c538690fc00ff7b767f5"
 DEP_A_DIGEST = "f32c0114a01f639a1c73055cc27202ec8cc136248c6df5a0d993bd0dd25a4dc1"
 BASELINE_CONTROLS_ID = (
-    "surface:f819caec79ce592566c67b25112d7d801ebe1a08bd8a8594f424fa898995ca60"
+    "surface:5805c1040170d4389c9656300e0cfb412026e7b0a19fa12f6a659b6df48aadc4"
 )
 
 # Statically frozen candidate vectors (LITERALS ONLY, no algorithmic derivation in tests)
@@ -241,9 +242,9 @@ def canonical(value: Any) -> bytes:
             return {"$f64": (0.0 if x == 0 else x).hex()}
         if x is None or type(x) in (str, bool, int):
             return x
-        if type(x) in (list, tuple):
+        if isinstance(x, (list, tuple)):
             return [wire(v) for v in x]
-        if type(x) is dict and all(type(k) is str for k in x):
+        if isinstance(x, Mapping) and all(type(k) is str for k in x):
             return {k: wire(v) for k, v in x.items()}
         raise TypeError(type(x))
 
@@ -485,13 +486,13 @@ def sample_candidate(persona_name: str = "persona-fixture-a") -> SurfaceProjecti
     scope = {
         "domain": "agent",
         "agent_id": "fixture-persona",
-        "persona_id": "fixture-persona",
+        "persona_id": persona_name,
         "user_id": None,
         "relationship_id": None,
         "world_id": None,
         "interaction_id": None,
     }
-    owner = {"owner_runtime_id": "fixture-runtime", "owner_persona_id": "fixture-persona"}
+    owner = {"owner_runtime_id": "fixture-runtime", "owner_persona_id": persona_name}
     vals = dict(
         longing=0.70,
         closeness_craving=0.50,
@@ -694,7 +695,7 @@ def expect_ok(adapter: SurfaceSpecAdapter, x: SurfaceProjectionInput) -> dict[st
     result = adapter.project(x)
     assert set(result) == {"status", "reasons", "controls"}
     assert result["status"] == "AVAILABLE"
-    assert result["reasons"] == []
+    assert tuple(result["reasons"]) == ()
     out = result["controls"]
     assert set(out) == {
         "controls_id",
@@ -768,7 +769,10 @@ def expect_ok(adapter: SurfaceSpecAdapter, x: SurfaceProjectionInput) -> dict[st
 
 
 def expect_error(adapter: SurfaceSpecAdapter, x: SurfaceProjectionInput, code: str) -> None:
-    assert adapter.project(x) == {"status": "UNAVAILABLE", "reasons": [code], "controls": None}
+    result = adapter.project(x)
+    assert result["status"] == "UNAVAILABLE"
+    assert tuple(result["reasons"]) == (code,)
+    assert result["controls"] is None
 
 
 class HistoricalReferenceEvaluator:

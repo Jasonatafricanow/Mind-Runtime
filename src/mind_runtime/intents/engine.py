@@ -1,6 +1,8 @@
 """Pure configuration-owned Intent scoring with inspectable contributions."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from math import isfinite
@@ -103,6 +105,11 @@ class DeterministicIntentEngine:
             kinds.add(rule.kind)
         self._rules = rules
         self._runtime_id = runtime_id
+        rules_wire = json.dumps(
+            [asdict(rule) for rule in rules], sort_keys=True, default=str,
+            separators=(",", ":"), ensure_ascii=True,
+        ).encode("utf-8")
+        self._ruleset_ref = "ruleset:" + hashlib.sha256(rules_wire).hexdigest()
 
     def evaluate(self, engine_input: IntentEngineInput) -> IntentEngineResult:
         if engine_input.origin_runtime_id != self._runtime_id:
@@ -149,6 +156,32 @@ class DeterministicIntentEngine:
                     final_strength=0.0,
                     admitted=False,
                     reason_codes=("surface_unavailable",),
+                    created_at=engine_input.clock,
+                )
+                return None, trace
+
+            from mind_runtime.surface.lineage import validate_projected_surface
+
+            reference = (
+                f"tick:{engine_input.interaction_id}"
+                if engine_input.interaction_id.startswith("cognitive-tick-")
+                else f"interaction:{engine_input.interaction_id}"
+            )
+            if not validate_projected_surface(
+                surface,
+                projected=engine_input.projected,
+                runtime_id=self._runtime_id,
+                interaction_or_tick_ref=reference,
+                persona_id=engine_input.projected.scope.persona_id,
+                persona_version=engine_input.persona_version,
+                persona_content_digest=engine_input.persona_content_digest,
+            ):
+                trace = IntentScoreTrace(
+                    trace_id=trace_id, scope=engine_input.scope, rule_id=rule.rule_id,
+                    intent_id=intent_id,
+                    contributions=(IntentScoreContribution("base", rule.rule_id, float(rule.base_strength)),),
+                    unclamped_score=float(rule.base_strength), final_strength=0.0,
+                    admitted=False, reason_codes=("surface_stale_or_mismatch",),
                     created_at=engine_input.clock,
                 )
                 return None, trace
@@ -234,7 +267,9 @@ class DeterministicIntentEngine:
 
             surface_controls_ref = str(controls.get("controls_id", ""))
             surface_dependency_digest = str(controls.get("dependency_digest", ""))
-            overlap_validation_ref = f"overlap-valid:{rule.rule_id}"
+            from mind_runtime.intents.surface_validator import overlap_validation_reference
+
+            overlap_validation_ref = overlap_validation_reference(rule)
 
         contributions = [IntentScoreContribution("base", rule.rule_id, float(rule.base_strength))]
         score = _decimal(float(rule.base_strength))
@@ -252,8 +287,6 @@ class DeterministicIntentEngine:
         if is_surface_aware:
             controls_values = controls.get("values", {})
             for control_name, weight in rule.surface_control_weights:
-                if weight == 0.0:
-                    continue
                 c_val = controls_values.get(control_name)
                 if (
                     c_val is None
@@ -327,6 +360,12 @@ class DeterministicIntentEngine:
             surface_controls_ref=surface_controls_ref,
             surface_dependency_digest=surface_dependency_digest,
             overlap_validation_ref=overlap_validation_ref,
+            surface_weights=rule.surface_control_weights if is_surface_aware else (),
+            surface_recipe_ref=(
+                f"{controls.get('recipe_id')}:{controls.get('recipe_version')}:{controls.get('recipe_digest')}"
+                if is_surface_aware else None
+            ),
+            ruleset_ref=self._ruleset_ref,
         )
         if not admitted:
             return None, trace
@@ -356,6 +395,7 @@ class DeterministicIntentEngine:
                 version=1,
                 idempotency_key=f"idem-{intent_id}-v1",
             ),
+            surface_use=trace if is_surface_aware else None,
         )
         return candidate, trace
 

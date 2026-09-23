@@ -867,3 +867,19 @@ class SqliteCommitMarkerStore:
             (scope.domain.value, scope.user_id or "", interaction_id),
         ).fetchone()
         return row is not None
+
+    def committed_state_ids(self, *, interaction_id: str, scope: Scope) -> tuple[str, ...] | None:
+        """Read the exact canonical state set named by an admitted commit."""
+        row = self._conn.execute(
+            "SELECT projected_state_ids FROM commit_markers WHERE scope_domain=?"
+            " AND scope_user_id=? AND interaction_id=?",
+            (scope.domain.value, scope.user_id or "", interaction_id),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = json.loads(row["projected_state_ids"])
+        if not isinstance(parsed, list) or any(not isinstance(item, str) or not item for item in parsed):
+            raise ValueError("committed state identity is malformed")
+        if len(parsed) != len(set(parsed)):
+            raise ValueError("committed state identity contains duplicate IDs")
+        return tuple(parsed)
