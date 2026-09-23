@@ -12,7 +12,11 @@ from mind_runtime.contracts.action import (
     ActionPermission,
     ActionPolicyResult,
 )
-from mind_runtime.contracts.affect import AffectiveDimensionProfile
+from mind_runtime.contracts.affect import (
+    AffectiveDimensionProfile,
+    BehavioralDisposition,
+    DISPOSITION_TRAIT_NAMES,
+)
 from mind_runtime.contracts.appraisal import (
     AmbiguityAssessment,
     AppraisalModelProposal,
@@ -110,7 +114,9 @@ __all__ = [
     "AppraisalRouteDecision",
     "Authority",
     "AuthorityLevel",
+    "BehavioralDisposition",
     "BehavioralPriorContribution",
+    "DISPOSITION_TRAIT_NAMES",
     "DataSensitivity",
     "DecisionContext",
     "DeliveryReceipt",
