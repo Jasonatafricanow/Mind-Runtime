@@ -31,6 +31,11 @@ from mind_runtime.contracts import (
     StateValueType,
     SyncFields,
 )
+from mind_runtime.contracts.late_projection import (
+    ApplicationReceipt,
+    ApplicationStatus,
+    canonical_json,
+)
 
 _SCOPE_COLUMNS = (
     "scope_domain",
@@ -71,6 +76,16 @@ def canonical_state_rows_equal(left: RuntimeState, right: RuntimeState) -> bool:
         and left.value == right.value
         and left.origin_runtime_id == right.origin_runtime_id
     )
+
+_APPLICATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS application_receipts (
+    application_id TEXT PRIMARY KEY,
+    runtime_id TEXT NOT NULL,
+    acceptance_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    UNIQUE (runtime_id, acceptance_id)
+);
+"""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS state_definitions (
@@ -347,6 +362,80 @@ class SqliteStateBackend:
             "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
         ).fetchall()
         return tuple(row["name"] for row in rows)
+
+    def enable_application_receipts(self) -> None:
+        """Extend this canonical DB for W2 on its existing transaction connection."""
+        if self._in_transaction:
+            raise RuntimeError("application receipt schema must be prepared before admission")
+        self._conn.executescript(_APPLICATION_SCHEMA)
+
+    def get_application_receipt(self, application_id: str) -> ApplicationReceipt | None:
+        row = self._conn.execute(
+            "SELECT payload FROM application_receipts WHERE application_id=?", (application_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload"])
+        payload["scope"]["domain"] = ScopeDomain(payload["scope"]["domain"])
+        payload["scope"] = Scope(**payload["scope"])
+        payload["status"] = ApplicationStatus(payload["status"])
+        payload["transition_refs"] = tuple(payload["transition_refs"])
+        return ApplicationReceipt(**payload)
+
+    def stage_application_receipt(self, receipt: ApplicationReceipt) -> None:
+        """Stage a pending application receipt in the current transaction.
+
+        Note: The application receipt storage API is a persistence primitive,
+        NOT an independent appraisal authority boundary. Source interaction,
+        scope, runtime, and appraisal/projection lineage validation is owned
+        exclusively by the canonical mutation seam in
+        TurnOrchestrator._prepare_appraisal_receipts before transaction entry.
+        """
+        if not self._in_transaction:
+            raise RuntimeError("application receipt requires canonical transaction")
+        if receipt.status is not ApplicationStatus.PENDING:
+            raise ValueError("only pending application receipts can be staged")
+        try:
+            self._conn.execute(
+                "INSERT INTO application_receipts VALUES (?,?,?,?)",
+                (
+                    receipt.application_id,
+                    receipt.runtime_id,
+                    receipt.acceptance_id,
+                    canonical_json(receipt),
+                ),
+            )
+        except sqlite3.IntegrityError as error:
+            raise ValueError("application already admitted or identity conflict") from error
+
+    def commit_application_receipt(self, receipt: ApplicationReceipt) -> None:
+        """Commit an application receipt in the current transaction.
+
+        Note: The application receipt storage API is a persistence primitive,
+        NOT an independent appraisal authority boundary. Source interaction,
+        scope, runtime, and appraisal/projection lineage validation is owned
+        exclusively by the canonical mutation seam in
+        TurnOrchestrator._prepare_appraisal_receipts before transaction entry.
+        """
+        if not self._in_transaction:
+            raise RuntimeError("application receipt requires canonical transaction")
+        if receipt.status is not ApplicationStatus.COMMITTED:
+            raise ValueError("application receipt must be committed")
+        prior = self.get_application_receipt(receipt.application_id)
+        if prior is None or prior.status is not ApplicationStatus.PENDING:
+            raise ValueError("application was not staged")
+        if (
+            prior.projection_id != receipt.projection_id
+            or prior.acceptance_id != receipt.acceptance_id
+            or prior.effect_group_id != receipt.effect_group_id
+            or prior.runtime_id != receipt.runtime_id
+            or prior.scope != receipt.scope
+        ):
+            raise ValueError("application receipt payload conflict")
+        self._conn.execute(
+            "UPDATE application_receipts SET payload=? WHERE application_id=?",
+            (canonical_json(receipt), receipt.application_id),
+        )
 
     # --- definitions ---
 
@@ -778,3 +867,19 @@ class SqliteCommitMarkerStore:
             (scope.domain.value, scope.user_id or "", interaction_id),
         ).fetchone()
         return row is not None
+
+    def committed_state_ids(self, *, interaction_id: str, scope: Scope) -> tuple[str, ...] | None:
+        """Read the exact canonical state set named by an admitted commit."""
+        row = self._conn.execute(
+            "SELECT projected_state_ids FROM commit_markers WHERE scope_domain=?"
+            " AND scope_user_id=? AND interaction_id=?",
+            (scope.domain.value, scope.user_id or "", interaction_id),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = json.loads(row["projected_state_ids"])
+        if not isinstance(parsed, list) or any(not isinstance(item, str) or not item for item in parsed):
+            raise ValueError("committed state identity is malformed")
+        if len(parsed) != len(set(parsed)):
+            raise ValueError("committed state identity contains duplicate IDs")
+        return tuple(parsed)

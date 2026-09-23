@@ -1,0 +1,11 @@
+................................ssss.................................... [ 27%]
+..........s............................................................. [ 55%]
+........................................................................ [ 82%]
+.............................................                            [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\emotional_transition\test_factory.py:138: curl_cffi is installed in this environment
+SKIPPED [1] tests\emotional_transition\test_factory.py:152: curl_cffi is installed in this environment
+SKIPPED [1] tests\emotional_transition\test_factory.py:168: curl_cffi is installed in this environment
+SKIPPED [1] tests\emotional_transition\test_factory.py:183: curl_cffi is installed in this environment
+SKIPPED [1] tests\emotional_transition\test_live_provider_smoke.py:135: live smoke is opt-in integration: set both DEEPSEEK_API_KEY and MIND_RUNTIME_RUN_LIVE_SMOKE=1 to enable a real network round-trip
+256 passed, 5 skipped in 5.58s

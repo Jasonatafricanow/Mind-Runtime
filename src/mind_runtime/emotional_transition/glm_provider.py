@@ -14,12 +14,13 @@ Contract:
   * URL host is validated against private/reserved ranges before network I/O.
   * with a missing API key the instance silently abstains on every call.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 import time
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -36,13 +37,10 @@ from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
 )
 
-GLM_URL = os.environ.get(
-    "GLM_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-)
+GLM_URL = os.environ.get("GLM_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
 GLM_MODEL = os.environ.get("GLM_MODEL", "glm-4.5-air")
 
-#: Canonical relational-event kinds — MUST match the certified manifest's
-#: ``emotional_effects.rules[].event_kind`` values (runtime-config.json).
+#: Compatibility examples only; ADR-0027 does not make recipes an ontology.
 CANONICAL_EVENT_KINDS = (
     "plan_confirmed",
     "plan_cancelled",
@@ -50,35 +48,58 @@ CANONICAL_EVENT_KINDS = (
     "harsh_message",
 )
 
-#: Prompt-level legal outputs: the four canonical kinds plus explicit
-#: abstention. Anything else the model emits is rejected by the parser.
-_ALLOWED_KINDS = frozenset(CANONICAL_EVENT_KINDS) | {"abstain"}
-
 SYSTEM_PROMPT = (
-    "You are a precise RELATIONAL EVENT classifier for a companion agent's "
-    "internal cognitive runtime. You receive one raw user message and must "
-    "identify which RELATIONSHIP EVENT happened — not the topic, not the "
-    "sentiment. You must reply with ONLY a JSON object, no prose, no "
-    "markdown, exactly: "
-    '{"kind": "...", "confidence": 0.0-1.0, "attributes": {"...": "..."}}.\n\n'
-    "Event kinds (the ONLY legal values):\n"
-    "- plan_confirmed: user confirms or agrees to a shared plan / "
-    "arrangement (e.g. '我们周六就这么定了')\n"
-    "- plan_cancelled: user cancels or breaks a previously shared plan or "
-    "promise (e.g. '对不起，今晚说好的计划取消了')\n"
-    "- warm_reunion: user expresses warmth about being back together after "
-    "time apart (e.g. '好久不见，终于又能和你说话了，我很想你')\n"
-    "- harsh_message: user rejects or pushes the agent away harshly "
-    "(e.g. '你真的很烦，别再来找我')\n\n"
-    "If the message does not clearly constitute one of these relational "
-    'events, abstain: reply {"kind": "abstain", "confidence": 0.0, '
-    '"attributes": {}}.\n'
-    "NEVER output any other kind — in particular the topic-level taxonomy "
-    "(distress_sharing, ownership_complaint, request_favor, appreciation, "
-    "playful_flirt, factual) is FORBIDDEN: it classifies topics, not "
-    "relational events.\n"
-    "Choose the SINGLE best fit. Confidence = how sure you are."
+    "Propose at most ONE semantic event for the supplied user message. "
+    "Reply with ONLY JSON, no prose or markdown, exactly: "
+    '{"kind": "...", "confidence": 0.0, "attributes": {"...": "..."}}. '
+    "Event kinds are open strings. These are non-exhaustive compatibility examples: "
+    "plan_confirmed (confirms a shared plan), plan_cancelled (cancels a shared plan), "
+    "warm_reunion (warm return after absence), harsh_message (harsh rejection). "
+    "Use a novel descriptive kind when these examples do not express the event. "
+    "Do not force an event into an example or guess an affect/state value. "
+    "Kind must be a nonblank printable string of at most 128 characters. "
+    "Confidence must be a JSON number from 0 to 1. Attributes must map nonblank "
+    "printable strings to strings: at most 32 entries, keys at most 64 characters, "
+    "values at most 1024 characters, combined keys and values at most 8192 characters. "
+    "When no event is supported, reply "
+    '{"kind": "abstain", "confidence": 0.0, "attributes": {}}.'
 )
+
+
+def _validated_event_payload(payload: object) -> tuple[str, float, tuple[tuple[str, str], ...]]:
+    """Bound provider syntax independently of recipe or meaning vocabulary."""
+    if not isinstance(payload, dict) or set(payload) != {"kind", "confidence", "attributes"}:
+        raise ValueError("invalid_candidate_schema")
+
+    def bounded_text(value: object, limit: int) -> bool:
+        return (
+            isinstance(value, str)
+            and 0 < len(value) <= limit
+            and bool(value.strip())
+            and value.isprintable()
+        )
+
+    kind = payload["kind"]
+    confidence = payload["confidence"]
+    attributes = payload["attributes"]
+    if not bounded_text(kind, 128):
+        raise ValueError("invalid_candidate_schema")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not 0 <= confidence <= 1
+    ):
+        raise ValueError("invalid_candidate_schema")
+    if not isinstance(attributes, dict) or len(attributes) > 32:
+        raise ValueError("invalid_candidate_schema")
+    if any(
+        not bounded_text(key, 64) or not bounded_text(value, 1024)
+        for key, value in attributes.items()
+    ):
+        raise ValueError("invalid_candidate_schema")
+    if sum(len(key) + len(value) for key, value in attributes.items()) > 8192:
+        raise ValueError("invalid_candidate_schema")
+    return kind, float(confidence), tuple(sorted(attributes.items()))
 
 
 class GLMSemanticProvider(SemanticCandidateProvider):
@@ -157,7 +178,7 @@ class GLMSemanticProvider(SemanticCandidateProvider):
         prompt = (
             "User message:\n"
             f"{text}\n\n"
-            "Classify into at most ONE kind from the taxonomy. Reply with ONLY JSON."
+            "Propose at most ONE event; novel kinds are allowed. Reply with ONLY JSON."
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -182,9 +203,15 @@ class GLMSemanticProvider(SemanticCandidateProvider):
 
         # Token usage accounting (Authority: llm_usage_records)
         prompt_tokens = usage_info.get("prompt_tokens") if isinstance(usage_info, dict) else None
-        completion_tokens = usage_info.get("completion_tokens") if isinstance(usage_info, dict) else None
+        completion_tokens = (
+            usage_info.get("completion_tokens") if isinstance(usage_info, dict) else None
+        )
         total_tokens = usage_info.get("total_tokens") if isinstance(usage_info, dict) else None
-        usage_source = "ACTUAL" if (isinstance(prompt_tokens, int) and isinstance(total_tokens, int)) else "UNAVAILABLE"
+        usage_source = (
+            "ACTUAL"
+            if (isinstance(prompt_tokens, int) and isinstance(total_tokens, int))
+            else "UNAVAILABLE"
+        )
 
         if sink is not None:
             try:
@@ -201,7 +228,7 @@ class GLMSemanticProvider(SemanticCandidateProvider):
                     success=success,
                     retry_count=0,
                     error_message=error_msg,
-                    occurred_at=datetime.now(timezone.utc),
+                    occurred_at=datetime.now(UTC),
                 )
             except Exception:
                 pass
@@ -216,8 +243,9 @@ class GLMSemanticProvider(SemanticCandidateProvider):
                 error=error_msg,
             )
 
-        kind = payload.get("kind")
-        if not isinstance(kind, str) or kind not in _ALLOWED_KINDS:
+        try:
+            kind, confidence, attributes = _validated_event_payload(payload)
+        except ValueError:
             return ProviderExecutionResult(
                 candidates=(),
                 provider_name="glm",
@@ -226,9 +254,9 @@ class GLMSemanticProvider(SemanticCandidateProvider):
                 success=True,
                 explicit_abstain=False,
                 raw_output=raw_content,
-                error=f"unallowed_kind_{kind}",
+                error="invalid_candidate_schema",
             )
-        if kind == "abstain":
+        if kind in {"abstain", "none"}:
             return ProviderExecutionResult(
                 candidates=(),
                 provider_name="glm",
@@ -239,20 +267,6 @@ class GLMSemanticProvider(SemanticCandidateProvider):
                 raw_output=raw_content,
             )
 
-        try:
-            confidence = float(payload.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        if not 0.0 <= confidence <= 1.0:
-            confidence = 0.0
-        attrs_raw = payload.get("attributes") or {}
-        if not isinstance(attrs_raw, dict):
-            attrs_raw = {}
-        attributes = tuple(
-            sorted(
-                (str(k), str(v)) for k, v in attrs_raw.items() if str(k) and str(v)
-            )
-        )
         cand = SemanticEventCandidate(
             candidate_id=f"glm-{obs.id}",
             scope=scope,
@@ -296,6 +310,7 @@ class GLMSemanticProvider(SemanticCandidateProvider):
                 "Authorization": "Bearer " + self._api_key,
             },
         )
+
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, hdrs, newurl):
                 return None

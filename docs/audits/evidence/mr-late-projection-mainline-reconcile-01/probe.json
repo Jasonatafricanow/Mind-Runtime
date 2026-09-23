@@ -1,0 +1,77 @@
+{
+  "gain_once_fixed_acceptance": [
+    {
+      "sensitivity": 0.5,
+      "pre_sensitivity": 0.16000000000000003,
+      "engine_contribution": 0.08000000000000002
+    },
+    {
+      "sensitivity": 1.5,
+      "pre_sensitivity": 0.16000000000000003,
+      "engine_contribution": 0.24000000000000005
+    }
+  ],
+  "persona_version_not_bound_by_dimension_tuple": {
+    "owner_versions": [
+      1,
+      2
+    ],
+    "dependency_digests": [
+      "f81770cb71a41ee1c035e2c7f6b53e4fb21e359b7940baebbf378a0d54e59810",
+      "f81770cb71a41ee1c035e2c7f6b53e4fb21e359b7940baebbf378a0d54e59810"
+    ]
+  },
+  "offline_real_parser_to_journal": [
+    {
+      "provider": "GLMSemanticProvider",
+      "status": "UNMAPPED",
+      "effects": [],
+      "meaning_survives_restart": true,
+      "fixed_clock_mutation": 0,
+      "tables": [
+        "appraisal_evaluations",
+        "appraisal_projections",
+        "appraisal_supersessions"
+      ]
+    },
+    {
+      "provider": "ZenHy3Provider",
+      "status": "UNMAPPED",
+      "effects": [],
+      "meaning_survives_restart": true,
+      "fixed_clock_mutation": 0,
+      "tables": [
+        "appraisal_evaluations",
+        "appraisal_projections",
+        "appraisal_supersessions"
+      ]
+    }
+  ],
+  "target_operation_counterexamples": [
+    {
+      "status": "MAPPED",
+      "effects": [
+        {
+          "dimension": "agent.affect.anxiety",
+          "operation": "delta",
+          "amount": 0.08000000000000002
+        },
+        {
+          "dimension": "agent.affect.anxiety",
+          "operation": "proposed_value",
+          "amount": 0.8
+        }
+      ]
+    },
+    {
+      "status": "MAPPED",
+      "effects": [
+        {
+          "dimension": "agent.slow.trust",
+          "operation": "delta",
+          "amount": 0.08000000000000002
+        }
+      ]
+    }
+  ]
+}

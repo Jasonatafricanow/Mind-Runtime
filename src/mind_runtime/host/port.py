@@ -22,6 +22,8 @@ from mind_runtime.contracts.host import (
     HostCommitRequest,
     HostInspectRequest,
     HostInspectResult,
+    HostProviderProseRequest,
+    HostProviderProseResult,
     HostTurnRequest,
     HostTurnResult,
 )
@@ -58,6 +60,10 @@ class MindRuntimeHostPort(Protocol):
         ...
 
     def commit_turn(self, request: HostCommitRequest) -> HostCommitReceipt:
+        ...
+
+    def guard_provider_prose(self, request: HostProviderProseRequest) -> HostProviderProseResult:
+        """SURFACE_V1: evaluate provider prose before external message delivery."""
         ...
 
     def abort_turn(self, request: HostAbortRequest) -> HostAbortReceipt:

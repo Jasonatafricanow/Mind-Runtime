@@ -14,16 +14,23 @@ from __future__ import annotations
 import json
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import wraps
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from mind_runtime.runtime_binding import (
     RuntimeBinding,
     RuntimeBindingError,
     RuntimeEnvironment,
     resolve_storage_paths,
+)
+from mind_runtime.persona_publication import (
+    PersonaRevisionConflict,
+    PersonaRevisionRef,
+    ReplayUnavailable,
 )
 
 __all__ = [
@@ -40,6 +47,14 @@ __all__ = [
 ]
 
 _BINDING_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def _serialized_write(method: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(method)
+    def wrapped(self: BindingRegistry, *args: Any, **kwargs: Any) -> Any:
+        with self._write_lock():
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +185,10 @@ class BindingRegistryReader(Protocol):
         lab_root: Path | str | None = None,
     ) -> DefaultBindingResult: ...
 
+    def resolve_persona_revision(
+        self, binding_id: str, *, environment: RuntimeEnvironment,
+    ) -> PersonaRevisionRef: ...
+
 
 @runtime_checkable
 class BindingRegistryWriter(Protocol):
@@ -184,6 +203,10 @@ class BindingRegistryWriter(Protocol):
     def set_default(self, binding_id: str) -> None: ...
 
     def clear_default(self, environment: RuntimeEnvironment) -> None: ...
+
+    def pin_persona_revision(
+        self, binding_id: str, ref: PersonaRevisionRef,
+    ) -> PersonaRevisionRef: ...
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +251,11 @@ class _ReaderView:
             lab_root=lab_root,
         )
 
+    def resolve_persona_revision(
+        self, binding_id: str, *, environment: RuntimeEnvironment,
+    ) -> PersonaRevisionRef:
+        return self._reg.resolve_persona_revision(binding_id, environment=environment)
+
 
 class _WriterView:
     def __init__(self, registry: BindingRegistry) -> None:
@@ -246,6 +274,11 @@ class _WriterView:
 
     def clear_default(self, environment: RuntimeEnvironment) -> None:
         self._reg.clear_default(environment)
+
+    def pin_persona_revision(
+        self, binding_id: str, ref: PersonaRevisionRef,
+    ) -> PersonaRevisionRef:
+        return self._reg.pin_persona_revision(binding_id, ref)
 
 
 class BindingRegistry:
@@ -272,6 +305,38 @@ class BindingRegistry:
     @property
     def writer(self) -> BindingRegistryWriter:
         return self._writer
+
+    @contextmanager
+    def _write_lock(self):
+        """Serialize read-modify-replace across processes, including Persona pins.
+
+        The lock file is coordination only; the registry JSON remains the sole
+        durable binding authority. OS locks are released after process death.
+        """
+        self._store_dir.mkdir(parents=True, exist_ok=True)
+        with (self._store_dir / ".binding-registry.lock").open("a+b") as lock:
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     # -----------------------------------------------------------------------
     # Storage Engine (atomic, fail-closed)
@@ -341,6 +406,27 @@ class BindingRegistry:
                     RegistryFailureCode.REGISTRY_CORRUPT,
                     f"entry {bid} has invalid identity payload",
                 )
+            pinned = entry.get("persona_revision_ref")
+            if pinned is not None:
+                if not isinstance(pinned, dict) or set(pinned) != {
+                    "persona_id", "profile_version", "effective_content_digest"
+                }:
+                    raise BindingRegistryError(
+                        RegistryFailureCode.REGISTRY_CORRUPT,
+                        f"entry {bid} has malformed Persona revision reference",
+                    )
+                try:
+                    ref = PersonaRevisionRef(**pinned)
+                except (TypeError, ValueError) as exc:
+                    raise BindingRegistryError(
+                        RegistryFailureCode.REGISTRY_CORRUPT,
+                        f"entry {bid} has invalid Persona revision reference",
+                    ) from exc
+                if ref.persona_id != ident.get("persona_id"):
+                    raise BindingRegistryError(
+                        RegistryFailureCode.REGISTRY_CORRUPT,
+                        f"entry {bid} Persona revision does not match binding Persona",
+                    )
             ident_key = (
                 ident.get("environment", ""),
                 ident.get("persona_id", ""),
@@ -468,6 +554,30 @@ class BindingRegistry:
 
         return binding
 
+    def resolve_persona_revision(
+        self, binding_id: str, *, environment: RuntimeEnvironment,
+    ) -> PersonaRevisionRef:
+        """Read the exact pinned config revision; never resolve a current alias."""
+        data = self._load_store()
+        for entry in data["entries"]:
+            if entry["binding_id"] != binding_id:
+                continue
+            if entry["identity"]["environment"] != environment.value:
+                raise BindingRegistryError(
+                    RegistryFailureCode.ADMISSION_DENIED,
+                    f"Persona revision binding {binding_id!r} has another environment",
+                )
+            pinned = entry.get("persona_revision_ref")
+            if pinned is None:
+                raise ReplayUnavailable(
+                    f"REPLAY_UNAVAILABLE: binding {binding_id!r} has no published Persona revision"
+                )
+            return PersonaRevisionRef(**pinned)
+        raise BindingRegistryError(
+            RegistryFailureCode.BINDING_ID_UNKNOWN,
+            f"binding_id {binding_id!r} not found in registry",
+        )
+
     def default_binding(
         self,
         *,
@@ -518,6 +628,7 @@ class BindingRegistry:
     # Writer Implementation
     # -----------------------------------------------------------------------
 
+    @_serialized_write
     def initialize(self) -> None:
         if self._store_file.exists():
             raise BindingRegistryError(
@@ -527,6 +638,7 @@ class BindingRegistry:
         data = {"version": 1, "entries": []}
         self._save_store(data)
 
+    @_serialized_write
     def register(
         self, binding: RuntimeBinding, binding_id: str
     ) -> BindingDescriptor:
@@ -572,6 +684,43 @@ class BindingRegistry:
             runtime_id=binding.runtime_id,
         )
 
+    @_serialized_write
+    def pin_persona_revision(
+        self, binding_id: str, ref: PersonaRevisionRef,
+    ) -> PersonaRevisionRef:
+        """Admin-only, create-once reference pin; never publishes content."""
+        if not isinstance(ref, PersonaRevisionRef):
+            raise TypeError("ref must be PersonaRevisionRef")
+        data = self._load_store()
+        for entry in data["entries"]:
+            if entry["binding_id"] != binding_id:
+                continue
+            if entry["identity"]["persona_id"] != ref.persona_id:
+                raise BindingRegistryError(
+                    RegistryFailureCode.ADMISSION_DENIED,
+                    "Persona revision reference does not match RuntimeBinding",
+                )
+            existing = entry.get("persona_revision_ref")
+            wire = {
+                "persona_id": ref.persona_id,
+                "profile_version": ref.profile_version,
+                "effective_content_digest": ref.effective_content_digest,
+            }
+            if existing is not None:
+                if existing == wire:
+                    return ref
+                raise PersonaRevisionConflict(
+                    "PERSONA_REVISION_CONFLICT: binding already pins a different Persona revision"
+                )
+            entry["persona_revision_ref"] = wire
+            self._save_store(data)
+            return ref
+        raise BindingRegistryError(
+            RegistryFailureCode.BINDING_ID_UNKNOWN,
+            f"binding_id {binding_id!r} not found in registry",
+        )
+
+    @_serialized_write
     def set_default(self, binding_id: str) -> None:
         data = self._load_store()
         found = False
@@ -596,6 +745,7 @@ class BindingRegistry:
 
         self._save_store(data)
 
+    @_serialized_write
     def clear_default(self, environment: RuntimeEnvironment) -> None:
         data = self._load_store()
         for entry in data["entries"]:

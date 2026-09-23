@@ -12,12 +12,20 @@ from mind_runtime.contracts.scope import Scope
 class ExpressionContextKind(StrEnum):
     ACTION = "action"
     FACT = "fact"
+    COGNITIVE_MEANING = "cognitive_meaning"
     INTERNAL_STATE = "internal_state"
     POLICY_CONSTRAINT = "policy_constraint"
     PERSONA_STYLE = "persona_style"
     HISTORY = "history"
     PRIOR_EXPRESSION = "prior_expression"
     REWRITE_GUIDANCE = "rewrite_guidance"
+    SURFACE_GUIDANCE = "surface_guidance"
+    SURFACE_CONTROL = "surface_control"
+
+
+class ExpressionMode(StrEnum):
+    LEGACY = "LEGACY"
+    SURFACE_V1 = "SURFACE_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +197,9 @@ class ExpressionAttemptTrace:
     attempt: int
     disposition: ExpressionDisposition | None
     reason_codes: tuple[str, ...]
+    surface_controls_ref: str | None = None
+    expression_map_ref: str | None = None
+    qualitative_guidance: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in ("attempt_id", "context_id", "render_id"):
@@ -201,6 +212,15 @@ class ExpressionAttemptTrace:
             raise ValueError("disposition must be an ExpressionDisposition or None")
         for reason_code in self.reason_codes:
             require_non_empty(reason_code, "reason_codes entries")
+        if self.surface_controls_ref is not None:
+            require_non_empty(self.surface_controls_ref, "surface_controls_ref")
+        if self.expression_map_ref is not None:
+            require_non_empty(self.expression_map_ref, "expression_map_ref")
+        for pair in self.qualitative_guidance:
+            if not isinstance(pair, tuple) or len(pair) != 2:
+                raise ValueError("qualitative_guidance entries must be (dimension, band) pairs")
+            require_non_empty(pair[0], "qualitative_guidance dimension")
+            require_non_empty(pair[1], "qualitative_guidance band")
 
 
 @dataclass(frozen=True, slots=True)

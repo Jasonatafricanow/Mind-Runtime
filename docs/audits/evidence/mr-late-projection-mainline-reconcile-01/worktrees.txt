@@ -1,0 +1,59 @@
+worktree C:/projects/mind-runtime-main-merge
+HEAD 17772842aaffd44c4ff1a643e9fa4621fa9e6652
+branch refs/heads/main
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-daily-longitudinal-harness-01
+HEAD 08cca45b7224261ef00a7c5077928f25c7531bbb
+branch refs/heads/w/mr-affect-longitudinal-temporal-structure-02
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-existing-state-repair
+HEAD 7e9119fc582567fc6ad104c55f25e14a3bf1fa05
+branch refs/heads/w/mr-affect-existing-state-repair
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-position-research
+HEAD 7e9119fc582567fc6ad104c55f25e14a3bf1fa05
+branch refs/heads/w/mr-affect-position-research
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-affective-internalization-contract
+HEAD 7e9119fc582567fc6ad104c55f25e14a3bf1fa05
+branch refs/heads/w/mr-affective-internalization-contract
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-baseline-reconcile-02
+HEAD 94348a3cf1c3054c3d150a1c92f2007dd8fb7d0a
+branch refs/heads/w/mr-baseline-reconcile-02
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-cognitive-loop-audit
+HEAD 7e9119fc582567fc6ad104c55f25e14a3bf1fa05
+branch refs/heads/w/mr-cognitive-loop-audit
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-late-projection-mainline-reconcile-01
+HEAD 6e027cdca5a947ee4537aa36a2702c9b86195b8c
+branch refs/heads/w/mr-late-projection-mainline-reconcile-01
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-reality-eligibility-replay-stability-01
+HEAD 14154a52848906b67ad200ce39f0094b2d06e0e5
+branch refs/heads/w/mr-reality-eligibility-replay-stability-01
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-reality-input-hardening-01
+HEAD a1005d9b6d30267ba8776dfce171cbcba8afd423
+branch refs/heads/w/mr-reality-input-hardening-01
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-soul-architecture-review
+HEAD 7e9119fc582567fc6ad104c55f25e14a3bf1fa05
+branch refs/heads/w/mr-soul-architecture-review
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/mr-statebar-reuse-01
+HEAD bac449f9163b2f6b5b8ab3e78bd9b850a733f380
+branch refs/heads/w/mr-statebar-reuse-01
+
+worktree C:/projects/mind-runtime-main-merge/.worktrees/statebar-mr-binding-01
+HEAD a7fb24d491f0f3917c3fa2e5bcd0c7e6689849d8
+branch refs/heads/w/statebar-mr-binding-01
+
+worktree C:/projects/mr-late-projection-01-w1
+HEAD d1cd5ab2f28867f76f9de74c4f6d04813753fa72
+branch refs/heads/w/mr-late-projection-01-w1
+
+worktree C:/projects/w/mr-surface-affect-goldens-01
+HEAD 17772842aaffd44c4ff1a643e9fa4621fa9e6652
+branch refs/heads/w/mr-surface-affect-goldens-01

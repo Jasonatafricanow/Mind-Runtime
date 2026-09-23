@@ -1,0 +1,4 @@
+6e027cdca5a947ee4537aa36a2702c9b86195b8c feat: preserve accepted appraisal in deterministic projection journal
+f3196ebab35e2bcd9d4c4b1f972c70b7f0ebaf62 feat: accept bounded open event kinds in vendor providers
+2a2af13041bb0e676d13f2877816dfdfdb0a4d82 docs(adr): accept ADR-0027 late-bound appraisal projection
+17772842aaffd44c4ff1a643e9fa4621fa9e6652 docs(architecture): document StateBar integration rationale and experiment route

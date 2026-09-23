@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from dataclasses import replace as _replace
 from datetime import datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
+from typing import Any
 
 from mind_runtime.contracts import (
     ActionDecision,
@@ -23,7 +25,9 @@ from mind_runtime.contracts import (
     EmotionalTransitionInput,
     EmotionalTransitionResult,
     Evidence,
+    ExpressionContextKind,
     ExpressionDisposition,
+    ExpressionGuardInput,
     ExpressionOutcome,
     Intent,
     IntentEngineInput,
@@ -39,11 +43,21 @@ from mind_runtime.contracts import (
     Situation,
     StateTransition,
     SyncFields,
+    SurfaceProjectionPort,
     TurnCheckpoint,
     TurnProjection,
     TurnStage,
 )
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol, TelemetryStage
+from mind_runtime.contracts.surface import SurfaceProjectionResult
+from mind_runtime.surface import project_surface_for_cognition
+from mind_runtime.contracts.late_projection import (
+    ApplicationReceipt,
+    ApplicationStatus,
+    ProjectionStatus,
+    application_identity,
+    digest,
+)
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import EventEffectRule
 from mind_runtime.emotional_transition.factory import (
@@ -189,6 +203,9 @@ class _Turn:
     decision_context: DecisionContext | None
     expression_outcome: ExpressionOutcome | None
     action_receipt: ActionReceipt | None
+    surface: SurfaceProjectionResult | None = None
+    surface_handoff_request_id: str | None = None
+    surface_guard_accepted: bool = False
 
 
 def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None:
@@ -216,6 +233,8 @@ def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None
 
 class TurnOrchestrator:
     """Wires the full Product Slice lifecycle with injectable typed ports."""
+
+    surface_projection_port: SurfaceProjectionPort | None = None
 
     def __init__(
         self,
@@ -254,7 +273,11 @@ class TurnOrchestrator:
         slow_plasticity_writer: SlowPlasticityWriter | None = None,
         telemetry_sink: TelemetrySinkProtocol | None = None,
         turn_admission: RuntimeTurnAdmission | None = None,
+        surface_projection_port: SurfaceProjectionPort | None = None,
+        surface_delivery_backend: Any = None,
     ) -> None:
+        self.surface_projection_port = surface_projection_port
+        self._surface_delivery_backend = surface_delivery_backend
         self._clock = clock
         self._runtime_id = runtime_id
         self._trace = trace
@@ -273,7 +296,7 @@ class TurnOrchestrator:
         if effective_state is None:
             registry = definitions or StateDefinitionRegistry()
             effective_state = ResolverEffectiveStatePort(
-                resolver=EffectiveStateResolver(definitions=registry)
+                resolver=EffectiveStateResolver(definitions=registry), runtime_id=self._runtime_id
             )
         self.effective_state = effective_state
         self._definitions = definitions or StateDefinitionRegistry()
@@ -457,6 +480,107 @@ class TurnOrchestrator:
         if self._turn is None:
             return None
         return self._turn.action_receipt
+
+    def surface_handoff_request(self):
+        """Read the committed C7 request for the active SURFACE_V1 turn."""
+        turn = self._require_turn()
+        request_id = turn.surface_handoff_request_id
+        if request_id is None or self._surface_delivery_backend is None:
+            return None
+        from mind_runtime.delivery.surface_handoff import recover_admitted_surface_handoff
+
+        return recover_admitted_surface_handoff(
+            self._surface_delivery_backend, request_id,
+            origin_runtime_id=self._runtime_id, scope=turn.interaction.scope,
+        )
+
+    def guard_surface_provider_prose(self, prose: str):
+        """Guard Body prose after durable handoff and before external delivery."""
+        from mind_runtime.delivery.state import DeliveryLifecycleState
+
+        turn = self._require_turn()
+        turn.surface_guard_accepted = False
+        request = self.surface_handoff_request()
+        if request is None or turn.decision_context is None or not isinstance(prose, str):
+            raise ValueError("SURFACE_GUARD_UNAVAILABLE")
+        context = turn.decision_context
+        result = self.expression_guard.guard(ExpressionGuardInput(
+            draft_id=f"draft-{context.context_id}",
+            decision_context=context, expression=prose, attempt=context.attempt,
+        ))
+        if (
+            result.scope != context.scope
+            or result.origin_runtime_id != context.origin_runtime_id
+            or result.expression != prose
+        ):
+            raise ValueError("SURFACE_GUARD_LINEAGE_MISMATCH")
+        row = self._surface_delivery_backend.get_durable_request(request.request_id)
+        if row.lifecycle_state is DeliveryLifecycleState.PENDING:
+            self._surface_delivery_backend.set_lifecycle_state(
+                request.request_id, DeliveryLifecycleState.IN_FLIGHT, at=self._clock.now()
+            )
+        elif row.lifecycle_state is not DeliveryLifecycleState.IN_FLIGHT:
+            raise ValueError("SURFACE_GUARD_REQUEST_NOT_IN_FLIGHT")
+        attempt = self._surface_delivery_backend.increment_attempt(
+            request.request_id, at=self._clock.now()
+        )
+        self._surface_delivery_backend.record_attempt(
+            attempt_id=f"{request.surface_handoff.logical_attempt_id}-physical-{attempt}",
+            request_id=request.request_id,
+            attempt=attempt, started_at=self._clock.now(), ended_at=self._clock.now(),
+            outcome=(DeliveryLifecycleState.IN_FLIGHT
+                     if result.disposition is ExpressionDisposition.ACCEPT
+                     else DeliveryLifecycleState.REJECTED),
+            provider_receipt_ref=None,
+            reason_codes=("guard_accept",) if result.disposition is ExpressionDisposition.ACCEPT
+            else tuple(result.violations),
+        )
+        turn.surface_guard_accepted = result.disposition is ExpressionDisposition.ACCEPT
+        return result
+
+    def acknowledge_surface_delivery(self) -> None:
+        """Record operational acknowledgement; never create experiential evidence."""
+        from mind_runtime.contracts import DeliveryReceipt
+        from mind_runtime.delivery.state import DeliveryLifecycleState
+
+        turn = self._require_turn()
+        request = self.surface_handoff_request()
+        if request is None:
+            return
+        if not turn.surface_guard_accepted:
+            raise ValueError("SURFACE_GUARD_NOT_ACCEPTED")
+        row = self._surface_delivery_backend.get_durable_request(request.request_id)
+        if row.lifecycle_state is DeliveryLifecycleState.ACCEPTED:
+            return
+        if row.lifecycle_state is not DeliveryLifecycleState.IN_FLIGHT:
+            raise ValueError("SURFACE_DELIVERY_NOT_IN_FLIGHT")
+        now = self._clock.now()
+        receipt_id = f"delivery-receipt-{request.request_id}"
+        receipt = DeliveryReceipt(
+            receipt_id=receipt_id, scope=request.scope,
+            origin_runtime_id=request.origin_runtime_id, message_id=request.message_id,
+            delivery_status=DeliveryStatus.SENT, delivered_at=now,
+            sync=SyncFields(request.scope, request.origin_runtime_id, receipt_id, 1,
+                            f"idem-{receipt_id}"),
+        )
+        self._surface_delivery_backend.record_receipt(
+            receipt, request_id=request.request_id, provider_receipt_ref=None,
+            provider_message_ref=None, attempt=row.attempt_count,
+        )
+        self._surface_delivery_backend.set_lifecycle_state(
+            request.request_id, DeliveryLifecycleState.ACCEPTED, at=now
+        )
+        action_receipt_id = f"receipt-{turn.interaction.interaction_id}"
+        turn.action_receipt = ActionReceipt(
+            receipt_id=action_receipt_id, scope=turn.interaction.scope,
+            origin_runtime_id=self._runtime_id,
+            action_intent_id=turn.intent.intent_id,
+            delivery_status=DeliveryStatus.SENT, outcome=None, received_at=now,
+            sync=SyncFields(turn.interaction.scope, self._runtime_id,
+                            action_receipt_id, 1, f"idem-{action_receipt_id}"),
+        )
+        if self._receipts is not None:
+            self._receipts.record(turn.action_receipt)
 
     @property
     def projected(self) -> ProjectedMindState | None:
@@ -861,6 +985,10 @@ class TurnOrchestrator:
             scope=turn.interaction.scope,
             clock=now,
         )
+        if self._persona is not None:
+            if situation.persona_id not in (None, self._persona.persona_id):
+                raise ValueError("Situation Persona conflicts with turn Persona")
+            situation = _replace(situation, persona_id=self._persona.persona_id)
         historical_context = self.historical_context.read(
             interaction_id=turn.interaction.interaction_id,
             context=situation,
@@ -935,20 +1063,34 @@ class TurnOrchestrator:
         else:
             transition_result = self.emotional_transition.transition(transition_input)
             turn.slow_decisions = ()
+        projected = transition_result.projected
+        turn.transition_result = transition_result
+        turn.projected = projected
+        surface_result = project_surface_for_cognition(
+            surface_port=self.surface_projection_port,
+            persona=self._persona,
+            projected=projected,
+            runtime_id=self._runtime_id,
+            scope=projected.scope,
+            interaction_or_tick_ref=f"interaction:{turn.interaction.interaction_id}",
+        )
+        turn.surface = surface_result
         intent_result = self.intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=turn.interaction.interaction_id,
                 scope=turn.interaction.scope,
                 origin_runtime_id=self._runtime_id,
                 context=situation,
-                projected=transition_result.projected,
+                projected=projected,
                 accepted_events=transition_result.accepted_events,
                 clock=now,
+                surface=surface_result,
+                persona_version=self._persona.version if self._persona is not None else None,
+                persona_content_digest=(
+                    self._persona.persona_content_digest if self._persona is not None else None
+                ),
             )
         )
-        projected = transition_result.projected
-        turn.transition_result = transition_result
-        turn.projected = projected
         for candidate in intent_result.candidates:
             if candidate.scope != turn.interaction.scope:
                 raise ValueError("candidate Intent scope must match interaction scope")
@@ -1076,6 +1218,9 @@ class TurnOrchestrator:
         # config has zero agent.slow.* definitions).
         slow_scope = self._derive_slow_scope(turn)
         slow_state_records = self._read_slow_state_records(slow_scope)
+        compiler_mode = "LEGACY"
+        if hasattr(self.decision_context_compiler, "_config"):
+            compiler_mode = getattr(self.decision_context_compiler._config, "mode", "LEGACY")
         compiler_input = DecisionContextCompilerInput(
             interaction_id=turn.interaction.interaction_id,
             scope=turn.interaction.scope,
@@ -1092,6 +1237,13 @@ class TurnOrchestrator:
             rewrite_reason_codes=(),
             slow_state_records=slow_state_records,
             state_definitions=self._definitions,
+            accepted_appraisals=transition_result.accepted_appraisals,
+            surface=getattr(turn, "surface", None),
+            persona_version=self._persona.version if self._persona is not None else None,
+            persona_content_digest=(
+                self._persona.persona_content_digest if self._persona is not None else None
+            ),
+            mode=compiler_mode,
         )
         context, compile_trace = self.decision_context_compiler.compile(compiler_input)
         turn.decision_context = context
@@ -1107,6 +1259,69 @@ class TurnOrchestrator:
             ref=compile_trace.trace_id,
             at=now,
         )
+
+        if compiler_mode == "SURFACE_V1":
+            import hashlib
+            from mind_runtime.delivery import DeliveryRequest, SurfaceHandoffProvenance
+            from mind_runtime.delivery.state import DeliveryLifecycleState
+            from mind_runtime.expression.expression_map import (
+                CANDIDATE_MAP_DIGEST, CANDIDATE_MAP_ID, CANDIDATE_MAP_VERSION,
+            )
+
+            if self._surface_delivery_backend is None or surface_result is None:
+                raise ValueError("SURFACE_V1 requires durable C7 handoff and Surface")
+            if not surface_result.is_available:
+                raise ValueError("SURFACE_V1 cannot hand off unavailable Surface")
+            rendered = self.context_renderer.render(context)
+            guidance = tuple(sorted(
+                (item.key, item.value) for item in context.expression_context
+                if item.kind is ExpressionContextKind.SURFACE_GUIDANCE
+            ))
+            controls = surface_result.controls
+            handoff_id = f"surface-handoff-{turn.interaction.interaction_id}"
+            provenance = SurfaceHandoffProvenance(
+                context_id=context.context_id,
+                intent_id=intent.intent_id,
+                action_type=permission.action_type,
+                policy_id=selected_policy_result.policy_id,
+                policy_constraints=tuple(permission.constraints),
+                controls_id=controls["controls_id"],
+                recipe_ref=(
+                    f"{controls['recipe_id']}:{controls['recipe_version']}:{controls['recipe_digest']}"
+                ),
+                expression_map_ref=(
+                    f"{CANDIDATE_MAP_ID}:{CANDIDATE_MAP_VERSION}:{CANDIDATE_MAP_DIGEST}"
+                ),
+                qualitative_guidance=guidance,
+                intent_surface_use_ref=(
+                    intent.surface_use.trace_id if intent.surface_use is not None else "none"
+                ),
+                render_id=rendered.render_id,
+                logical_attempt_id=f"provider-attempt-{handoff_id}",
+                envelope_digest=hashlib.sha256(rendered.text.encode("utf-8")).hexdigest(),
+            )
+            request = DeliveryRequest(
+                request_id=handoff_id,
+                message_id=handoff_id,
+                scope=turn.interaction.scope,
+                origin_runtime_id=self._runtime_id,
+                channel="body_provider_context",
+                target="body",
+                action_type=permission.action_type,
+                payload_bytes=rendered.text.encode("utf-8"),
+                created_at=now,
+                sync=SyncFields(
+                    turn.interaction.scope, self._runtime_id, handoff_id, 1,
+                    f"idem-{handoff_id}",
+                ),
+                surface_handoff=provenance,
+            )
+            self._surface_delivery_backend.record_request(
+                request, lifecycle_state=DeliveryLifecycleState.PENDING
+            )
+            turn.surface_handoff_request_id = handoff_id
+            self.state = TurnState.DISPATCHING
+            return
 
         self.state = TurnState.DISPATCHING
         try:
@@ -1174,6 +1389,129 @@ class TurnOrchestrator:
             # aborts the turn; abort's release is idempotent).
             self._release_admission_lease()
 
+    def _prepare_appraisal_receipts(
+        self, turn: _Turn, slow_plans: tuple[Any, ...]
+    ) -> tuple[ApplicationReceipt, ...]:
+        transition = turn.transition_result
+        if transition is None or not transition.accepted_appraisals:
+            return ()
+        journal = getattr(self.emotional_transition, "projection_journal", None)
+        if journal is None:
+            raise CanonicalPersistenceError("accepted appraisal has no derived journal")
+        receipts: list[ApplicationReceipt] = []
+        for acceptance, projection_ref in zip(
+            transition.accepted_appraisals, transition.projection_refs, strict=True
+        ):
+            if (
+                not acceptance.valid_lineage()
+                or acceptance.interaction_id != turn.interaction.interaction_id
+                or acceptance.candidate.scope != turn.interaction.scope
+                or acceptance.candidate.origin_runtime_id != self._runtime_id
+                or acceptance.projection_scope != transition.projected.scope
+            ):
+                raise CanonicalPersistenceError("cross-interaction appraisal application rejected")
+            projection = journal.get_projection(projection_ref)
+            if (
+                projection is None
+                or journal.get_acceptance(acceptance.acceptance_id) != acceptance
+                or projection.source_appraisal_ref != acceptance.appraisal.appraisal_id
+                or projection.source_candidate_ref != acceptance.candidate.candidate_id
+            ):
+                raise CanonicalPersistenceError(
+                    "projection or accepted source is not journal-resolvable"
+                )
+            if projection.status is not ProjectionStatus.MAPPED:
+                continue
+            projector = getattr(self.emotional_transition, "_projector", None)
+            if projector is None:
+                raise CanonicalPersistenceError("one AppraisalProjector is required")
+            projector.validate_materialized_result(projection, acceptance=acceptance)
+            authorized_effects = tuple(
+                effect for effect in projection.effects
+                if effect.operation == "delta"
+                or any(
+                    decision.candidate.source_event_ref == effect.source_ref
+                    and decision.candidate.target_dimension == effect.dimension
+                    and decision.decision.value == "slow_accept"
+                    for decision in turn.slow_decisions
+                )
+            )
+            accepted_slow = tuple(
+                decision for decision in turn.slow_decisions
+                if decision.decision.value == "slow_accept"
+                and any(
+                    effect.operation == "proposed_value"
+                    and decision.candidate.source_event_ref == effect.source_ref
+                    and decision.candidate.target_dimension == effect.dimension
+                    for effect in projection.effects
+                )
+            )
+            if accepted_slow:
+                if (
+                    self._slow_writer is None
+                    or getattr(self._slow_writer, "_backend", None) is not self._state_backend
+                    or any(
+                        not any(
+                            plan.target_dimension == decision.candidate.target_dimension
+                            and row["source_event_ref"] == decision.candidate.source_event_ref
+                            for plan in slow_plans for row in plan.new_rows
+                        )
+                        for decision in accepted_slow
+                    )
+                ):
+                    raise CanonicalPersistenceError(
+                        "accepted appraisal Slow effect has no shared canonical flush plan"
+                    )
+            if not authorized_effects:
+                continue
+            if not isinstance(self._state_backend, SqliteStateBackend) or not (
+                isinstance(self.commit_marker_store, SqliteCommitMarkerStore)
+                and self.commit_marker_store._conn is self._state_backend.connection
+            ):
+                raise CanonicalPersistenceError(
+                    "appraisal application requires shared canonical transaction and marker"
+                )
+            group_id = "group-" + digest((projection.admission_mode, authorized_effects))
+            receipts.append(
+                ApplicationReceipt(
+                    application_id=application_identity(
+                        self._runtime_id, acceptance.acceptance_id,
+                        group_id, turn.interaction.interaction_id,
+                    ),
+                    projection_id=projection.projection_id,
+                    acceptance_id=acceptance.acceptance_id,
+                    interaction_id=turn.interaction.interaction_id,
+                    effect_group_id=group_id,
+                    runtime_id=self._runtime_id,
+                    scope=transition.projected.scope,
+                    status=ApplicationStatus.EVALUATED,
+                    commit_ref=None,
+                    transition_refs=(),
+                )
+            )
+        return tuple(receipts)
+
+    def _publish_committed_states(
+        self, projected_states: tuple[RuntimeState, ...], slow_plans: tuple[Any, ...]
+    ) -> None:
+        for projected_state in projected_states:
+            for old_id in [
+                state_id for state_id, current in self._canonical.items()
+                if current.scope == projected_state.scope
+                and current.dimension == projected_state.dimension
+            ]:
+                del self._canonical[old_id]
+            self._canonical[projected_state.state_id] = projected_state
+        if slow_plans and hasattr(self._slow_writer, "apply_flush_plan"):
+            slow_states = self._slow_writer.apply_flush_plan(slow_plans)
+            for state in slow_states:
+                for old_id in [
+                    state_id for state_id, current in self._canonical.items()
+                    if current.scope == state.scope and current.dimension == state.dimension
+                ]:
+                    del self._canonical[old_id]
+                self._canonical[state.state_id] = state
+
     def _commit_turn_admitted(self) -> None:
         turn = self._require_turn()
         _mr_thread_trace("ORCH_COMMIT_ENTRY", self, turn.interaction.interaction_id)
@@ -1223,6 +1561,7 @@ class TurnOrchestrator:
             slow_plans: tuple[Any, ...] = ()
             accepted: list[Any] = []
             routable: list[Any] = []
+            appraisal_receipts: tuple[ApplicationReceipt, ...] = ()
 
             try:
                 # 1. Stage slow transient inputs
@@ -1252,13 +1591,22 @@ class TurnOrchestrator:
                         else:
                             slow_plans = ()
 
+                appraisal_receipts = self._prepare_appraisal_receipts(turn, slow_plans)
+
                 # 2. Atomic durable transaction
                 tx_context = (
                     self._state_backend.transaction()
-                    if self._state_backend is not None and hasattr(self._state_backend, "transaction")
+                    if self._state_backend is not None
+                    and hasattr(self._state_backend, "transaction")
                     else nullcontext()
                 )
                 with tx_context:
+                    if appraisal_receipts:
+                        assert isinstance(self._state_backend, SqliteStateBackend)
+                        for receipt in appraisal_receipts:
+                            self._state_backend.stage_application_receipt(
+                                _replace(receipt, status=ApplicationStatus.PENDING)
+                            )
                     if self._state_backend is not None:
                         for projected_state in projected_states:
                             self._persist_state_idempotent(projected_state)
@@ -1308,38 +1656,57 @@ class TurnOrchestrator:
                                 "was not recorded (storage failure); refusing to "
                                 "report a successful admission (MR-RUNTIME-05 §10)"
                             )
+                    if appraisal_receipts:
+                        assert isinstance(self._state_backend, SqliteStateBackend)
+                        committed_refs = tuple(state.state_id for state in projected_states)
+                        committed_refs += tuple(plan.state.state_id for plan in slow_plans)
+                        for receipt in appraisal_receipts:
+                            self._state_backend.commit_application_receipt(
+                                _replace(
+                                    receipt,
+                                    status=ApplicationStatus.COMMITTED,
+                                    commit_ref=f"commit:{turn.interaction.interaction_id}",
+                                    transition_refs=committed_refs,
+                                )
+                            )
 
             except BaseException as exc:
+                for receipt in appraisal_receipts:
+                    aborted = _replace(receipt, status=ApplicationStatus.ABORTED)
+                    self._trace.record(
+                        turn.interaction.interaction_id,
+                        "application_aborted",
+                        ref=aborted.application_id,
+                        at=self._clock.now(),
+                    )
                 if self._slow_writer is not None and slow_scope is not None:
                     if hasattr(self._slow_writer, "discard_pending"):
                         self._slow_writer.discard_pending(slow_scope)
                 if not isinstance(exc, CanonicalPersistenceError):
                     raise CanonicalPersistenceError(
-                        f"atomic cognitive admission failed for {turn.interaction.interaction_id}: {exc}"
+                        "atomic cognitive admission failed for "
+                        f"{turn.interaction.interaction_id}: {exc}"
                     ) from exc
                 raise
 
-            # 3. Post-commit memory advance (ONLY reached if transaction committed!)
-            for projected_state in projected_states:
-                for old_id in [
-                    state_id
-                    for state_id, current in self._canonical.items()
-                    if current.scope == projected_state.scope
-                    and current.dimension == projected_state.dimension
-                ]:
-                    del self._canonical[old_id]
-                self._canonical[projected_state.state_id] = projected_state
-
-            if slow_plans and hasattr(self._slow_writer, "apply_flush_plan"):
-                slow_states = self._slow_writer.apply_flush_plan(slow_plans)
-                for s in slow_states:
-                    for old_id in [
-                        state_id
-                        for state_id, current in self._canonical.items()
-                        if current.scope == s.scope and current.dimension == s.dimension
-                    ]:
-                        del self._canonical[old_id]
-                    self._canonical[s.state_id] = s
+            # 3. Publish only after COMMIT. A publication failure cannot undo
+            # the durable receipt; reload from the committed backend and expose
+            # an explicit recovery event to the caller/audit trace.
+            try:
+                self._publish_committed_states(projected_states, slow_plans)
+            except Exception as exc:
+                self._refresh_canonical_from_backend()
+                self.state = TurnState.COMMITTED
+                self._trace.record(
+                    turn.interaction.interaction_id,
+                    "post_commit_publication_failed",
+                    outcome="reloaded_from_canonical",
+                    at=self._clock.now(),
+                )
+                raise CanonicalPersistenceError(
+                    f"post-commit publication failed for {turn.interaction.interaction_id}; "
+                    "canonical state reloaded from durable commit"
+                ) from exc
 
             # Telemetry (best-effort, fail-open)
             if self._telemetry_sink is not None:

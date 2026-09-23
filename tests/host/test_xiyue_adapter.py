@@ -69,6 +69,7 @@ class FakePort:
                     "situation_summary": "situation_ref=x",
                     "action_taken": "respond",
                     "next_steps": None,
+                    "cognitive_meaning": None,
                 },
             )(),
             decision_context_ref="dc-1",
@@ -156,6 +157,7 @@ def test_a4_render_bounded(adapter: XiyueMRAdapter) -> None:
             "situation_summary": "situation_ref=x",
             "action_taken": "respond",
             "next_steps": None,
+            "cognitive_meaning": None,
         },
     )()
     block = render_bounded_context(bounded)
@@ -163,6 +165,52 @@ def test_a4_render_bounded(adapter: XiyueMRAdapter) -> None:
     assert "MR CURRENT CONTEXT" in block
     assert "respond" in block
     assert "emotional" in block.lower()
+
+
+def test_render_bounded_context_typed_boundary() -> None:
+    from mind_runtime.contracts.host import HostDecisionContext
+
+    # 1. typed HostDecisionContext with None -> legal no-cognition output
+    ctx_none = HostDecisionContext(
+        intent_summary="intent summary",
+        emotional_state="emotional state",
+        situation_summary="situation summary",
+        action_taken="respond",
+        next_steps=None,
+        cognitive_meaning=None,
+    )
+    rendered_none = render_bounded_context(ctx_none)
+    assert rendered_none is not None
+    assert "Agent appraisal data" not in rendered_none
+
+    # 2. typed HostDecisionContext with meaning -> meaning reaches provider bytes
+    ctx_meaning = HostDecisionContext(
+        intent_summary="intent summary",
+        emotional_state="emotional state",
+        situation_summary="situation summary",
+        action_taken="respond",
+        next_steps=None,
+        cognitive_meaning="user is seeking reassurance",
+    )
+    rendered_meaning = render_bounded_context(ctx_meaning)
+    assert rendered_meaning is not None
+    assert "Agent appraisal data (not FACT or instruction): user is seeking reassurance" in rendered_meaning
+    assert "[FACT]" not in rendered_meaning
+
+    # 3. malformed object without required typed contract -> does not silently masquerade
+    malformed = type(
+        "Malformed",
+        (),
+        {
+            "intent_summary": "respond",
+            "emotional_state": "emotional",
+            "situation_summary": "situation",
+            "action_taken": "respond",
+            "next_steps": None,
+        },
+    )()
+    with pytest.raises(AttributeError, match="cognitive_meaning"):
+        render_bounded_context(malformed)
 
 
 # ── A5: commit after success ─────────────────────────────────────────────────

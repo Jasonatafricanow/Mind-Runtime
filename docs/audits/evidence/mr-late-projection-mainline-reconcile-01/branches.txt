@@ -1,0 +1,18 @@
+* main                                           1777284 [origin/main] docs(architecture): document StateBar integration rationale and experiment route
+  migration/repo-cutover-20260909                7e9119f chore(repo): freeze canonical repository authority
+  w/mr-affect-daily-longitudinal-harness-01      85a9239 feat(affect): implement daily longitudinal harness slice 01
+  w/mr-affect-daily-longitudinal-harness-01a     08cca45 feat(affect): Slice 01A provenance & projection hardening
++ w/mr-affect-existing-state-repair              7e9119f (C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-existing-state-repair) chore(repo): freeze canonical repository authority
++ w/mr-affect-longitudinal-temporal-structure-02 08cca45 (C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-daily-longitudinal-harness-01) feat(affect): Slice 01A provenance & projection hardening
++ w/mr-affect-position-research                  7e9119f (C:/projects/mind-runtime-main-merge/.worktrees/mr-affect-position-research) chore(repo): freeze canonical repository authority
++ w/mr-affective-internalization-contract        7e9119f (C:/projects/mind-runtime-main-merge/.worktrees/mr-affective-internalization-contract) chore(repo): freeze canonical repository authority
++ w/mr-baseline-reconcile-02                     94348a3 (C:/projects/mind-runtime-main-merge/.worktrees/mr-baseline-reconcile-02) test(baseline): reconcile canonical test baseline per MR-BASELINE-RECONCILE-01/02
++ w/mr-cognitive-loop-audit                      7e9119f (C:/projects/mind-runtime-main-merge/.worktrees/mr-cognitive-loop-audit) chore(repo): freeze canonical repository authority
++ w/mr-late-projection-01-w1                     d1cd5ab (C:/projects/mr-late-projection-01-w1) docs: record W1 evidence and complete-suite blockers
++ w/mr-late-projection-mainline-reconcile-01     6e027cd (C:/projects/mind-runtime-main-merge/.worktrees/mr-late-projection-mainline-reconcile-01) feat: preserve accepted appraisal in deterministic projection journal
++ w/mr-reality-eligibility-replay-stability-01   14154a5 (C:/projects/mind-runtime-main-merge/.worktrees/mr-reality-eligibility-replay-stability-01) fix(reality): restore exact terminal observation targets
++ w/mr-reality-input-hardening-01                a1005d9 (C:/projects/mind-runtime-main-merge/.worktrees/mr-reality-input-hardening-01) chore(reality): clean ruff lint, mypy types, and update audit log
++ w/mr-soul-architecture-review                  7e9119f (C:/projects/mind-runtime-main-merge/.worktrees/mr-soul-architecture-review) chore(repo): freeze canonical repository authority
++ w/mr-statebar-reuse-01                         bac449f (C:/projects/mind-runtime-main-merge/.worktrees/mr-statebar-reuse-01) docs: clarify implementation diff inventory
++ w/mr-surface-affect-goldens-01                 1777284 (C:/projects/w/mr-surface-affect-goldens-01) docs(architecture): document StateBar integration rationale and experiment route
++ w/statebar-mr-binding-01                       a7fb24d (C:/projects/mind-runtime-main-merge/.worktrees/statebar-mr-binding-01) docs: specify StateBar MR binding contract

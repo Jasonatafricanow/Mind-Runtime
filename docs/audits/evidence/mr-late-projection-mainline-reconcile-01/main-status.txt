@@ -1,0 +1,6 @@
+?? docs/architecture/MR_AFFECT_RUNTIME_CONTRACT_01.md
+?? docs/architecture/MR_REALITY_OBSERVATION_CONTRACT_01.md
+?? docs/audits/MR_AFFECT_DYNAMIC_HARNESS_IMPLEMENTATION_AUDIT_2026-09-22.md
+?? docs/audits/MR_AFFECT_RUNTIME_CONTRACT_01_R1_REPORT.md
+?? docs/audits/MR_BASELINE_RECONCILE_01_DISCOVERY.md
+?? docs/audits/evidence/

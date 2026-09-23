@@ -93,6 +93,19 @@ class DaemonPass:
         request = row.request
         state = row.lifecycle_state
         attempt_count = row.attempt_count
+        if request.surface_handoff is not None:
+            # This C7 request is a durable Soul-to-Body provider envelope.
+            # The generic carrier daemon must never send its prompt as a
+            # user-facing delivery or recompute cognition on retry. Body/Host
+            # consumes the exact persisted request through the handoff seam.
+            return DaemonOutcome(
+                request_id=request.request_id,
+                decision_kind=RetryDecisionKind.DO_NOT_RETRY,
+                final_state=state,
+                attempt=attempt_count,
+                reason_code="surface_body_handoff_owned",
+                provider_receipt_ref=row.last_provider_receipt_ref,
+            )
         decision = compute_retry_decision(state, attempt_count, self.retry_budget)
         reason_code = decision.reason_code
         provider_receipt_ref: str | None = row.last_provider_receipt_ref

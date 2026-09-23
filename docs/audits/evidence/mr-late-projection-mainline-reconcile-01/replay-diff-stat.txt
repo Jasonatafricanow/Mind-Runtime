@@ -1,0 +1,13 @@
+ docs/adr/0027-late-bound-appraisal-projection.md   |    4 +-
+ src/mind_runtime/contracts/late_projection.py      |  143 +
+ src/mind_runtime/emotional_transition/appraisal.py |  193 +-
+ src/mind_runtime/emotional_transition/effects.py   |  176 +-
+ .../emotional_transition/glm_provider.py           |  125 +-
+ .../emotional_transition/projection_journal.py     |  261 ++
+ .../emotional_transition/zen_provider.py           |   84 +-
+ .../test_open_vendor_vocabulary.py                 |  156 +
+ tests/late_projection/fixtures/legacy-effects.json | 3887 ++++++++++++++++++++
+ tests/late_projection/test_foundation.py           |  279 ++
+ tests/late_projection/test_journal_supersession.py |  149 +
+ tests/late_projection/test_legacy_equivalence.py   |  216 ++
+ 12 files changed, 5505 insertions(+), 168 deletions(-)

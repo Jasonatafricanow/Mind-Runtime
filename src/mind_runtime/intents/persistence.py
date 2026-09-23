@@ -16,6 +16,7 @@ from mind_runtime.contracts import (
     ScopeDomain,
     SyncFields,
 )
+from mind_runtime.contracts.intent import IntentScoreContribution, IntentScoreTrace
 
 type _IntentKey = tuple[Scope, str]
 
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS intents (
     state_refs TEXT NOT NULL,
     status TEXT NOT NULL,
     sync_idem_key TEXT NOT NULL,
+    surface_use TEXT,
     PRIMARY KEY ({_PRIMARY_IDENTITY}),
     UNIQUE ({_SCOPE_SQL}, intent_id, sync_idem_key)
 );
@@ -158,7 +160,55 @@ def _intent_from_row(row: sqlite3.Row) -> Intent:
             version,
             row["sync_idem_key"],
         ),
+        surface_use=_surface_use_from_json(row["surface_use"], scope)
+        if "surface_use" in row.keys() else None,
     )
+
+
+def _surface_use_to_json(trace: IntentScoreTrace | None) -> str | None:
+    if trace is None:
+        return None
+    return json.dumps({
+        "trace_id": trace.trace_id, "rule_id": trace.rule_id,
+        "intent_id": trace.intent_id,
+        "contributions": [
+            [part.source_kind, part.source_ref, part.amount] for part in trace.contributions
+        ],
+        "unclamped_score": trace.unclamped_score,
+        "final_strength": trace.final_strength,
+        "admitted": trace.admitted, "reason_codes": list(trace.reason_codes),
+        "created_at": trace.created_at.isoformat(),
+        "surface_controls_ref": trace.surface_controls_ref,
+        "surface_dependency_digest": trace.surface_dependency_digest,
+        "overlap_validation_ref": trace.overlap_validation_ref,
+        "surface_weights": [list(pair) for pair in trace.surface_weights],
+        "surface_recipe_ref": trace.surface_recipe_ref,
+        "ruleset_ref": trace.ruleset_ref,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _surface_use_from_json(raw: str | None, scope: Scope) -> IntentScoreTrace | None:
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("evidence must be an object")
+        return IntentScoreTrace(
+            trace_id=data["trace_id"], scope=scope,
+            rule_id=data["rule_id"], intent_id=data["intent_id"],
+            contributions=tuple(IntentScoreContribution(*part) for part in data["contributions"]),
+            unclamped_score=data["unclamped_score"], final_strength=data["final_strength"],
+            admitted=data["admitted"], reason_codes=tuple(data["reason_codes"]),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            surface_controls_ref=data["surface_controls_ref"],
+            surface_dependency_digest=data["surface_dependency_digest"],
+            overlap_validation_ref=data["overlap_validation_ref"],
+            surface_weights=tuple(tuple(pair) for pair in data["surface_weights"]),
+            surface_recipe_ref=data["surface_recipe_ref"], ruleset_ref=data["ruleset_ref"],
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid durable Intent Surface-use evidence") from exc
 
 
 def _transition_from_row(row: sqlite3.Row) -> IntentTransition:
@@ -317,6 +367,8 @@ class SqliteIntentBackend:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
+        if "surface_use" not in {row["name"] for row in self._conn.execute("PRAGMA table_info('intents')")}:
+            self._conn.execute("ALTER TABLE intents ADD COLUMN surface_use TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -424,8 +476,8 @@ class SqliteIntentBackend:
             "INSERT INTO intents ("
             f"{_SCOPE_SQL}, intent_id, version, origin_runtime_id, kind, strength, "
             "earliest_at, due_at, expires_at, reconsideration_policy, cause_refs, "
-            "state_refs, status, sync_idem_key"
-            f") VALUES ({_SCOPE_PLACEHOLDERS}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "state_refs, status, sync_idem_key, surface_use"
+            f") VALUES ({_SCOPE_PLACEHOLDERS}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 *_scope_values(intent.scope),
                 intent.intent_id,
@@ -441,6 +493,7 @@ class SqliteIntentBackend:
                 _to_json(intent.state_refs),
                 intent.status.value,
                 intent.sync.idempotency_key,
+                _surface_use_to_json(intent.surface_use),
             ),
         )
 

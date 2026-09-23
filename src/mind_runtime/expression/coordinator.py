@@ -8,6 +8,7 @@ from typing import Protocol
 from mind_runtime.contracts import (
     DecisionContext,
     ExpressionAttemptTrace,
+    ExpressionContextKind,
     ExpressionDisposition,
     ExpressionGuardInput,
     ExpressionGuardResult,
@@ -152,6 +153,22 @@ class DeterministicExpressionCoordinator:
         disposition: ExpressionDisposition | None,
         reason_codes: tuple[str, ...],
     ) -> ExpressionAttemptTrace:
+        controls_ref: str | None = None
+        expression_map_ref: str | None = None
+        guidance: list[tuple[str, str]] = []
+        for item in current.expression_context:
+            if item.kind is ExpressionContextKind.SURFACE_GUIDANCE:
+                guidance.append((item.key, item.value))
+                if controls_ref is None and item.source_refs:
+                    controls_ref = item.source_refs[0]
+        if guidance:
+            from mind_runtime.expression.expression_map import (
+                CANDIDATE_MAP_ID,
+                CANDIDATE_MAP_VERSION,
+            )
+
+            expression_map_ref = f"{CANDIDATE_MAP_ID}:{CANDIDATE_MAP_VERSION}"
+
         return ExpressionAttemptTrace(
             attempt_id=f"attempt-{current.context_id}",
             context_id=current.context_id,
@@ -160,6 +177,9 @@ class DeterministicExpressionCoordinator:
             attempt=current.attempt,
             disposition=disposition,
             reason_codes=reason_codes,
+            surface_controls_ref=controls_ref,
+            expression_map_ref=expression_map_ref,
+            qualitative_guidance=tuple(guidance),
         )
 
     @staticmethod

@@ -55,6 +55,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     Situation,
+    SurfaceProjectionPort,
     SyncFields,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
@@ -67,6 +68,7 @@ from mind_runtime.pipeline.ports import AgentFailure
 from mind_runtime.situation.derived import media_photo_cadence_eligible
 from mind_runtime.situation.temporal import daypart
 from mind_runtime.state.persistence import StateBackend
+from mind_runtime.surface import project_surface_for_cognition
 
 TICK_INTERACTION_PREFIX = "cognitive-tick-"
 COUNTER_OBSERVATION_KEY = "system_counter.observed"
@@ -218,6 +220,8 @@ class CognitiveTicker:
     independently of it. The C2.10 turn path stays byte-for-byte frozen.
     """
 
+    surface_projection_port: SurfaceProjectionPort | None = None
+
     def __init__(
         self,
         *,
@@ -232,7 +236,12 @@ class CognitiveTicker:
         projection_scope: Scope | None = None,
         expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
+        surface_projection_port: SurfaceProjectionPort | None = None,
     ) -> None:
+        composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
+        if surface_projection_port is not None and surface_projection_port is not composed_surface_port:
+            raise ValueError("ticker Surface port must be the composed turn Surface authority")
+        self.surface_projection_port = composed_surface_port
         self._orchestrator = orchestrator
         self._persona = persona
         self._intent_lifecycle = intent_lifecycle
@@ -275,6 +284,14 @@ class CognitiveTicker:
             situation=situation,
             now=now,
         )
+        surface_result = project_surface_for_cognition(
+            surface_port=self.surface_projection_port,
+            persona=self._persona,
+            projected=projected,
+            runtime_id=self._runtime_id,
+            scope=projected.scope,
+            interaction_or_tick_ref=f"tick:{interaction_id}",
+        )
         engine_result = self._intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=interaction_id,
@@ -284,6 +301,9 @@ class CognitiveTicker:
                 projected=projected,
                 accepted_events=(),
                 clock=now,
+                surface=surface_result,
+                persona_version=self._persona.version,
+                persona_content_digest=self._persona.persona_content_digest,
             )
         )
         persisted_rows = self._persist_projection(projected)
@@ -683,6 +703,7 @@ class CognitiveTicker:
                 state_rows=self._load_state_rows(),
                 persona_ref=self._persona.persona_id,
                 now=now,
+                accepted_appraisals=transition_result.accepted_appraisals,
             )
         except AgentFailure:
             self._orchestrator.trace.record(
