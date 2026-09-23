@@ -41,6 +41,7 @@ from mind_runtime.contracts import (
     Situation,
     StateTransition,
     SyncFields,
+    SurfaceProjectionPort,
     TurnCheckpoint,
     TurnProjection,
     TurnStage,
@@ -226,6 +227,8 @@ def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None
 class TurnOrchestrator:
     """Wires the full Product Slice lifecycle with injectable typed ports."""
 
+    surface_projection_port: SurfaceProjectionPort | None = None
+
     def __init__(
         self,
         *,
@@ -263,7 +266,9 @@ class TurnOrchestrator:
         slow_plasticity_writer: SlowPlasticityWriter | None = None,
         telemetry_sink: TelemetrySinkProtocol | None = None,
         turn_admission: RuntimeTurnAdmission | None = None,
+        surface_projection_port: SurfaceProjectionPort | None = None,
     ) -> None:
+        self.surface_projection_port = surface_projection_port
         self._clock = clock
         self._runtime_id = runtime_id
         self._trace = trace

@@ -97,6 +97,23 @@ from mind_runtime.contracts.situation import Situation
 from mind_runtime.contracts.slow_state import SlowStateProjection
 from mind_runtime.contracts.state import RuntimeState, StateDefinition, StateDomain, StateValueType
 from mind_runtime.contracts.trace import EvidenceRef, TraceKind, TraceRef
+from mind_runtime.contracts.surface import (
+    DEFERRED_CONTROLS,
+    ENABLED_CONTROLS,
+    SURFACE_INELIGIBLE_PERSONA,
+    SURFACE_MISSING_STATE,
+    SURFACE_NONFINITE,
+    SURFACE_NUMERIC_TYPE,
+    SURFACE_PERSONA_CONTENT_MISMATCH,
+    SURFACE_RANGE,
+    SURFACE_RECIPE_CONTENT_CONFLICT,
+    SURFACE_RECIPE_UNSUPPORTED,
+    SURFACE_SCHEMA_MISMATCH,
+    SurfaceControl,
+    SurfaceProjectionPort,
+    SurfaceProjectionResult,
+    SurfaceProjectionStatus,
+)
 from mind_runtime.contracts.transition import StateTransition, TransitionIntent
 
 __all__ = [
@@ -119,11 +136,13 @@ __all__ = [
     "DISPOSITION_TRAIT_NAMES",
     "DataSensitivity",
     "DecisionContext",
+    "DEFERRED_CONTROLS",
     "DeliveryReceipt",
     "DeliveryStatus",
     "DynamicsPolicy",
     "EmotionalTransitionInput",
     "EmotionalTransitionResult",
+    "ENABLED_CONTROLS",
     "Evidence",
     "EvidenceRef",
     "DecisionContextCompileTrace",
@@ -175,6 +194,19 @@ __all__ = [
     "SyncFields",
     "Syncable",
     "SlowStateProjection",
+    "SURFACE_INELIGIBLE_PERSONA",
+    "SURFACE_MISSING_STATE",
+    "SURFACE_NONFINITE",
+    "SURFACE_NUMERIC_TYPE",
+    "SURFACE_PERSONA_CONTENT_MISMATCH",
+    "SURFACE_RANGE",
+    "SURFACE_RECIPE_CONTENT_CONFLICT",
+    "SURFACE_RECIPE_UNSUPPORTED",
+    "SURFACE_SCHEMA_MISMATCH",
+    "SurfaceControl",
+    "SurfaceProjectionPort",
+    "SurfaceProjectionResult",
+    "SurfaceProjectionStatus",
     "TraceKind",
     "TraceRef",
     "TransitionIntent",

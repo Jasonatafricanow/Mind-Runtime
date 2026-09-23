@@ -16,15 +16,9 @@ def pytest_configure(config: Any) -> None:
 
 @pytest.fixture
 def surface() -> Any:
-    class ProductionSurfaceSeam:
-        def __getattr__(self, name: str) -> Any:
-            msg = (
-                "MISSING_W3_PRODUCTION_SEAM: Surface production adapter intentionally "
-                f"absent; requested {name}"
-            )
-            raise RuntimeError(msg)
+    from mind_runtime.surface import SurfaceProductionAdapter
 
-    return ProductionSurfaceSeam()
+    return SurfaceProductionAdapter()
 
 
 @pytest.fixture

@@ -1,0 +1,69 @@
+"""Mind Runtime Surface Package.
+
+Frozen under ADR-0028.
+Single deterministic Surface projection authority.
+"""
+
+from __future__ import annotations
+
+from mind_runtime.contracts.surface import (
+    DEFERRED_CONTROLS,
+    ENABLED_CONTROLS,
+    SURFACE_INELIGIBLE_PERSONA,
+    SURFACE_MISSING_STATE,
+    SURFACE_NONFINITE,
+    SURFACE_NUMERIC_TYPE,
+    SURFACE_PERSONA_CONTENT_MISMATCH,
+    SURFACE_RANGE,
+    SURFACE_RECIPE_CONTENT_CONFLICT,
+    SURFACE_RECIPE_UNSUPPORTED,
+    SURFACE_SCHEMA_MISMATCH,
+    SurfaceControl,
+    SurfaceProjectionPort,
+    SurfaceProjectionResult,
+    SurfaceProjectionStatus,
+)
+from mind_runtime.surface.adapter import SurfaceProductionAdapter
+from mind_runtime.surface.evaluator import eval_ast, extract_ast_lookups, validate_ast_primitives
+from mind_runtime.surface.projector import DeterministicSurfaceProjector
+from mind_runtime.surface.recipe import (
+    CANDIDATE_RECIPE_DIGEST,
+    CANDIDATE_RECIPE_ID,
+    CANDIDATE_RECIPE_VERSION,
+    MANIFEST,
+    dependency_payload,
+    normalized_persona_content,
+    normalized_recipe,
+    validate_candidate_recipe,
+)
+
+__all__ = [
+    "CANDIDATE_RECIPE_DIGEST",
+    "CANDIDATE_RECIPE_ID",
+    "CANDIDATE_RECIPE_VERSION",
+    "DEFERRED_CONTROLS",
+    "DeterministicSurfaceProjector",
+    "ENABLED_CONTROLS",
+    "MANIFEST",
+    "SURFACE_INELIGIBLE_PERSONA",
+    "SURFACE_MISSING_STATE",
+    "SURFACE_NONFINITE",
+    "SURFACE_NUMERIC_TYPE",
+    "SURFACE_PERSONA_CONTENT_MISMATCH",
+    "SURFACE_RANGE",
+    "SURFACE_RECIPE_CONTENT_CONFLICT",
+    "SURFACE_RECIPE_UNSUPPORTED",
+    "SURFACE_SCHEMA_MISMATCH",
+    "SurfaceControl",
+    "SurfaceProductionAdapter",
+    "SurfaceProjectionPort",
+    "SurfaceProjectionResult",
+    "SurfaceProjectionStatus",
+    "dependency_payload",
+    "eval_ast",
+    "extract_ast_lookups",
+    "normalized_persona_content",
+    "normalized_recipe",
+    "validate_ast_primitives",
+    "validate_candidate_recipe",
+]

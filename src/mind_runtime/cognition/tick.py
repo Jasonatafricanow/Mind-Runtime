@@ -55,6 +55,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     Situation,
+    SurfaceProjectionPort,
     SyncFields,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
@@ -218,6 +219,8 @@ class CognitiveTicker:
     independently of it. The C2.10 turn path stays byte-for-byte frozen.
     """
 
+    surface_projection_port: SurfaceProjectionPort | None = None
+
     def __init__(
         self,
         *,
@@ -232,7 +235,13 @@ class CognitiveTicker:
         projection_scope: Scope | None = None,
         expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
+        surface_projection_port: SurfaceProjectionPort | None = None,
     ) -> None:
+        self.surface_projection_port = (
+            surface_projection_port
+            if surface_projection_port is not None
+            else getattr(orchestrator, "surface_projection_port", None)
+        )
         self._orchestrator = orchestrator
         self._persona = persona
         self._intent_lifecycle = intent_lifecycle
