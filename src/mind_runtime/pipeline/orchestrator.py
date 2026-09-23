@@ -47,6 +47,8 @@ from mind_runtime.contracts import (
     TurnStage,
 )
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol, TelemetryStage
+from mind_runtime.contracts.surface import SurfaceProjectionResult
+from mind_runtime.surface import project_surface_for_cognition
 from mind_runtime.contracts.late_projection import (
     ApplicationReceipt,
     ApplicationStatus,
@@ -199,6 +201,7 @@ class _Turn:
     decision_context: DecisionContext | None
     expression_outcome: ExpressionOutcome | None
     action_receipt: ActionReceipt | None
+    surface: SurfaceProjectionResult | None = None
 
 
 def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None:
@@ -953,20 +956,30 @@ class TurnOrchestrator:
         else:
             transition_result = self.emotional_transition.transition(transition_input)
             turn.slow_decisions = ()
+        projected = transition_result.projected
+        turn.transition_result = transition_result
+        turn.projected = projected
+        surface_result = project_surface_for_cognition(
+            surface_port=self.surface_projection_port,
+            persona=self._persona,
+            projected=projected,
+            runtime_id=self._runtime_id,
+            scope=projection_scope or turn.interaction.scope,
+            interaction_or_tick_ref=f"interaction:{turn.interaction.interaction_id}",
+        )
+        turn.surface = surface_result
         intent_result = self.intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=turn.interaction.interaction_id,
                 scope=turn.interaction.scope,
                 origin_runtime_id=self._runtime_id,
                 context=situation,
-                projected=transition_result.projected,
+                projected=projected,
                 accepted_events=transition_result.accepted_events,
                 clock=now,
+                surface=surface_result,
             )
         )
-        projected = transition_result.projected
-        turn.transition_result = transition_result
-        turn.projected = projected
         for candidate in intent_result.candidates:
             if candidate.scope != turn.interaction.scope:
                 raise ValueError("candidate Intent scope must match interaction scope")

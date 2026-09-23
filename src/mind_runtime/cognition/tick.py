@@ -68,6 +68,7 @@ from mind_runtime.pipeline.ports import AgentFailure
 from mind_runtime.situation.derived import media_photo_cadence_eligible
 from mind_runtime.situation.temporal import daypart
 from mind_runtime.state.persistence import StateBackend
+from mind_runtime.surface import project_surface_for_cognition
 
 TICK_INTERACTION_PREFIX = "cognitive-tick-"
 COUNTER_OBSERVATION_KEY = "system_counter.observed"
@@ -284,6 +285,14 @@ class CognitiveTicker:
             situation=situation,
             now=now,
         )
+        surface_result = project_surface_for_cognition(
+            surface_port=self.surface_projection_port,
+            persona=self._persona,
+            projected=projected,
+            runtime_id=self._runtime_id,
+            scope=self._projection_scope or scope,
+            interaction_or_tick_ref=f"tick:{interaction_id}",
+        )
         engine_result = self._intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=interaction_id,
@@ -293,6 +302,7 @@ class CognitiveTicker:
                 projected=projected,
                 accepted_events=(),
                 clock=now,
+                surface=surface_result,
             )
         )
         persisted_rows = self._persist_projection(projected)

@@ -115,6 +115,9 @@ class IntentScoreTrace:
     admitted: bool
     reason_codes: tuple[str, ...]
     created_at: datetime
+    surface_controls_ref: str | None = None
+    surface_dependency_digest: str | None = None
+    overlap_validation_ref: str | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -134,6 +137,12 @@ class IntentScoreTrace:
         for code in self.reason_codes:
             require_non_empty(code, "reason_codes entries")
         require_aware_utc(self.created_at, "created_at")
+        if self.surface_controls_ref is not None:
+            require_non_empty(self.surface_controls_ref, "surface_controls_ref")
+        if self.surface_dependency_digest is not None:
+            require_non_empty(self.surface_dependency_digest, "surface_dependency_digest")
+        if self.overlap_validation_ref is not None:
+            require_non_empty(self.overlap_validation_ref, "overlap_validation_ref")
 
 
 @dataclass(frozen=True, slots=True)

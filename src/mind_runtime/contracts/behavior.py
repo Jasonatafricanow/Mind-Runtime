@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from typing import Any
+
 from mind_runtime.contracts.appraisal import SemanticEventCandidate
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.intent import Intent
@@ -22,6 +24,7 @@ class IntentEngineInput:
     projected: ProjectedMindState
     accepted_events: tuple[SemanticEventCandidate, ...]
     clock: datetime
+    surface: Any = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -36,6 +39,12 @@ class IntentEngineInput:
                 raise ValueError("accepted event ids must be unique")
             seen.add(event.candidate_id)
         require_aware_utc(self.clock, "clock")
+        if self.surface is not None:
+            if (
+                type(self.surface).__name__ != "SurfaceProjectionResult"
+                or not getattr(type(self.surface), "__module__", "").endswith(".surface")
+            ):
+                raise ValueError("surface must be a SurfaceProjectionResult or None")
 
 
 @dataclass(frozen=True, slots=True)

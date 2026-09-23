@@ -24,6 +24,7 @@ from mind_runtime.contracts.surface import (
     SurfaceProjectionStatus,
 )
 from mind_runtime.surface.adapter import SurfaceProductionAdapter
+from mind_runtime.surface.cognition import project_surface_for_cognition
 from mind_runtime.surface.evaluator import eval_ast, extract_ast_lookups, validate_ast_primitives
 from mind_runtime.surface.projector import DeterministicSurfaceProjector
 from mind_runtime.surface.recipe import (
@@ -31,6 +32,7 @@ from mind_runtime.surface.recipe import (
     CANDIDATE_RECIPE_ID,
     CANDIDATE_RECIPE_VERSION,
     MANIFEST,
+    candidate_recipe,
     dependency_payload,
     normalized_persona_content,
     normalized_recipe,
@@ -45,6 +47,8 @@ __all__ = [
     "DeterministicSurfaceProjector",
     "ENABLED_CONTROLS",
     "MANIFEST",
+    "candidate_recipe",
+    "project_surface_for_cognition",
     "SURFACE_INELIGIBLE_PERSONA",
     "SURFACE_MISSING_STATE",
     "SURFACE_NONFINITE",

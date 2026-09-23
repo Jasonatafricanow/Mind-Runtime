@@ -156,3 +156,488 @@ def test_action_policy_denial_prevents_dispatch_despite_high_controls():
     result = policy.policy(policy_input)
     assert result.decision == ActionDecision.DENY
     assert "intent_expired" in result.reason_codes
+
+
+def _sync(scope: Scope, object_id: str, version: int = 1, runtime_id: str = "fixture-runtime") -> SyncFields:
+    return SyncFields(
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        object_id=object_id,
+        version=version,
+        idempotency_key=f"idem-{object_id}-v{version}",
+    )
+
+
+def _state(
+    dim: str,
+    val: float,
+    ver: int,
+    state_id: str,
+    scope: Scope,
+    now: datetime,
+    runtime_id: str = "fixture-runtime",
+) -> RuntimeState:
+    from mind_runtime.contracts import RuntimeState
+
+    return RuntimeState(
+        state_id=state_id,
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        dimension=dim,
+        value=val,
+        status="active",
+        valid_from=now,
+        valid_until=None,
+        relevant_until=None,
+        last_observed_at=now,
+        evidence_refs=("evidence-1",),
+        transition_refs=(),
+        updated_at=now,
+        version=ver,
+        sync=_sync(scope, state_id, version=ver, runtime_id=runtime_id),
+    )
+
+
+def _projected(
+    states: tuple[RuntimeState, ...],
+    scope: Scope,
+    now: datetime,
+    projection_id: str = "projection:fixture-1",
+    runtime_id: str = "fixture-runtime",
+) -> ProjectedMindState:
+    from mind_runtime.contracts import ProjectedMindState
+
+    return ProjectedMindState(
+        projection_id=projection_id,
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        projected_states=states,
+        sync=_sync(scope, projection_id, runtime_id=runtime_id),
+    )
+
+
+def test_surface_aware_rule_scores_tendency_and_emits_trace():
+    """W3-C: Surface control biases score, emits trace, and attaches controls_id."""
+    from mind_runtime.contracts import IntentEngineInput
+    from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
+    from mind_runtime.surface import SurfaceProductionAdapter
+    from tests.surface.spec_support import sample_candidate
+
+    runtime_id = "fixture-runtime"
+    now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+
+    x = sample_candidate()
+    adapter = SurfaceProductionAdapter()
+    surface = adapter.project(x)
+    assert surface.status == "AVAILABLE"
+    assert surface.controls["values"]["contact_seeking"] == 0.500
+
+    states = tuple(
+        _state(
+            dim=s["dimension"],
+            val=s["value"],
+            ver=s["version"],
+            state_id=s["state_id"],
+            scope=scope,
+            now=now,
+            runtime_id=runtime_id,
+        )
+        for s in x["projected_dynamics"]["states"]
+    )
+    projected = _projected(states, scope=scope, now=now, runtime_id=runtime_id)
+
+    situation = Situation(
+        situation_id="sit-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        derived_facts=(),
+        effective_state_ref="state-ref-1",
+        observed_at=now,
+        historical_context=None,
+        persona_id=scope.persona_id,
+        relationship_ids=(),
+        evidence_refs=(),
+    )
+
+    rule = IntentRule(
+        rule_id="reach-out-rule",
+        kind="reach_out",
+        base_strength=0.1,
+        dimension_weights=(),
+        event_kind=None,
+        event_bonus=0.0,
+        minimum_strength=0.2,
+        due_at_attribute=None,
+        expires_after=None,
+        reconsideration_policy=ReconsiderationPolicy.ON_CONTEXT_CHANGE,
+        surface_control_weights=(("contact_seeking", 0.4),),
+    )
+
+    engine = DeterministicIntentEngine(rules=(rule,), runtime_id=runtime_id)
+    engine_input = IntentEngineInput(
+        interaction_id="fixture-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        context=situation,
+        projected=projected,
+        accepted_events=(),
+        clock=now,
+        surface=surface,
+    )
+
+    result = engine.evaluate(engine_input)
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.kind == "reach_out"
+    # base 0.1 + 0.500 * 0.4 = 0.300
+    assert candidate.strength == 0.3
+    controls_id = surface.controls["controls_id"]
+    assert controls_id in candidate.cause_refs
+
+    assert len(result.traces) == 1
+    trace = result.traces[0]
+    assert trace.admitted is True
+    assert trace.surface_controls_ref == controls_id
+    assert trace.surface_dependency_digest == surface.controls["dependency_digest"]
+    assert trace.overlap_validation_ref == "overlap-valid:reach-out-rule"
+
+    surface_contribs = [c for c in trace.contributions if c.source_kind == "surface"]
+    assert len(surface_contribs) == 1
+    assert surface_contribs[0].source_ref == "contact_seeking"
+    assert surface_contribs[0].amount == 0.2
+
+
+def test_missing_or_unavailable_surface_withholds_candidate():
+    """W3-C: Missing or UNAVAILABLE Surface withholds candidate without fallback."""
+    from mind_runtime.contracts import IntentEngineInput
+    from mind_runtime.contracts.surface import SurfaceProjectionResult, SurfaceProjectionStatus
+    from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
+    from tests.surface.spec_support import sample_candidate
+
+    runtime_id = "fixture-runtime"
+    now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+
+    x = sample_candidate()
+    states = tuple(
+        _state(
+            dim=s["dimension"],
+            val=s["value"],
+            ver=s["version"],
+            state_id=s["state_id"],
+            scope=scope,
+            now=now,
+            runtime_id=runtime_id,
+        )
+        for s in x["projected_dynamics"]["states"]
+    )
+    projected = _projected(states, scope=scope, now=now, runtime_id=runtime_id)
+    situation = Situation(
+        situation_id="sit-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        derived_facts=(),
+        effective_state_ref="state-ref-1",
+        observed_at=now,
+        historical_context=None,
+        persona_id=scope.persona_id,
+        relationship_ids=(),
+        evidence_refs=(),
+    )
+    rule = IntentRule(
+        rule_id="reach-out-rule",
+        kind="reach_out",
+        base_strength=0.1,
+        dimension_weights=(),
+        event_kind=None,
+        event_bonus=0.0,
+        minimum_strength=0.0,
+        due_at_attribute=None,
+        expires_after=None,
+        reconsideration_policy=ReconsiderationPolicy.ON_CONTEXT_CHANGE,
+        surface_control_weights=(("contact_seeking", 0.4),),
+    )
+    engine = DeterministicIntentEngine(rules=(rule,), runtime_id=runtime_id)
+
+    # 1. Surface is None
+    input_none = IntentEngineInput(
+        interaction_id="fixture-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        context=situation,
+        projected=projected,
+        accepted_events=(),
+        clock=now,
+        surface=None,
+    )
+    res_none = engine.evaluate(input_none)
+    assert len(res_none.candidates) == 0
+    assert len(res_none.traces) == 1
+    assert res_none.traces[0].admitted is False
+    assert "surface_unavailable" in res_none.traces[0].reason_codes
+
+    # 2. Surface status is UNAVAILABLE
+    unavail_surface = SurfaceProjectionResult(
+        status=SurfaceProjectionStatus.UNAVAILABLE,
+        reasons=["SURFACE_MISSING_STATE"],
+        controls=None,
+    )
+    input_unavail = IntentEngineInput(
+        interaction_id="fixture-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        context=situation,
+        projected=projected,
+        accepted_events=(),
+        clock=now,
+        surface=unavail_surface,
+    )
+    res_unavail = engine.evaluate(input_unavail)
+    assert len(res_unavail.candidates) == 0
+    assert len(res_unavail.traces) == 1
+    assert res_unavail.traces[0].admitted is False
+    assert "surface_unavailable" in res_unavail.traces[0].reason_codes
+
+
+def test_stale_or_substituted_surface_withholds_candidate():
+    """W3-C: Stale projection_id or mismatched state versions withholds candidate."""
+    from mind_runtime.contracts import IntentEngineInput
+    from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
+    from mind_runtime.surface import SurfaceProductionAdapter
+    from tests.surface.spec_support import sample_candidate
+
+    runtime_id = "fixture-runtime"
+    now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+
+    x = sample_candidate()
+    adapter = SurfaceProductionAdapter()
+    surface = adapter.project(x)
+    assert surface.status == "AVAILABLE"
+
+    states = tuple(
+        _state(
+            dim=s["dimension"],
+            val=s["value"],
+            ver=s["version"],
+            state_id=s["state_id"],
+            scope=scope,
+            now=now,
+            runtime_id=runtime_id,
+        )
+        for s in x["projected_dynamics"]["states"]
+    )
+
+    # 1. projection_id mismatch
+    mismatched_projected = _projected(
+        states,
+        scope=scope,
+        now=now,
+        projection_id="projection:DIFFERENT-ID",
+        runtime_id=runtime_id,
+    )
+    situation = Situation(
+        situation_id="sit-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        derived_facts=(),
+        effective_state_ref="state-ref-1",
+        observed_at=now,
+        historical_context=None,
+        persona_id=scope.persona_id,
+        relationship_ids=(),
+        evidence_refs=(),
+    )
+    rule = IntentRule(
+        rule_id="reach-out-rule",
+        kind="reach_out",
+        base_strength=0.1,
+        dimension_weights=(),
+        event_kind=None,
+        event_bonus=0.0,
+        minimum_strength=0.0,
+        due_at_attribute=None,
+        expires_after=None,
+        reconsideration_policy=ReconsiderationPolicy.ON_CONTEXT_CHANGE,
+        surface_control_weights=(("contact_seeking", 0.4),),
+    )
+    engine = DeterministicIntentEngine(rules=(rule,), runtime_id=runtime_id)
+    res_mismatch = engine.evaluate(
+        IntentEngineInput(
+            interaction_id="fixture-1",
+            scope=scope,
+            origin_runtime_id=runtime_id,
+            context=situation,
+            projected=mismatched_projected,
+            accepted_events=(),
+            clock=now,
+            surface=surface,
+        )
+    )
+    assert len(res_mismatch.candidates) == 0
+    assert len(res_mismatch.traces) == 1
+    assert res_mismatch.traces[0].admitted is False
+    assert "surface_stale_or_mismatch" in res_mismatch.traces[0].reason_codes
+
+    # 2. State version mismatch (e.g. state was advanced to version 999)
+    stale_states = list(states)
+    stale_states[0] = _state(
+        dim=states[0].dimension,
+        val=states[0].value,
+        ver=999,
+        state_id=states[0].state_id,
+        scope=scope,
+        now=now,
+        runtime_id=runtime_id,
+    )
+    stale_projected = _projected(
+        tuple(stale_states),
+        scope=scope,
+        now=now,
+        projection_id="projection:fixture-1",
+        runtime_id=runtime_id,
+    )
+    res_stale = engine.evaluate(
+        IntentEngineInput(
+            interaction_id="fixture-1",
+            scope=scope,
+            origin_runtime_id=runtime_id,
+            context=situation,
+            projected=stale_projected,
+            accepted_events=(),
+            clock=now,
+            surface=surface,
+        )
+    )
+    assert len(res_stale.candidates) == 0
+    assert len(res_stale.traces) == 1
+    assert res_stale.traces[0].admitted is False
+    assert "surface_stale_or_mismatch" in res_stale.traces[0].reason_codes
+
+
+def test_intent_engine_input_rejects_bare_dict_surface():
+    """W3-C: Bare dict of floats injected into IntentEngineInput is rejected."""
+    from mind_runtime.contracts import IntentEngineInput
+    from tests.surface.spec_support import sample_candidate
+
+    runtime_id = "fixture-runtime"
+    now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+    x = sample_candidate()
+    single_state = _state(
+        dim="agent.affect.longing",
+        val=0.5,
+        ver=1,
+        state_id="state-longing",
+        scope=scope,
+        now=now,
+        runtime_id=runtime_id,
+    )
+    projected = _projected((single_state,), scope=scope, now=now, runtime_id=runtime_id)
+    situation = Situation(
+        situation_id="sit-1",
+        scope=scope,
+        origin_runtime_id=runtime_id,
+        derived_facts=(),
+        effective_state_ref="state-ref-1",
+        observed_at=now,
+        historical_context=None,
+        persona_id=scope.persona_id,
+        relationship_ids=(),
+        evidence_refs=(),
+    )
+
+    with pytest.raises(ValueError, match="surface must be a SurfaceProjectionResult"):
+        IntentEngineInput(
+            interaction_id="fixture-1",
+            scope=scope,
+            origin_runtime_id=runtime_id,
+            context=situation,
+            projected=projected,
+            accepted_events=(),
+            clock=now,
+            surface={"contact_seeking": 0.5},  # bare dict rejected!
+        )
+
+
+def test_turn_and_tick_surface_projection_consistency():
+    """W3-C: Turn and tick use the exact same deterministic surface projection logic."""
+    from mind_runtime.contracts import AffectiveDimensionProfile, BehavioralDisposition
+    from mind_runtime.dynamics.persona import PersonaProfile
+    from mind_runtime.surface import SurfaceProductionAdapter, project_surface_for_cognition
+    from tests.surface.spec_support import sample_candidate
+
+    runtime_id = "fixture-runtime"
+    now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="test-agent", persona_id="persona-fixture-a")
+
+    x = sample_candidate()
+    adapter = SurfaceProductionAdapter()
+
+    persona = PersonaProfile(
+        persona_id="persona-fixture-a",
+        dimensions=tuple(
+            AffectiveDimensionProfile(
+                dimension=d["dimension"],
+                baseline=d["baseline"],
+                initial_value=d["initial_value"],
+                sensitivity=d["sensitivity"],
+                recovery_rate=d["recovery_rate"],
+                ceiling=d["ceiling"],
+                floor=d["floor"],
+                growth_profile=tuple((k, v) for k, v in d["growth_profile"]),
+                coupling_profile=tuple((k, v) for k, v in d["coupling_profile"]),
+            )
+            for d in x["persona"]["content"]["dimensions"]
+        ),
+        version=1,
+        schema_version=2,
+        behavioral_disposition=BehavioralDisposition(
+            **x["persona"]["content"]["behavioral_disposition"]
+        ),
+    )
+
+    states = tuple(
+        _state(
+            dim=s["dimension"],
+            val=s["value"],
+            ver=s["version"],
+            state_id=s["state_id"],
+            scope=scope,
+            now=now,
+            runtime_id=runtime_id,
+        )
+        for s in x["projected_dynamics"]["states"]
+    )
+    projected = _projected(states, scope=scope, now=now, runtime_id=runtime_id)
+
+    # Turn projection
+    res_turn = project_surface_for_cognition(
+        surface_port=adapter,
+        persona=persona,
+        projected=projected,
+        runtime_id=runtime_id,
+        scope=scope,
+        interaction_or_tick_ref="interaction:fixture-1",
+    )
+    # Tick projection
+    res_tick = project_surface_for_cognition(
+        surface_port=adapter,
+        persona=persona,
+        projected=projected,
+        runtime_id=runtime_id,
+        scope=scope,
+        interaction_or_tick_ref="interaction:fixture-1",
+    )
+
+    assert res_turn is not None
+    assert res_tick is not None
+    assert res_turn.status == "AVAILABLE"
+    assert res_tick.status == "AVAILABLE"
+    # Identical numbers
+    assert res_turn.controls["values"] == res_tick.controls["values"]
+    # Identical controls_id
+    assert res_turn.controls["controls_id"] == res_tick.controls["controls_id"]
+    # Identical dependency_digest
+    assert res_turn.controls["dependency_digest"] == res_tick.controls["dependency_digest"]

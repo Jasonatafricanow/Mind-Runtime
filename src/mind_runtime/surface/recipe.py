@@ -141,3 +141,97 @@ def validate_candidate_recipe(recipe: dict[str, Any]) -> tuple[bool, str | None]
             return False, "SURFACE_RECIPE_CONTENT_CONFLICT"
 
     return True, None
+
+
+def _const(x: float) -> list[Any]:
+    return ["const", float(x)]
+
+
+def _ref(path: str) -> list[Any]:
+    return ["lookup", path]
+
+
+def _op(name: str, a: Any, b: Any) -> list[Any]:
+    return [name, a, b]
+
+
+def _term(coefficient: float, path: str) -> list[Any]:
+    return _op("mul", _const(coefficient), _ref(path))
+
+
+def candidate_recipe() -> dict[str, Any]:
+    """Return the frozen Candidate Recipe v2."""
+    add, sub = "add", "sub"
+    raw = {
+        "contact_seeking": _op(
+            sub,
+            _op(
+                sub,
+                _op(
+                    add,
+                    _op(
+                        add,
+                        _term(0.45, D_PREFIX + "longing"),
+                        _term(0.35, D_PREFIX + "closeness_craving"),
+                    ),
+                    _term(0.30, P_PREFIX + "attachment_approach"),
+                ),
+                _term(0.20, D_PREFIX + "anger"),
+            ),
+            _term(0.20, P_PREFIX + "expressive_restraint"),
+        ),
+        "initiative": _op(
+            sub,
+            _op(
+                add,
+                _term(0.60, D_PREFIX + "sharing_urge"),
+                _term(0.50, D_PREFIX + "curiosity"),
+            ),
+            _term(0.25, D_PREFIX + "sadness"),
+        ),
+        "confrontation": _op(
+            sub,
+            _op(
+                add,
+                _term(0.70, D_PREFIX + "anger"),
+                _term(0.40, P_PREFIX + "confrontation_readiness"),
+            ),
+            _term(0.30, P_PREFIX + "expressive_restraint"),
+        ),
+        "expressive_warmth": _op(
+            sub,
+            _op(
+                sub,
+                _op(
+                    add,
+                    _term(0.55, P_PREFIX + "expressive_warmth_bias"),
+                    _term(0.50, D_PREFIX + "closeness_craving"),
+                ),
+                _term(0.25, D_PREFIX + "anger"),
+            ),
+            _term(0.20, D_PREFIX + "sadness"),
+        ),
+        "expressive_restraint": _op(
+            add,
+            _term(0.75, P_PREFIX + "expressive_restraint"),
+            _term(0.35, D_PREFIX + "diligence_pressure"),
+        ),
+    }
+    return {
+        "projector_id": "surface-affect",
+        "projector_version": 1,
+        "recipe_id": CANDIDATE_RECIPE_ID,
+        "recipe_version": CANDIDATE_RECIPE_VERSION,
+        "status": "SURFACE_V1_CANDIDATE",
+        "calibration_status": "UNREPORTED_CANDIDATE",
+        "serialization": "MR-surface-c14n-1",
+        "dependency_manifest": deepcopy(MANIFEST),
+        "rules": [
+            {
+                "control_id": k,
+                "range": [0.0, 1.0],
+                "formula": ["clamp", raw[k], _const(0.0), _const(1.0)],
+            }
+            for k in ENABLED
+        ],
+    }
