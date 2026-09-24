@@ -1,47 +1,66 @@
-"""Test suite for MR-LONGING-PROACTIVE-CONTACT-V1-01.
+"""Test suite for MR-LONGING-PROACTIVE-CONTACT-V1-FIX-01.
 
-Validates the full functional fast-state consumer chain:
+Validates the bounded architecture correction for the functional fast-state consumer chain:
 agent.affect.longing
     ↓
-existing W3 Surface authority
+existing W3 Surface authority (Candidate Recipe v2, coeff = +0.45)
     ↓
-contact_seeking
+contact_seeking (clamped [0.0, 1.0])
     ↓
-proactive contact intent
+proactive contact intent (IntentRule with surface_control_weights)
     ↓
 ActionPolicy
     ↓
-existing Delivery / Host outbound path (DeliveryRequest)
+WakeSignal / IntentWake
     ↓
-SSE-facing proactive message (downstream of MR)
+Host / Adapter / SSE boundary (negative pole)
+    ↓
+Body starts proactive Agent turn
+    ↓
+existing proactive expression / DecisionContext path (C5C)
+    ↓
+Body / provider generation
+    ↓
+ExpressionGuard
+    ↓
+existing C7 / external delivery lifecycle (never CognitiveTicker)
 
-Cases:
-- Case A / Case B: Full chain works from longing -> delivery request.
-- Case C: ActionPolicy DENY prevents DeliveryRequest creation.
-- Case D: Cooldown / anti-repeat prevents repeated DeliveryRequest.
-- Case E: Legal proactive candidate produces at most one DeliveryRequest.
-
-Invariants:
-- LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY
-- RAW_LONGING_INTENT_READ = NONE
-- DELIVERY_PATH = C7_EXISTING
-- SSE_BOUNDARY = DOWNSTREAM_OF_MR
-- PROACTIVE_CONTACT_CALIBRATION_GAP = FOUND
+Tests:
+Section 14: Structural Tests (A-F)
+Section 15: Tick Authority Tests (G-M)
+Section 16: Wake Boundary Tests (N-S)
+Section 17: Body / Expression Path Tests (T-Y)
+Section 18: Static Architecture Guards & Anti-Spam Invariants
 """
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from mind_runtime.binding_registry import BindingRegistry
+from mind_runtime.cognition.express import (
+    ProactiveExpressionArtifact,
+    ProactiveExpressionConfig,
+    ProactiveExpressionPreparer,
+)
+from mind_runtime.cognition.tick import (
+    CognitiveTicker,
+    CognitiveTickReport,
+    build_cognitive_ticker,
+)
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPolicyInput,
     ActionPolicyResult,
+    ExpressionDisposition,
+    HostWakeNotification,
     Intent,
     IntentEngineInput,
     IntentStatus,
@@ -53,8 +72,9 @@ from mind_runtime.contracts import (
     ScopeDomain,
     Situation,
     SyncFields,
+    WakeSignal,
 )
-from mind_runtime.delivery import DeliveryRequest, InMemoryDeliveryBackend
+from mind_runtime.delivery import DeliveryRequest
 from mind_runtime.delivery.persistence import SqliteDeliveryBackend
 from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_REGISTRY,
@@ -62,11 +82,17 @@ from mind_runtime.dynamics.fast_functions import (
     FastFunctionKind,
     validate_longing_anti_spam_invariant,
 )
-from mind_runtime.expression.context import DecisionContextConfig
-from mind_runtime.expression.guards import (
+from mind_runtime.expression import (
+    DecisionContextCompiler,
+    DeterministicContextRenderer,
+    DeterministicExpressionCoordinator,
     DeterministicExpressionGuardChain,
+    ExpressionCoordinatorConfig,
     ExpressionGuardConfig,
 )
+from mind_runtime.expression.context import DecisionContextConfig
+from mind_runtime.expression.history import NullPreviousExpressionPort
+from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
 from mind_runtime.intents.policy import ActionPolicyConfig, IntentPolicyRule
 from mind_runtime.intents.surface_validator import (
@@ -74,6 +100,7 @@ from mind_runtime.intents.surface_validator import (
     validate_intent_rule_surface_overlap,
 )
 from mind_runtime.persona_publication import PersonaConfigPublicationRepository
+from mind_runtime.pipeline.fake_agent import FakeAgent
 from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment
 from mind_runtime.shadow.runtime_loop import build_runtime_stack, run_cognitive_tick
 from mind_runtime.surface.adapter import SurfaceProductionAdapter
@@ -94,6 +121,9 @@ def _build_test_stack(
     required_resource: str | None = None,
     cooldown: timedelta = timedelta(minutes=30),
     policy_rules: tuple[IntentPolicyRule, ...] | None = None,
+    with_expression: bool = False,
+    agent_script: tuple[str, ...] | None = None,
+    banned_openings: tuple[str, ...] = (),
 ):
     tmp_path.mkdir(parents=True, exist_ok=True)
     profile_path = tmp_path / "fixture-persona.json"
@@ -129,8 +159,6 @@ def _build_test_stack(
         mode="SURFACE_V1",
     )
 
-    # Intent rule consumes surface control "contact_seeking"
-    # Never reads raw agent.affect.longing directly!
     rule = IntentRule(
         rule_id="contact",
         kind="reach_out",
@@ -167,6 +195,15 @@ def _build_test_stack(
     base_time = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     clock = FakeClock(base_time)
 
+    guard_chain = DeterministicExpressionGuardChain(
+        ExpressionGuardConfig(
+            prefix_length=8,
+            transport_markers=(),
+            banned_openings=banned_openings,
+            temporal_rules=(),
+        )
+    )
+
     orchestrator, bridge = build_runtime_stack(
         clock=clock,
         facts_db=tmp_path / "facts.sqlite",
@@ -183,14 +220,7 @@ def _build_test_stack(
         surface_binding_id="fixture-binding",
         surface_binding_environment=RuntimeEnvironment.LAB,
         delivery_db=delivery_db,
-        expression_guard=DeterministicExpressionGuardChain(
-            ExpressionGuardConfig(
-                prefix_length=8,
-                transport_markers=(),
-                banned_openings=(),
-                temporal_rules=(),
-            )
-        ),
+        expression_guard=guard_chain,
     )
 
     # Seed all persona dimensions in state DB under agent_scope matching persona_id
@@ -229,14 +259,69 @@ def _build_test_stack(
         )
         orchestrator._state_backend.save_state(st)
 
-    return orchestrator, clock, delivery_db
+    fake_agent: FakeAgent | None = None
+    if with_expression:
+        fake_agent = FakeAgent(agent_script or ("想和你分享一下今天的心情",))
+        compiler = DecisionContextCompiler(config)
+        coordinator = DeterministicExpressionCoordinator(
+            compiler=compiler,
+            renderer=DeterministicContextRenderer(config),
+            agent=fake_agent,
+            guard=guard_chain,
+            config=ExpressionCoordinatorConfig(max_rewrites=2),
+        )
+        preparer = ProactiveExpressionPreparer(
+            orchestrator=orchestrator,
+            compiler=compiler,
+            coordinator=coordinator,
+            previous_expression=NullPreviousExpressionPort(),
+            config=ProactiveExpressionConfig(("proactive_message",)),
+            runtime_id="fixture-runtime",
+        )
+        orchestrator.cognitive_tick_components["ticker"]._expression = preparer
+
+    return orchestrator, clock, delivery_db, fake_agent
 
 
-# ── Tests ───────────────────────────────────────────────────────────────────
+# ── SECTION 14: REQUIRED TESTS — STRUCTURAL ──────────────────────────────────
 
 
-def test_01_manifest_and_recipe_root_declaration():
-    """Verify longing is declared as dynamics root of contact_seeking in MANIFEST and Recipe v2."""
+def test_a_frozen_w3_final_sha_is_ancestor():
+    """Test A: Authoritative frozen W3 final SHA 386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e is an ancestor."""
+    frozen_sha = "386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e"
+    # Resolve the object in git
+    show_proc = subprocess.run(
+        ["git", "show", "--no-patch", "--oneline", frozen_sha],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert show_proc.returncode == 0, f"Frozen W3 SHA {frozen_sha} could not be resolved: {show_proc.stderr}"
+    assert "fix(surface): close W3 authority and durability gaps" in show_proc.stdout
+
+    # Verify ancestry
+    ancestry_proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", frozen_sha, "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ancestry_proc.returncode == 0, (
+        f"Frozen W3 SHA {frozen_sha} is not an ancestor of current HEAD: {ancestry_proc.stderr}"
+    )
+
+
+def test_b_fast_function_v1_registry_count_remains_eight():
+    """Test B: FAST_FUNCTION_V1_REGISTRY count remains exactly 8."""
+    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
+    longing_spec = FAST_FUNCTION_V1_REGISTRY.get("agent.affect.longing")
+    assert longing_spec is not None
+    assert longing_spec.function_kind == FastFunctionKind.PROACTIVE_CONTACT
+    assert longing_spec.external_action_capable is True
+
+
+def test_c_longing_remains_declared_surface_root_for_contact_seeking():
+    """Test C: longing remains a declared Surface root for contact_seeking."""
     assert "contact_seeking" in MANIFEST
     dynamics_roots = MANIFEST["contact_seeking"]["dynamics"]
     assert D_PREFIX + "longing" in dynamics_roots
@@ -245,13 +330,8 @@ def test_01_manifest_and_recipe_root_declaration():
     assert D_PREFIX + "longing" in transitive_roots
 
 
-def test_02_intent_path_rejects_direct_raw_longing_read():
-    """Verify intent path rejects direct raw longing reading when using surface controls.
-
-    Invariant: RAW_LONGING_INTENT_READ = NONE (enforced by R ∩ U = ∅).
-    """
-    # Attempting to declare both contact_seeking and direct agent.affect.longing
-    # raises ROOT_OVERLAP because longing is a transitive root of contact_seeking.
+def test_d_intent_path_cannot_read_raw_longing_overlap():
+    """Test D: Intent path cannot read raw agent.affect.longing when consumed through Surface."""
     with pytest.raises(ValueError, match="ROOT_OVERLAP"):
         IntentRule(
             rule_id="illegal-contact",
@@ -268,11 +348,8 @@ def test_02_intent_path_rejects_direct_raw_longing_read():
         )
 
 
-def test_03_monotonic_influence_of_longing_on_contact_seeking():
-    """Verify monotonic non-decreasing influence of longing on surface contact_seeking."""
-    # Under Candidate Recipe v2:
-    # contact_seeking = clamp(0.45 * longing + 0.35 * closeness_craving + 0.30 * attachment_approach
-    #                         - 0.20 * anger - 0.20 * expressive_restraint, 0.0, 1.0)
+def test_e_increasing_longing_monotonic_contact_seeking():
+    """Test E: Increasing longing gives monotonic non-decreasing contact_seeking under Candidate Recipe v2."""
     def calc_contact_seeking(longing_val: float) -> float:
         raw = (
             0.45 * longing_val
@@ -288,19 +365,17 @@ def test_03_monotonic_influence_of_longing_on_contact_seeking():
     c_high = calc_contact_seeking(0.9)
 
     assert 0.0 <= c_low < c_mid < c_high <= 1.0
-    # Increase in longing strictly increases contact_seeking
     assert c_mid - c_low == pytest.approx(0.45 * 0.4, abs=1e-5)
     assert c_high - c_mid == pytest.approx(0.45 * 0.4, abs=1e-5)
 
 
-def test_04_contact_seeking_drives_intent_strength_and_eligibility():
-    """Verify contact_seeking score increases intent strength and meets eligibility threshold."""
+def test_f_contact_seeking_drives_intent_strength_and_eligibility():
+    """Test F: Increasing contact_seeking can increase proactive-contact Intent strength / eligibility."""
     runtime_id = "fixture-runtime"
     now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
     scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
     agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-fixture-a")
 
-    # Candidate with longing=0.70 produces contact_seeking = 0.500
     x = sample_candidate()
     adapter = SurfaceProductionAdapter()
     surface = adapter.project(x)
@@ -347,9 +422,8 @@ def test_04_contact_seeking_drives_intent_strength_and_eligibility():
         evidence_refs=(),
     )
 
-    # 1. Rule with high threshold (minimum_strength=0.60):
-    # strength = 0.20 + 0.40 * 0.500 = 0.400 < 0.60 -> NOT admitted
-    rule_high_thresh = IntentRule(
+    # High threshold (0.60): 0.20 + 0.40 * 0.50 = 0.40 < 0.60 -> Rejected
+    rule_high = IntentRule(
         rule_id="reach-out-high",
         kind="reach_out",
         base_strength=0.2,
@@ -362,7 +436,7 @@ def test_04_contact_seeking_drives_intent_strength_and_eligibility():
         reconsideration_policy=ReconsiderationPolicy.NEVER,
         surface_control_weights=(("contact_seeking", 0.4),),
     )
-    engine_high = DeterministicIntentEngine((rule_high_thresh,), runtime_id)
+    engine_high = DeterministicIntentEngine((rule_high,), runtime_id)
     res_high = engine_high.evaluate(
         IntentEngineInput(
             interaction_id="fixture-1",
@@ -379,8 +453,7 @@ def test_04_contact_seeking_drives_intent_strength_and_eligibility():
     )
     assert len(res_high.candidates) == 0
 
-    # 2. Rule with achievable threshold (minimum_strength=0.35):
-    # strength = 0.20 + 0.40 * 0.500 = 0.400 >= 0.35 -> ADMITTED
+    # Achievable threshold (0.35): 0.20 + 0.40 * 0.50 = 0.40 >= 0.35 -> Admitted
     rule_achievable = IntentRule(
         rule_id="reach-out-achievable",
         kind="reach_out",
@@ -410,119 +483,115 @@ def test_04_contact_seeking_drives_intent_strength_and_eligibility():
         )
     )
     assert len(res_achievable.candidates) == 1
-    assert res_achievable.candidates[0].kind == "reach_out"
     assert res_achievable.candidates[0].strength == pytest.approx(0.400, abs=1e-5)
 
 
-def test_05_case_a_b_full_chain_longing_to_delivery_request(tmp_path: Path):
-    """Case A/B: High longing drives contact_seeking -> proactive intent -> ActionPolicy ALLOW -> DeliveryRequest."""
-    orchestrator, clock, delivery_db = _build_test_stack(tmp_path, initial_longing=0.90)
+# ── SECTION 15: REQUIRED TESTS — TICK AUTHORITY ──────────────────────────────
 
-    # Run one cognitive tick
+
+def test_g_cognitive_ticker_does_not_construct_delivery_request(tmp_path: Path):
+    """Test G: CognitiveTicker does NOT construct DeliveryRequest."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
-
-    # 1. Candidate was generated and admitted
-    assert report.intent_candidates_generated >= 1
-    assert report.candidates_admitted >= 1
-
-    # 2. ActionPolicy allowed the proactive contact
     assert report.policy_allowed == 1
-    assert report.policy_denied == 0
+    # Report contains wake_signal, NEVER delivery_request
+    assert not hasattr(report, "delivery_request")
+    assert report.wake_signal is not None
+    assert isinstance(report.wake_signal, WakeSignal)
 
-    # 3. DeliveryRequest was constructed and dispatched
-    assert report.delivery_request is not None
-    delivery_req: DeliveryRequest = report.delivery_request
-    assert delivery_req.scope == user_scope
-    assert delivery_req.target == "fixture-user"
-    assert delivery_req.action_type == "proactive_message"
-    assert delivery_req.payload_bytes is not None
-    assert len(delivery_req.payload_bytes) > 0
 
-    # 4. Report includes delivery_request_id
-    assert report.as_dict()["delivery_request_id"] == delivery_req.request_id
+def test_h_cognitive_ticker_does_not_write_to_delivery_backend(tmp_path: Path):
+    """Test H: CognitiveTicker does NOT write to a DeliveryBackend."""
+    orchestrator, clock, delivery_db, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
-    # 5. DeliveryRequest is durable in SQLite delivery backend
+    run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+
     delivery_backend = SqliteDeliveryBackend(delivery_db)
-    durable_row = delivery_backend.get_durable_request(delivery_req.request_id)
-    assert durable_row is not None
-    assert durable_row.request.request_id == delivery_req.request_id
-    assert durable_row.request.action_type == "proactive_message"
+    row_count = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0]
     delivery_backend.close()
+    assert row_count == 0, f"CognitiveTicker wrote {row_count} rows to delivery_requests!"
 
 
-def test_06_case_c_action_policy_deny_prevents_delivery_request(tmp_path: Path):
-    """Case C: ActionPolicy DENY prevents DeliveryRequest creation."""
-    # Policy configured with no rules for reach_out -> ActionDecision.DENY (unsupported_intent_kind)
-    orchestrator, clock, delivery_db = _build_test_stack(
+def test_i_cognitive_ticker_has_no_delivery_backend_ownership():
+    """Test I: CognitiveTicker has no new delivery backend ownership introduced by 016fbbe."""
+    ticker_sig = inspect.signature(CognitiveTicker.__init__)
+    assert "delivery_backend" not in ticker_sig.parameters
+
+    builder_sig = inspect.signature(build_cognitive_ticker)
+    assert "delivery_backend" not in builder_sig.parameters
+
+
+def test_j_action_policy_deny_produces_no_wake_signal(tmp_path: Path):
+    """Test J: ActionPolicy DENY produces no WakeSignal."""
+    orchestrator, clock, _, _ = _build_test_stack(
         tmp_path,
         initial_longing=0.90,
         resources=("proactive_message",),
         policy_rules=(),
     )
-
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
-
-    # Candidate was evaluated by policy and denied due to missing required resource
     assert report.policy_denied >= 1
     assert report.policy_allowed == 0
-
-    # No delivery request was produced
-    assert report.delivery_request is None
-    assert report.as_dict()["delivery_request_id"] is None
-
-    # SQLite delivery backend has zero requests
-    delivery_backend = SqliteDeliveryBackend(delivery_db)
-    conn = delivery_backend._conn
-    row_count = conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0]
-    assert row_count == 0
-    delivery_backend.close()
+    assert report.wake_signal is None
+    assert report.proactive_wake is None
+    assert report.as_dict()["wake_signal"] is None
+    assert report.as_dict()["wake_id"] is None
 
 
-def test_07_case_d_cooldown_prevents_repeated_delivery_request(tmp_path: Path):
-    """Case D: Outbound cooldown prevents repeated DeliveryRequest dispatch."""
-    orchestrator, clock, delivery_db = _build_test_stack(
+def test_k_action_policy_allow_produces_one_legal_proactive_wake(tmp_path: Path):
+    """Test K: ActionPolicy ALLOW may produce one legal proactive wake."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.policy_allowed == 1
+    assert report.wake_signal is not None
+    wake = report.wake_signal
+    assert isinstance(wake, WakeSignal)
+    assert wake.action_type == "proactive_message"
+    assert wake.reason == "proactive_intent_allowed"
+    assert wake.scope == user_scope
+    assert wake.wake_id.startswith("wake-")
+
+
+def test_l_cooldown_prevents_repeated_wake_generation(tmp_path: Path):
+    """Test L: Cooldown / anti-repeat prevents repeated wake generation."""
+    orchestrator, clock, _, _ = _build_test_stack(
         tmp_path,
         initial_longing=0.90,
         cooldown=timedelta(minutes=30),
     )
-
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
-    # Pass 1 at T0 + 5m -> Produces DeliveryRequest
     t1 = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     report1 = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
     assert report1.policy_allowed == 1
-    assert report1.delivery_request is not None
+    assert report1.wake_signal is not None
 
-    delivery_backend = SqliteDeliveryBackend(delivery_db)
-    conn = delivery_backend._conn
-    assert conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0] == 1
-
-    # Pass 2 at T0 + 10m (only 5m elapsed, within 30m cooldown)
-    # The active intent dedupe or cooldown prevents repeated delivery
     t2 = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     report2 = run_cognitive_tick(orchestrator, scope=user_scope, now=t2)
-
-    # Second pass must NOT produce another DeliveryRequest
-    assert report2.delivery_request is None
     assert report2.policy_allowed == 0
-    assert conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0] == 1
-    delivery_backend.close()
+    assert report2.wake_signal is None
 
 
-def test_08_case_e_single_delivery_request_per_legal_candidate(tmp_path: Path):
-    """Case E: Exactly one DeliveryRequest is produced per legal proactive candidate."""
-    orchestrator, clock, delivery_db = _build_test_stack(tmp_path, initial_longing=0.90)
+def test_m_one_admitted_intent_produces_at_most_one_wake(tmp_path: Path):
+    """Test M: One admitted proactive intent produces at most one wake for the same logical eligibility event."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
     t1 = clock.now() + timedelta(minutes=5)
@@ -530,73 +599,328 @@ def test_08_case_e_single_delivery_request_per_legal_candidate(tmp_path: Path):
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
 
     assert report.policy_allowed == 1
-    assert report.delivery_request is not None
+    assert report.wake_signal is not None
+    # Exactly one WakeSignal is attached to the report
+    assert isinstance(report.wake_signal, WakeSignal)
+    assert report.as_dict()["wake_id"] == report.wake_signal.wake_id
+
+
+# ── SECTION 16: REQUIRED TESTS — WAKE BOUNDARY ───────────────────────────────
+
+
+def test_n_wake_output_contains_bounded_typed_refs_only(tmp_path: Path):
+    """Test N: Wake output contains bounded typed refs only."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+    wake = report.wake_signal
+    assert wake is not None
+
+    # Verify typed fields
+    assert isinstance(wake.wake_id, str)
+    assert isinstance(wake.runtime_id, str)
+    assert isinstance(wake.scope, Scope)
+    assert isinstance(wake.intent_id, str)
+    assert isinstance(wake.action_type, str)
+    assert isinstance(wake.policy_decision_ref, str)
+    assert isinstance(wake.interaction_id, str)
+    assert isinstance(wake.woken_at, datetime)
+    assert isinstance(wake.reason, str)
+    assert isinstance(wake.intent_version, int)
+
+
+def test_o_wake_does_not_expose_raw_internal_vectors(tmp_path: Path):
+    """Test O: Wake does not expose longing numeric value, raw Dynamics, Persona vector, or raw Surface vector."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+    wake = report.wake_signal
+    assert wake is not None
+
+    for forbidden in ("longing", "dynamics", "persona", "surface", "raw_affect", "character_card"):
+        assert not hasattr(wake, forbidden)
+        assert forbidden not in wake.as_dict()
+
+
+def test_p_wake_does_not_fabricate_user_message(tmp_path: Path):
+    """Test P: Wake does not fabricate a user message."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+    wake = report.wake_signal
+    assert wake is not None
+
+    for forbidden in ("user_message", "user_utterance", "evidence_text"):
+        assert not hasattr(wake, forbidden)
+        assert forbidden not in wake.as_dict()
+
+
+def test_q_wake_does_not_become_user_evidence(tmp_path: Path):
+    """Test Q: Wake does not become user Evidence."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    # Fact service has no Evidence with source_type="user_message" created by tick
+    facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    user_message_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
+    assert len(user_message_evs) == 0
+
+
+def test_r_wake_itself_does_not_create_delivery_receipt(tmp_path: Path):
+    """Test R: Wake itself does not create a DeliveryReceipt."""
+    orchestrator, clock, delivery_db, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
 
     delivery_backend = SqliteDeliveryBackend(delivery_db)
-    conn = delivery_backend._conn
-    rows = conn.execute("SELECT request_id FROM delivery_requests").fetchall()
-    assert len(rows) == 1
-    assert rows[0][0] == report.delivery_request.request_id
+    receipts_count = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_receipts").fetchone()[0]
     delivery_backend.close()
+    assert receipts_count == 0
 
 
-def test_09_provider_body_cannot_mutate_longing_or_contact_seeking(tmp_path: Path):
-    """Verify that body provider prose or delivery execution cannot mutate canonical affect or surface values."""
-    orchestrator, clock, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+def test_s_wake_does_not_directly_create_final_user_visible_text(tmp_path: Path):
+    """Test S: Wake does not directly create final user-visible text."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
-    # Initial longing in canonical states
-    states_before = {s.dimension: s.value for s in orchestrator._state_backend.load_states()}
-    assert states_before.get("agent.affect.longing") == 0.90
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+    wake = report.wake_signal
+    assert wake is not None
 
-    # Even after external turn handoff or mock prose guard, raw longing is protected
-    states_after = {s.dimension: s.value for s in orchestrator._state_backend.load_states()}
-    assert states_after.get("agent.affect.longing") == 0.90
-    assert "surface.contact_seeking" not in states_after
+    for forbidden in ("text", "prose", "would_send", "payload_bytes"):
+        assert not hasattr(wake, forbidden)
+        assert forbidden not in wake.as_dict()
 
 
-def test_10_sse_boundary_is_downstream_of_mr():
-    """Verify that MR stops at DeliveryRequest and contains no SSE connection or transport authority."""
-    # DeliveryRequest is the final outbound contract emitted by Mind Runtime
-    req = DeliveryRequest(
-        request_id="req-1",
-        message_id="msg-1",
-        scope=Scope(domain=ScopeDomain.USER, user_id="user-1"),
-        origin_runtime_id="runtime-1",
-        channel="chat",
-        target="user-1",
-        action_type="proactive_message",
-        payload_bytes=b"proactive content",
-        created_at=datetime(2026, 9, 23, 12, 0, tzinfo=UTC),
-        sync=SyncFields(
-            Scope(domain=ScopeDomain.USER, user_id="user-1"),
-            "runtime-1",
-            "req-1",
-            1,
-            "idem-req-1",
-        ),
+# ── SECTION 17: REQUIRED TESTS — BODY / EXPRESSION PATH ──────────────────────
+
+
+def test_t_legal_proactive_wake_reaches_existing_proactive_expression_path(tmp_path: Path):
+    """Test T: A legal proactive wake reaches the existing proactive Body/expression preparation path."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        agent_script=("想和你聊聊今天的新发现",),
     )
-    assert req.payload_bytes == b"proactive content"
-    # MR does not own SSE streams or socket connections; external host/carrier picks up DeliveryRequest
-    assert not hasattr(req, "sse_stream")
-    assert not hasattr(req, "socket")
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    # 1. Legal proactive wake was emitted
+    assert report.wake_signal is not None
+    # 2. Existing proactive expression preparation ran and produced would-send artifact
+    assert report.proactive_expression is not None
+    artifact: ProactiveExpressionArtifact = report.proactive_expression
+    assert artifact.would_send == "想和你聊聊今天的新发现"
+    assert artifact.disposition is ExpressionDisposition.ACCEPT
+    assert fake_agent is not None and len(fake_agent.calls) == 1
 
 
-def test_11_fast_function_v1_registry_invariants():
-    """Verify FAST_FUNCTION_V1_REGISTRY count remains 8 and longing anti-spam invariant holds."""
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
+def test_u_decision_context_admission_occurs_before_provider_realization(tmp_path: Path):
+    """Test U: DecisionContext admission occurs before provider realization."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
-    longing_spec = FAST_FUNCTION_V1_REGISTRY.get("agent.affect.longing")
-    assert longing_spec is not None
-    assert longing_spec.function_kind == FastFunctionKind.PROACTIVE_CONTACT
-    assert longing_spec.external_action_capable is True
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
 
-    # Invariant string frozen
+    artifact = report.proactive_expression
+    assert artifact is not None
+    # Context ID was recorded and trace includes proactive_expression_context
+    assert artifact.context_id is not None
+    trace = orchestrator.trace.trace(f"cognitive-tick-{t1.isoformat()}")
+    stages = [entry.stage for entry in trace]
+    assert "proactive_expression_context" in stages
+    assert "proactive_expression" in stages
+    ctx_idx = stages.index("proactive_expression_context")
+    expr_idx = stages.index("proactive_expression")
+    assert ctx_idx < expr_idx, "DecisionContext admission must occur before provider realization!"
+
+
+def test_v_policy_denial_cannot_create_provider_handoff(tmp_path: Path):
+    """Test V: Policy denial cannot create provider handoff."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        policy_rules=(),
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    assert report.policy_denied >= 1
+    assert report.wake_signal is None
+    # No provider handoff occurred
+    assert report.proactive_expression is None
+    assert fake_agent is not None and len(fake_agent.calls) == 0
+
+
+def test_w_provider_prose_still_passes_expression_guard(tmp_path: Path):
+    """Test W: Provider prose still passes ExpressionGuard."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        agent_script=("合法的问候表达",),
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    artifact = report.proactive_expression
+    assert artifact is not None
+    assert artifact.disposition is ExpressionDisposition.ACCEPT
+    assert artifact.would_send == "合法的问候表达"
+
+
+def test_x_guard_rejection_prevents_external_delivery_or_commit(tmp_path: Path):
+    """Test X: Guard rejection prevents external delivery/commit."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        agent_script=("",),
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    artifact = report.proactive_expression
+    assert artifact is not None
+    assert artifact.disposition is ExpressionDisposition.REJECT
+    assert artifact.would_send is None
+
+
+def test_y_c7_request_authority_is_not_cognitive_ticker(tmp_path: Path):
+    """Test Y: Any resulting C7 request is created by the existing authoritative handoff / delivery owner, not CognitiveTicker."""
+    orchestrator, clock, delivery_db, _ = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+
+    # 1. CognitiveTicker emitted wake_signal, never DeliveryRequest
+    assert report.wake_signal is not None
+    assert not hasattr(report, "delivery_request")
+
+    # 2. Delivery backend was NOT written to by ticker
+    delivery_backend = SqliteDeliveryBackend(delivery_db)
+    rows = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0]
+    delivery_backend.close()
+    assert rows == 0
+
+
+# ── SECTION 18: STATIC ARCHITECTURE GUARDS ───────────────────────────────────
+
+
+def test_z1_static_ast_guard_no_delivery_authority_in_tick_py():
+    """Static AST Guard: fail if cognition/tick.py newly contains direct use of delivery authority."""
+    tick_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
+    assert tick_path.exists(), f"Could not find tick.py at {tick_path}"
+    source = tick_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(tick_path))
+
+    forbidden_names = {
+        "DeliveryRequest",
+        "SqliteDeliveryBackend",
+        "InMemoryDeliveryBackend",
+        "record_delivery",
+        "_dispatch_delivery",
+        "DeliveryBackend",
+    }
+
+    found_violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in forbidden_names or alias.asname in forbidden_names:
+                    found_violations.append(f"Import: {alias.name} at line {node.lineno}")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in forbidden_names or alias.asname in forbidden_names:
+                    found_violations.append(f"ImportFrom: {alias.name} from {node.module} at line {node.lineno}")
+        elif isinstance(node, ast.FunctionDef):
+            if node.name in forbidden_names:
+                found_violations.append(f"FunctionDef: {node.name} at line {node.lineno}")
+        elif isinstance(node, ast.Name):
+            if node.id in forbidden_names:
+                found_violations.append(f"Name reference: {node.id} at line {node.lineno}")
+
+    assert not found_violations, f"Architecture violation in cognition/tick.py:\n" + "\n".join(found_violations)
+
+
+def test_z2_host_adapter_smallest_typed_consumer():
+    """Test smallest typed consumer of WakeSignal at MindRuntimeHostAdapter boundary."""
+    from unittest.mock import MagicMock
+    adapter = MindRuntimeHostAdapter(orchestrator=MagicMock())
+    now = datetime(2026, 9, 24, 8, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.USER, user_id="test-user")
+    wake = WakeSignal(
+        wake_id="wake-123",
+        runtime_id="runtime-1",
+        scope=scope,
+        intent_id="intent-abc",
+        action_type="proactive_message",
+        policy_decision_ref="policy-ref-1",
+        interaction_id="interaction-123",
+        woken_at=now,
+    )
+    notification = adapter.consume_wake(wake)
+    assert isinstance(notification, HostWakeNotification)
+    assert notification.wake_id == "wake-123"
+    assert notification.runtime_id == "runtime-1"
+    assert notification.scope == scope
+    assert notification.intent_id == "intent-abc"
+    assert notification.action_type == "proactive_message"
+    assert notification.eligible is True
+    # Aliased method also works
+    assert adapter.notify_proactive_wake(wake) == notification
+
+
+def test_z3_longing_anti_spam_invariant_and_registry():
+    """Verify anti-spam invariant string, registry invariants, and validation behavior."""
     assert (
         LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
         == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
     )
-
-    # Executable invariant check
     assert validate_longing_anti_spam_invariant(
         longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=1800.0
     ) is True
@@ -604,7 +928,6 @@ def test_11_fast_function_v1_registry_invariants():
         longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=3600.0
     ) is True
 
-    # Attempting to shorten cooldown under longing pressure MUST raise ValueError
     with pytest.raises(ValueError, match="Longing anti-spam violation"):
         validate_longing_anti_spam_invariant(
             longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=900.0

@@ -52,13 +52,11 @@ No duplicate or second contribution was introduced.
 Direct reading of `agent.affect.longing` by Intent rules using Surface controls is strictly forbidden by `src/mind_runtime/intents/surface_validator.py`. Attempting to specify `agent.affect.longing` in `dimension_weights` when `contact_seeking` is declared raises `ValueError("ROOT_OVERLAP: ...")`.
 Result: `RAW_LONGING_INTENT_READ = NONE`.
 
-### 2.3 The Missing Seam Found and Closed
-Prior to this task, `CognitiveTicker.tick()` evaluated the IntentEngine and ActionPolicy and called `_prepare_expression` to produce a `ProactiveExpressionArtifact` (would-send inspection artifact), but had no delivery dispatch seam to hand allowed proactive actions to the carrier.
-The missing seam was closed:
-1. `CognitiveTicker` accepts `delivery_backend: Any = None` (falling back to orchestrator's `_surface_delivery_backend`).
-2. When ActionPolicy returns `ActionDecision.ALLOW`, `CognitiveTicker._dispatch_delivery` constructs an authoritative C7 `DeliveryRequest` and records it into `self._delivery_backend`.
-3. `CognitiveTickReport` carries `delivery_request` and exposes `delivery_request_id` in `as_dict()`.
-4. `build_cognitive_ticker` and `build_cognitive_components` wire `delivery_backend` from the stack to the ticker.
+### 2.3 Architectural Correction Notice (MR-LONGING-PROACTIVE-CONTACT-V1-FIX-01)
+> [!WARNING]
+> The initial implementation in commit `016fbbe3e34b6f82c92b1280b0f581e46417c8da` directly wired `CognitiveTicker` to `DeliveryRequest` and `C7 backend`. This was flagged as an architecture violation: `CognitiveTicker` must NOT become a Delivery authority.
+> Under `MR-LONGING-PROACTIVE-CONTACT-V1-FIX-01`, this shortcut was removed. `CognitiveTicker` emits a pure `WakeSignal` (`IntentWake` compatible) to the Host/Adapter boundary. The Host/Body drives the proactive turn through `DecisionContext`, `ExpressionGuard`, and the authoritative C7 handoff owner.
+> See `docs/audits/MR_LONGING_PROACTIVE_CONTACT_V1_FIX_01.md` for the full architecture correction audit.
 
 ---
 

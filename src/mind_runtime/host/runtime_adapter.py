@@ -58,7 +58,9 @@ from mind_runtime.contracts.host import (
     HostTurnRequest,
     HostTurnResult,
     HostTurnStatus,
+    HostWakeNotification,
 )
+from mind_runtime.contracts.intent import WakeSignal
 from mind_runtime.pipeline.orchestrator import (
     StaleProjectionError,
     TurnOrchestrator,
@@ -598,6 +600,26 @@ class MindRuntimeHostAdapter:
             trace=trace_pairs,
             recovery_decision=recovery,
         )
+
+    def consume_wake(self, wake: WakeSignal) -> HostWakeNotification:
+        """HI-1: Smallest typed consumer of proactive wake signals at the Host boundary.
+
+        Notifies Body that a proactive turn is eligible; never generates prose itself.
+        """
+        if not isinstance(wake, WakeSignal):
+            raise ValueError("wake must be a WakeSignal")
+        return HostWakeNotification(
+            wake_id=wake.wake_id,
+            runtime_id=wake.runtime_id,
+            scope=wake.scope,
+            intent_id=wake.intent_id,
+            action_type=wake.action_type,
+            occurred_at=wake.woken_at,
+            eligible=True,
+        )
+
+    def notify_proactive_wake(self, wake: WakeSignal) -> HostWakeNotification:
+        return self.consume_wake(wake)
 
     # ----- internal: terminal record management -----------------------
 

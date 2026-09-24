@@ -347,11 +347,16 @@ class DecisionContextCompiler:
         if compiler_input is not None:
             from mind_runtime.surface.lineage import validate_projected_surface
 
+            expected_ref = (
+                f"tick:{compiler_input.interaction_id}"
+                if str(controls.get("interaction_or_tick_ref", "")).startswith("tick:")
+                else f"interaction:{compiler_input.interaction_id}"
+            )
             if not validate_projected_surface(
                 surface,
                 projected=compiler_input.projected_agent_state,
                 runtime_id=compiler_input.origin_runtime_id,
-                interaction_or_tick_ref=f"interaction:{compiler_input.interaction_id}",
+                interaction_or_tick_ref=expected_ref,
                 persona_id=compiler_input.persona_ref,
                 persona_version=compiler_input.persona_version,
                 persona_content_digest=compiler_input.persona_content_digest,
