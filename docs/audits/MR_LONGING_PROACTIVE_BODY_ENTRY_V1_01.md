@@ -146,3 +146,132 @@ Verified by test `test_e_trace_ordering_proves_causal_sequence`:
 - Total test count: 3284
 - Failures: 0
 - Expected strict xfail: 1 (`test_golden_g24_g28.py::test_g28_full_loop_strict_xfail`)
+
+
+---
+
+## 8. Post-Push Source Review
+
+A direct source-level review of commit `57515c89bf3893d7a7fe3e15c444039bab9abfe3` confirms that the new Host-side causal path is real in the explicit proactive test composition, but the commit does not yet satisfy the stronger production-closure claims made above.
+
+### 8.1 What is genuinely fixed
+
+The following are supported by source:
+
+- `run_proactive_turn(wake)` calls `consume_wake(wake)` before provider realization.
+- The test composition can prove zero provider calls before Host admission and one provider call after valid admission.
+- `HostWakeNotification` preserves the intended bounded wake lineage when created by `consume_wake`.
+- Replay/conflict handling is process-local and the same-wake execution result is cached.
+- The proactive expression path is split into `prepare_context(...)` and `realize_after_wake(...)`.
+- The default `build_cognitive_components(...)` path does not inject an expression preparer into the ticker.
+
+### 8.2 Blocker: CognitiveTicker still has a provider-capable legacy seam
+
+The class still accepts:
+
+`expression: ProactiveExpressionPreparer | None`
+
+and `tick()` still executes `_prepare_expression(...)` whenever that field is non-null. `_prepare_expression(...)` ultimately calls `preparer.prepare(...)`, which calls `realize_after_wake(...)` and therefore the provider.
+
+So the statement:
+
+`TICKER_PROVIDER_INVOCATION=NONE`
+
+is true only for the current production-style composition and the new test fixture, not as a source-level authority invariant.
+
+Required correction: remove the provider-capable expression seam from `CognitiveTicker` or convert it to context-only Soul preparation that cannot call the provider.
+
+### 8.3 Blocker: production composition is not actually wired end-to-end
+
+The passing tests manually attach:
+
+`orchestrator.cognitive_tick_components["expression_preparer"] = preparer`
+
+and:
+
+`orchestrator.proactive_expression_preparer = preparer`.
+
+The real `build_cognitive_components(...)` does not install an expression preparer. The production `default_adapter(...)` builds `build_runtime_stack(...)` without proactive intent rules/ticker configuration and then creates:
+
+`MindRuntimeHostAdapter(orchestrator=orchestrator)`
+
+with no proactive expression preparer. `XiyueMRAdapter` also exposes only inbound-turn operations and does not consume/run proactive wake turns.
+
+Therefore:
+
+`CONSUMER_PRODUCTION_WIRING_STATUS=PASS`
+
+is not supported by the current production composition root.
+
+### 8.4 Blocker: consume_wake is not fail-closed when lifecycle authority is absent
+
+`consume_wake(...)` performs lifecycle validation only under:
+
+`if lifecycle is not None and hasattr(lifecycle, "backend"):`
+
+If lifecycle authority is absent, the method can continue to the admitted path after the runtime check. A wake-admission authority must reject when required Intent lifecycle authority is unavailable.
+
+Required status:
+
+`WAKE_ADMISSION_FAIL_CLOSED=FAIL`
+
+### 8.5 Blocker: fallback context reconstruction synthesizes authority
+
+`_resolve_tick_context(...)` first attempts to read the in-memory pending wake context. If unavailable, it reconstructs:
+
+- a new `Situation`,
+- a `ProjectedMindState` from current state rows,
+- an `ActionPolicyResult(decision=ALLOW)` using wake fields.
+
+This is not equivalent to recovering the original admitted tick context or policy decision. In particular, the current architecture has no durable Policy decision authority for `policy_decision_ref`.
+
+The safe behavior is either:
+
+1. persist and recover the authoritative proactive execution context, or
+2. fail closed after restart/context loss.
+
+Do not synthesize an ALLOW result as a recovery substitute.
+
+### 8.6 Operational-status mismatch
+
+After Guard acceptance, `run_proactive_turn(...)` currently returns:
+
+`HostTurnStatus.COMMITTED`
+
+even though this path does not create/settle the proactive C7 delivery or external transport acknowledgement. This risks conflating "expression accepted by Guard" with "delivery committed".
+
+Use a status that means ready/processed but not delivered, or add a separate proactive lifecycle contract. Do not reuse `COMMITTED` unless the corresponding authority actually committed.
+
+### 8.7 Additional bounded debt
+
+- `HostWakeNotification` carries complete fields when created by the adapter, but its dataclass defaults allow empty `interaction_id` and `policy_decision_ref` without validation.
+- Pending wake contexts and replay/result maps are in-memory and are not restart-stable.
+- `_pending_wake_contexts` is not visibly cleared after terminal proactive execution, so long-running runtimes should address retention.
+
+### 8.8 Corrected verdict
+
+The regression counts remain valid evidence for the tested mechanisms. They do not prove real production composition or restart-safe wake execution.
+
+Corrected status:
+
+```text
+LONGING_TO_SURFACE=PASS
+SURFACE_TO_INTENT=PASS
+ACTION_POLICY_GATE=PASS
+
+CORE_CAUSAL_TEST_COMPOSITION=PASS
+HOST_WAKE_LINEAGE_VALIDATION=PASS_WHEN_AUTHORITY_PRESENT
+PROCESS_LOCAL_REPLAY=PASS
+
+TICKER_PROVIDER_CAPABILITY=FOUND
+PRODUCTION_COMPOSITION_STATUS=GAP
+WAKE_ADMISSION_FAIL_CLOSED=FAIL
+RESTART_CONTEXT_AUTHORITY=UNSAFE_FALLBACK
+PROACTIVE_DELIVERY_COMMIT=NOT_IMPLEMENTED
+
+PROACTIVE_CONTACT_CALIBRATION_GAP=FOUND
+
+POST_PUSH_SOURCE_REVIEW_VERDICT=NEEDS_TARGETED_FIX
+```
+
+Commit `57515c89...` should be retained as a useful causal-seam candidate, but not frozen as the final production closure.
