@@ -120,6 +120,33 @@ The current public repository separates deterministic/local verification from cl
 
 Detailed historical gate names remain in the architecture/certification records; they are implementation history, not required vocabulary for understanding the current runtime.
 
+For machine-verifiable compatibility with the repository's historical governance tests, the
+compressed delivery slice is retained here without making it the primary reviewer vocabulary:
+
+```text
+D7 -> D7R -> D8 -> D9 -> D10 -> D11S -> D11L -> D11 completion -> D11P
+
+Input / Evidence
+-> Factual Context
+-> Deterministic Emotional Transition
+-> Intent / Scheduler
+-> Decision Context / Expression
+```
+
+| Gate | Historical repository status |
+| --- | --- |
+| D7R | Complete |
+| D8 | Complete |
+| D9 | Complete |
+| D10 | Complete |
+| D11S | Complete |
+| D11L | Blocked |
+| D11 | Incomplete |
+| D11P | Blocked |
+
+The frozen D11 split is `D10 -> D11S -> D11L -> D11 completion -> D11P`.
+
+
 ## Current implementation boundaries
 
 The repository contains code for:

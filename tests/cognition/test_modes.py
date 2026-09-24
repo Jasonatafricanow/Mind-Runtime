@@ -157,7 +157,7 @@ def test_no_numeric_thresholds_exist_in_module() -> None:
     # Verify no numeric literal constants exist in the AST of modes.py
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant):
-            assert not (isinstance(node.value, (int, float)) and not isinstance(node.value, bool)), (
+            assert not (\n                isinstance(node.value, (int, float))\n                and not isinstance(node.value, bool)\n            ), (
                 f"Numeric literal constant {node.value} found in modes.py"
             )
 
@@ -223,7 +223,7 @@ def test_authority_invariants_and_status_markers() -> None:
 
 def test_get_cognitive_mode_spec_lookup() -> None:
     """get_cognitive_mode_spec must support enum and string lookups case-insensitively."""
-    assert get_cognitive_mode_spec(CognitiveMode.ACTIVE) == COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.ACTIVE]
+    assert (\n        get_cognitive_mode_spec(CognitiveMode.ACTIVE)\n        == COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.ACTIVE]\n    )
     assert get_cognitive_mode_spec("active") == COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.ACTIVE]
     assert get_cognitive_mode_spec("ACTIVE") == COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.ACTIVE]
     assert get_cognitive_mode_spec("dream") == COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.DREAM]
