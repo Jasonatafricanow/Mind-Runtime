@@ -76,8 +76,6 @@ Verified invariants:
 3. **No synthetic context reconstruction**: Fallback synthesis of `Situation` or `ActionPolicyResult` was deleted; missing in-memory execution context fails closed with `missing_authoritative_wake_context`.
 4. **Process-local replay**: Exactly-once idempotency is process-local (`WAKE_REPLAY_SCOPE=PROCESS_LOCAL`).
 5. **Guard accept vs delivery commit**: Guard ACCEPT returns `HostTurnStatus.PROCESSING` (not `COMMITTED`). Intent transitions to `COMPLETED` and status becomes `COMMITTED` only upon explicit `commit_proactive_turn(wake_id)`. Guard REJECT or `abort_proactive_turn` transitions intent to `SUPERSEDED` and marks `ABORTED`.
-6. **Causal trace ordering**:
-   `policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < provider_realization < expression_guard <= proactive_expression`.
 7. **Production composition & config gap**: `default_adapter` and `XiyueMRAdapter` wire real `intent_rules`, `action_policy_config`, `policy_resources`, `delivery_db`, and `expression_guard`. The certified manifest (`certification/d11s/inputs/runtime-config.json`) does not yet include proactive contact rules or SURFACE_V1 persona publication (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`), but the runtime machinery is verified and hardened.
 
 Final status:
@@ -98,7 +96,7 @@ CALIBRATION_STATUS=PROVISIONAL
 
 ### Sharing Urge V1 closure boundary
 
-Closed at task `MR-SHARING-URGE-PROACTIVE-SHARE-V1-01` (Base SHA: `87193868205931436568c0d2e7a14d0dc301f340`).
+Closed at task `MR-SHARING-URGE-PROACTIVE-SHARE-V1-01` (Base SHA: `87193868205931436568c0d2e7a14d0dc301f340`, Code Freeze Candidate: `3780d69eb8fc5b1e18e41d0a02117aa32ce137f8`).
 
 #### 1. Causal Pipeline
 ```text
@@ -109,12 +107,17 @@ agent.affect.sharing_urge
 → CognitiveTicker stops strictly at WakeSignal
 → Host validates wake lineage & authority (consume_wake)
 → Body begins proactive turn (begin_proactive_turn -> HostTurnStatus.PROCESSING)
-→ DecisionContext handed to external Body
+→ DecisionContext handed to external Body (< BODY_BOUNDARY)
 → external Body runs provider generation (content-dependent prose)
 → ExpressionGuard validates external prose (guard_proactive_prose)
 → Hermes/external transport sends message (existing delivery mechanism)
 → Host commits delivery (commit_proactive_turn -> HostTurnStatus.COMMITTED, Intent ALLOWED -> COMPLETED)
 ```
+
+The MR-side pre-Body ordering is:
+`policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < BODY_BOUNDARY`
+
+External Body then performs provider generation. When prose returns to MR, `ExpressionGuard` determines delivery eligibility. After external delivery success, `commit_proactive_turn` transitions Intent to `COMPLETED`.
 
 #### 2. Key Verified Invariants
 1. **Anti-Spam Invariant (`SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`)**:
@@ -129,8 +132,13 @@ agent.affect.sharing_urge
    Wake admission validates against real lifecycle and policy authorities. Duplicate wakes are idempotent and return `ALREADY_PROCESSED` with 0 provider calls.
 5. **Fail-Closed Guard & Explicit Delivery Commit**:
    Guard rejection (e.g. empty or forbidden openings) immediately aborts the turn (`HostTurnStatus.ABORTED`), transitions Intent to `SUPERSEDED`, and commits zero delivery. Guard acceptance transitions to `PROCESSING`; only explicit `commit_proactive_turn` marks delivery `COMMITTED` and Intent `COMPLETED`.
-6. **Delivery Mechanism Reuse**:
+6. **No Synthetic Evidence & No Raw State Provider Leak**:
+   `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items merely because `sharing_urge` is high).
+   `RAW_SHARING_URGE_PROVIDER_LEAK=NONE` (MR does not expose raw `sharing_urge` state to provider-visible context).
+   *(Note: This bounds MR context construction; it does not claim external LLM hallucination is impossible).*
+7. **Delivery Mechanism Reuse**:
    Reuses the standard proactive delivery pipeline and Hermes transport; does not introduce a secondary outbound path.
-7. **Production Activation Blocked by Config**:
+8. **Production Activation Blocked by Config**:
    Runtime machinery is fully wired and verified. Production activation is blocked by configuration pending parameter calibration (`SHARING_URGE_CALIBRATION_STATUS=PROVISIONAL`, `SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
 

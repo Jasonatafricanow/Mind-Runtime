@@ -177,7 +177,10 @@ Task: `MR-SHARING-URGE-PROACTIVE-SHARE-V1-01`
 
 ### 9.3 Invariants Enforced
 - **Anti-Spam Invariant**: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Sharing urge increases scoring pressure for spontaneous sharing; it has zero authority to shorten, bypass, or modulate `ActionPolicy` cooldowns.
+- **MR Pre-Body Ordering**: `policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < BODY_BOUNDARY`. External Body then performs provider generation. When prose returns to MR, `ExpressionGuard` determines delivery eligibility, and explicit `commit_proactive_turn` transitions Intent to `COMPLETED`.
 - **Fail-Closed Prose Guard**: Provider-generated prose is validated by `ExpressionGuard` before transport; empty or banned prose triggers `abort_proactive_turn` (`HostTurnStatus.ABORTED`), moving the Intent to `SUPERSEDED` and committing zero messages.
 - **Delivery Commitment**: Delivery is committed only via explicit `commit_proactive_turn` after external delivery.
+- **Evidence & Isolation Bounds**: `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items); `RAW_SHARING_URGE_PROVIDER_LEAK=NONE` (MR does not expose raw `sharing_urge` state to provider-visible context).
 - **Config-Gated Production Activation**: While runtime code is wired and verified, production activation is blocked by the certified manifest until calibration is completed (`SHARING_URGE_CALIBRATION_STATUS=PROVISIONAL`, `SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
 
