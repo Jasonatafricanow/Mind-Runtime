@@ -114,7 +114,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 | Fast state | Function | Next implementation work |
 |---|---|---|
 | `longing` | proactive contact | **Production hardened & architecture closed**: ticker provider capability removed; fail-closed admission against real authorities; no synthetic context reconstruction; explicit `commit_proactive_turn` transitions Intent to `COMPLETED`; real production composition wired. Certified manifest config gap noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). Calibration remains provisional. |
-| `sharing_urge` | proactive share | Define one share Intent/action consumer after longing wake boundary is closed. |
+| `sharing_urge` | proactive share | **Architecture closed & verified under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Bound directly via `dimension_weights=(("agent.affect.sharing_urge", 1.0),)` with `surface_control_weights=()`. `Surface.initiative` was rejected because it is a composite control ($0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$), inducing cross-talk from curiosity and sadness. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
 | `curiosity` | inquiry/exploration | Bind to question/retrieval Intent without turning retrieval into authority. |
 | `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |
 | `sadness` | initiative suppression | Audit existing initiative/expression coverage; prefer suppression over new action types. |
@@ -154,3 +154,30 @@ A passing causal harness is not enough to claim production wiring. Before a cons
 - configuration gaps in frozen certification inputs are explicitly recorded rather than mocked.
 
 All criteria of this checklist were satisfied during `MR-LONGING-PROACTIVE-PRODUCTION-HARDENING-V1-01`.
+
+## 9. Sharing Urge Implementation and Boundary Choices
+
+Task: `MR-SHARING-URGE-PROACTIVE-SHARE-V1-01`
+
+### 9.1 Causal Architecture
+- State: `agent.affect.sharing_urge`
+- Intent Kind: `spontaneous_share`
+- Action Type: `proactive_share` (`proactive=True`)
+- Downstream seam: `WakeSignal` → `Host.consume_wake` → `begin_proactive_turn` → external Body / provider generation → `guard_proactive_prose` → transport → `commit_proactive_turn`.
+
+### 9.2 Rationale: Why `surface_control_weights=()` was chosen over `Surface.initiative`
+1. **Cross-Talk Prevention**:
+   In Candidate Recipe v2, `Surface.initiative` is defined as:
+   $$\text{initiative} = 0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$$
+   `spontaneous_share` does not use `Surface.initiative` because `initiative` is a composite control of `sharing_urge + curiosity + sadness`. Using it would introduce cross-talk into dedicated `PROACTIVE_SHARE`, where changes in curiosity (epistemic exploration) or sadness (depressive suppression) would modulate sharing pressure even with constant `sharing_urge`.
+2. **Preserving Candidate Recipe v2 Integrity**:
+   Adding a dedicated surface control (such as `sharing_drive` or `sharing_pressure`) would alter `CANDIDATE_RECIPE_V2_DIGEST` (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`) and invalidate the frozen 5-control surface manifest.
+3. **Dedicated Dimension Weighting**:
+   By configuring `IntentRule(kind="spontaneous_share", dimension_weights=(("agent.affect.sharing_urge", 1.0),), surface_control_weights=())`, the sharing urge directly drives intent scoring with zero coupling to other affects and zero disruption to the Surface plane.
+
+### 9.3 Invariants Enforced
+- **Anti-Spam Invariant**: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Sharing urge increases scoring pressure for spontaneous sharing; it has zero authority to shorten, bypass, or modulate `ActionPolicy` cooldowns.
+- **Fail-Closed Prose Guard**: Provider-generated prose is validated by `ExpressionGuard` before transport; empty or banned prose triggers `abort_proactive_turn` (`HostTurnStatus.ABORTED`), moving the Intent to `SUPERSEDED` and committing zero messages.
+- **Delivery Commitment**: Delivery is committed only via explicit `commit_proactive_turn` after external delivery.
+- **Config-Gated Production Activation**: While runtime code is wired and verified, production activation is blocked by the certified manifest until calibration is completed (`SHARING_URGE_CALIBRATION_STATUS=PROVISIONAL`, `SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+

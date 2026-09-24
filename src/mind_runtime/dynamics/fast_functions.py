@@ -57,12 +57,21 @@ class FastStateFunctionSpec:
             object.__setattr__(self, "product_label", self.semantic_label)
 
 
+FAST_FUNCTION_V1_COUNT: Final[int] = 8
+
 FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT: Final[str] = (
     "FOLLOW_UP_PERSISTENCE != FOLLOW_UP_FREQUENCY"
 )
 
 LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
     "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
+)
+
+SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
+    "SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY"
+)
+SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY: Final[str] = (
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
 )
 
 
@@ -104,6 +113,25 @@ def validate_longing_anti_spam_invariant(
     return True
 
 
+def validate_sharing_urge_anti_spam_invariant(
+    *,
+    sharing_urge: float,
+    base_cooldown_seconds: float,
+    effective_cooldown_seconds: float,
+) -> bool:
+    """Explicit executable invariant: SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY.
+
+    Higher sharing_urge increases pressure to spontaneously share,
+    but MUST NOT shorten outbound cooldown or bypass ActionPolicy gating.
+    """
+    if effective_cooldown_seconds < base_cooldown_seconds:
+        raise ValueError(
+            f"Sharing urge anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under sharing_urge={sharing_urge}"
+        )
+    return True
+
+
 FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
     FastStateFunctionSpec(
         state_key="agent.affect.longing",
@@ -125,7 +153,12 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="Intent / share path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes="Drives spontaneous sharing of observations, thoughts, or content.",
+        notes=(
+            "Invariant: SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY. "
+            "Higher sharing_urge increases pressure to spontaneously share a thought / observation / "
+            "currently available content via dedicated Intent (spontaneous_share) and proactive ActionPolicy "
+            "(proactive_share), while frequency remains strictly governed by ActionPolicy and cooldown."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.curiosity",

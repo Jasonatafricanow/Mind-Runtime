@@ -22,14 +22,18 @@ from pathlib import Path
 import pytest
 
 from mind_runtime.dynamics.fast_functions import (
+    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
     validate_diligence_anti_spam_invariant,
+    validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.dynamics.kayla_v0 import kayla_v0_profile
 
@@ -233,3 +237,40 @@ def test_registry_immutability_and_lookup() -> None:
     )
     with pytest.raises(ValueError, match="duplicate function kind"):
         FastFunctionRegistry((spec, duplicate_kind_spec))
+
+
+def test_sharing_urge_maps_to_proactive_share() -> None:
+    """sharing_urge maps to PROACTIVE_SHARE and preserves anti-spam invariants."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.sharing_urge"]
+    assert spec.function_kind == FastFunctionKind.PROACTIVE_SHARE
+    assert spec.primary_consumer == "Intent / share path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY"
+    )
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY
+        == SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+    )
+    assert validate_sharing_urge_anti_spam_invariant(
+        sharing_urge=0.9,
+        base_cooldown_seconds=1800.0,
+        effective_cooldown_seconds=1800.0,
+    ) is True
+    with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
+        )
+
+
+def test_fast_function_v1_count_constant() -> None:
+    """FAST_FUNCTION_V1_COUNT equals 8 and matches specs and registry length."""
+    assert FAST_FUNCTION_V1_COUNT == 8
+    assert len(FAST_FUNCTION_V1_SPECS) == FAST_FUNCTION_V1_COUNT
+    assert len(FAST_FUNCTION_V1_REGISTRY) == FAST_FUNCTION_V1_COUNT
+

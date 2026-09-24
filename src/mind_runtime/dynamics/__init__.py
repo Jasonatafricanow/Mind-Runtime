@@ -7,16 +7,20 @@ from mind_runtime.dynamics.engine import (
     Impulse,
 )
 from mind_runtime.dynamics.fast_functions import (
+    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
     LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
     validate_diligence_anti_spam_invariant,
     validate_longing_anti_spam_invariant,
+    validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.dynamics.policies import (
@@ -35,6 +39,7 @@ __all__ = [
     "DynamicsResult",
     "DynamicDimensionRegistry",
     "EventOnlyPolicy",
+    "FAST_FUNCTION_V1_COUNT",
     "FAST_FUNCTION_V1_REGISTRY",
     "FAST_FUNCTION_V1_SPECS",
     "FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT",
@@ -45,6 +50,9 @@ __all__ = [
     "Impulse",
     "LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT",
     "PersonaProfile",
+    "SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY",
+    "SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT",
     "validate_diligence_anti_spam_invariant",
     "validate_longing_anti_spam_invariant",
+    "validate_sharing_urge_anti_spam_invariant",
 ]
