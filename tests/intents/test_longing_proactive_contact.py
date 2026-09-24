@@ -764,6 +764,29 @@ def test_m_action_mismatch_rejects_wake(tmp_path: Path):
     assert notif.reason in ("rejected:action_type_mismatch", "rejected:unsupported_intent_action")
 
 
+def test_m2_non_proactive_policy_rule_rejects_forged_wake(tmp_path: Path):
+    """Wake admission must re-check that the authoritative policy rule is proactive."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    current_intent = lifecycle.backend.history(wake.scope, wake.intent_id)[-1]
+    policy = orchestrator.cognitive_tick_components["policy"]
+    authoritative_rule = policy._rules[current_intent.kind]
+    policy._rules[current_intent.kind] = replace(authoritative_rule, proactive=False)
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    notif = adapter.consume_wake(wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:intent_not_proactive"
+
+
 def test_n_valid_authoritative_wake_admits(tmp_path: Path):
     """Test N: valid authoritative wake -> admit."""
     orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)

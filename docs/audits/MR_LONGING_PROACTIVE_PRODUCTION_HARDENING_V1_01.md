@@ -116,3 +116,21 @@ The longing fast-state proactive-contact path is hardened, verified, and closed 
 - `PRODUCTION_COMPOSITION_STATUS`: WIRED
 - `PROACTIVE_RUNTIME_CONFIG_GAP`: FOUND
 - `CORE_CAUSAL_TEST_COMPOSITION`: PASS
+
+
+---
+
+## Post-review proactive-rule admission hardening
+
+A final source review found one remaining admission invariant: Host wake admission
+validated Intent status/version and action-type mapping, but did not re-check that
+the authoritative ActionPolicy rule itself was marked `proactive=True`.
+
+The Host boundary now rejects a forged or stale WakeSignal backed by a non-proactive
+allowed Intent with:
+
+`rejected:intent_not_proactive`
+
+This matters because `policy_decision_ref` is not backed by a durable decision
+store in V1. The proactive flag on the authoritative policy rule is therefore part
+of the minimum fail-closed wake admission check.
