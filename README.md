@@ -105,36 +105,20 @@ MR has an optional one-way adapter under `src/mind_runtime/integrations/lce.py`.
 
 LCE is a separate repository. MR can consume its output as external context, but LCE is not vendored into MR Core and does not directly write MR state.
 
-## Architecture gate status
+## Verified status
 
-The current public architecture sequence is:
+The current public repository separates deterministic/local verification from claims that still require live external evidence.
 
-```text
-D7 -> D7R -> D8 -> D9 -> D10 -> D11S -> D11L -> D11 completion -> D11P
+| Area | Public status | Evidence |
+| --- | --- | --- |
+| Persistent state, bindings, commit/abort, restart recovery | Implemented and regression-tested | `src/mind_runtime/`, `tests/`, restart validation |
+| Deterministic certification | Implemented | `certification/`, validation tests, current CI |
+| Observation Window | Implemented as a read-only inspection surface | `src/observation_window/` |
+| LCE integration | Optional, one-way adapter | `src/mind_runtime/integrations/lce.py`, architecture records |
+| Live shadow validation | Incomplete / externally blocked | certification and architecture records |
+| General-purpose longitudinal cognition inside MR | Not a product claim | longitudinal research remains separate or bounded |
 
-Input / Evidence
--> Factual Context
--> Deterministic Emotional Transition
--> Intent / Scheduler
--> Decision Context / Expression
-```
-
-| Gate | Status |
-| --- | --- |
-| D7R | Complete |
-| D8 | Complete |
-| D9 | Complete |
-| D10 | Complete |
-| D11S | Complete |
-| D11L | Blocked |
-| D11 | Incomplete |
-| D11P | Blocked |
-
-The certification split after D10 is:
-
-`D10 -> D11S -> D11L -> D11 completion -> D11P`
-
-These labels are repository gate states, not claims that every experimental path is production-complete.
+Detailed historical gate names remain in the architecture/certification records; they are implementation history, not required vocabulary for understanding the current runtime.
 
 ## Current implementation boundaries
 
