@@ -29,3 +29,66 @@ Fast states exist solely to drive concrete behavioral and cognitive functions wi
 ## Open Semantic Appraisal Boundary
 
 Open semantic Appraisal may contain unlimited meanings. FAST_FUNCTION_V1 does not attempt to enumerate human emotion. Unsupported meanings remain unmapped rather than creating new state dimensions.
+
+## Implementation Status Is Separate from Contract Status
+
+`FastStateStatus.ACTIVE` means the fast-state contract/state key is admitted and available to runtime composition. It does **not** mean that the declared product consumer is fully wired end-to-end.
+
+Consumer closure is tracked separately:
+
+| State | Functional contract | Current consumer implementation |
+|---|---|---|
+| `agent.affect.longing` | `PROACTIVE_CONTACT` | **MR-side wake path implemented**: Dynamics → Surface `contact_seeking` → Intent → ActionPolicy → `WakeSignal`. The public Body-start path is not yet production-wired from that wake. |
+| `agent.affect.sharing_urge` | `PROACTIVE_SHARE` | Contract locked; dedicated consumer binding not yet certified. |
+| `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | Contract locked; dedicated consumer binding not yet certified. |
+| `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | Existing Surface/Intent/expression roots exist; no new V1 consumer certification is implied by this registry. |
+| `agent.affect.sadness` | `INITIATIVE_SUPPRESSION` | Existing initiative/expression roots exist; no new V1 consumer certification is implied by this registry. |
+| `agent.affect.restlessness` | `ACTIVITY_WAKE` | Contract locked; dedicated activity-wake consumer not yet certified. |
+| `agent.affect.diligence_pressure` | `FOLLOW_UP_PERSISTENCE` | Contract locked; dedicated unresolved-item persistence consumer not yet certified. |
+| `agent.affect.fatigue` | `COGNITIVE_REST_PRESSURE` | `REGISTERED_ONLY`; no canonical dynamics or sleep/daydream consumer yet. |
+
+### Longing V1 source-review boundary
+
+Frozen code baseline:
+
+`LONGING_PROACTIVE_WAKE_V1_SHA = e48ce1ecacfbc7758359b6721dcfe84dd563e832`
+
+What is verified at that SHA:
+
+```text
+longing
+→ Surface.contact_seeking
+→ proactive Intent
+→ ActionPolicy
+→ WakeSignal
+```
+
+What is **not** yet verified as one production execution chain:
+
+```text
+WakeSignal
+→ Host consumes and validates wake lineage
+→ Body starts proactive turn
+→ DecisionContext
+→ provider generation
+→ ExpressionGuard
+→ external delivery
+```
+
+At the frozen SHA, `CognitiveTicker.tick()` still prepares proactive expression before constructing the `WakeSignal`; `run_cognitive_tick()` returns the report but does not itself invoke `MindRuntimeHostAdapter.consume_wake()`. Therefore tests that observe both a wake and a proactive expression in the same tick prove coexistence, not wake-caused Body execution.
+
+The final negative-pole target remains:
+
+```text
+ActionPolicy ALLOW
+→ WakeSignal
+→ Host/Adapter
+→ Body proactive turn
+→ DecisionContext
+→ provider
+→ ExpressionGuard
+→ C7 / external delivery
+```
+
+Do not use provider generation inside the ticker as evidence that the wake-to-Body boundary is closed.
+

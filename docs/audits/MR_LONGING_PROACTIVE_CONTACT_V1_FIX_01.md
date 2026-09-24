@@ -239,3 +239,112 @@ PROACTIVE_BODY_ENTRY_GAP=NONE
 PROACTIVE_CONTACT_CALIBRATION_GAP=FOUND
 FINAL VERDICT: LONGING_PROACTIVE_WAKE_V1_READY
 ```
+
+---
+
+## 13. Post-Freeze Source Review (2026-09-24)
+
+A direct source review of frozen commit `e48ce1ecacfbc7758359b6721dcfe84dd563e832` found that the MR-side wake boundary is cleaner than the pre-fix implementation, but several claims in Sections 4, 5, 7, 10, and 12 overstate end-to-end closure.
+
+### 13.1 Verified
+
+The following claims remain valid:
+
+- `CognitiveTicker` no longer imports or constructs `DeliveryRequest`.
+- `CognitiveTicker` no longer owns a delivery backend.
+- `longing` influences `contact_seeking` through the admitted Surface recipe rather than a direct raw-Dynamics Intent read.
+- ActionPolicy denial/cooldown can suppress `WakeSignal` generation.
+- `WakeSignal` is immutable and does not expose raw affect, Persona, or Surface vectors.
+- `WakeSignal` does not fabricate an inbound user message or DeliveryReceipt.
+- SSE/network transport remains downstream of MR.
+
+### 13.2 Ordering gap: expression currently precedes wake construction
+
+The current `CognitiveTicker.tick()` order is:
+
+```text
+selection = ActionPolicy result
+→ _prepare_expression(...)
+→ construct WakeSignal
+→ return CognitiveTickReport
+```
+
+Therefore the current code does **not** implement the documented causal sequence:
+
+```text
+WakeSignal
+→ Body starts proactive turn
+→ DecisionContext/provider/ExpressionGuard
+```
+
+The existing expression path remains an internal C5C would-send preparation path invoked by the ticker. A test that observes both `report.wake_signal` and `report.proactive_expression` does not prove that the wake caused the Body/expression path.
+
+### 13.3 Production wiring gap: wake is returned, not consumed
+
+`run_cognitive_tick()` currently returns `CognitiveTickReport`. It does not call `MindRuntimeHostAdapter.consume_wake()` and does not otherwise dispatch the wake to a Host/Body runtime.
+
+`MindRuntimeHostAdapter.consume_wake()` exists as a typed boundary method, but current production composition does not connect the returned `WakeSignal` to that method automatically.
+
+Accordingly:
+
+`PROACTIVE_WAKE_CONTRACT=READY`
+
+`PROACTIVE_WAKE_TO_BODY_WIRING=GAP`
+
+### 13.4 Host wake validation is currently type-level only
+
+`MindRuntimeHostAdapter.consume_wake()` currently checks that the input is a `WakeSignal` and then returns `HostWakeNotification(eligible=True)`.
+
+It does not currently verify, against authoritative runtime state:
+
+- runtime identity,
+- scope/binding identity,
+- that `policy_decision_ref` belongs to the admitted ALLOW decision,
+- that the referenced Intent remains the expected allowed version,
+- replay/duplicate wake identity.
+
+The audit text above previously stated that `consume_wake` "validates wake invariants" and emits a `host_consume_wake` trace event. The current source does not support that stronger claim.
+
+### 13.5 Host notification drops part of wake lineage
+
+`WakeSignal` carries `policy_decision_ref`, `interaction_id`, `reason`, and `intent_version`.
+
+`HostWakeNotification` currently carries only:
+
+`wake_id, runtime_id, scope, intent_id, action_type, occurred_at, eligible`.
+
+If downstream Body execution is expected to validate the wake independently, either the notification must preserve sufficient provenance or the Host must resolve the omitted references from an authoritative store before execution.
+
+### 13.6 Typed-boundary debt in proactive expression preparation
+
+`ProactiveExpressionPreparer.prepare()` currently accepts `surface: object | None`, passes it with a type-ignore, and reads `_compiler._config` and `_orchestrator._persona` private fields to reconstruct Surface/Persona metadata.
+
+This is functional integration debt, not a second authority by itself, but it should be replaced by explicit typed inputs before treating the proactive Body path as a stable public seam.
+
+### 13.7 Corrected status
+
+The original regression counts remain evidence that the tested mechanisms passed at the frozen SHA. They do not establish the missing causal wiring described above.
+
+Corrected source-review status:
+
+```text
+LONGING_TO_SURFACE=PASS
+SURFACE_TO_PROACTIVE_INTENT=PASS
+ACTION_POLICY_GATE=PASS
+TICKER_DELIVERY_AUTHORITY_REMOVED=PASS
+WAKE_SIGNAL_TYPED_CONTRACT=PASS
+HOST_WAKE_ADAPTER_TYPE_SEAM=PASS
+
+WAKE_TO_BODY_PRODUCTION_WIRING=GAP
+PROACTIVE_EXPRESSION_ORDERING=PRE_WAKE_IN_TICK
+HOST_WAKE_LINEAGE_VALIDATION=INCOMPLETE
+HOST_WAKE_NOTIFICATION_LINEAGE=PARTIAL
+PROACTIVE_BODY_ENTRY_GAP=FOUND
+
+PROACTIVE_CONTACT_CALIBRATION_GAP=FOUND
+
+POST_FREEZE_SOURCE_REVIEW_VERDICT=NEEDS_TARGETED_FIX
+```
+
+The frozen SHA remains useful as the **MR-side longing-to-wake baseline**. It should not be described as a fully closed `longing → Body proactive turn → external delivery` production chain until the wake is the actual cause of Body entry and the Host validates its lineage.
+
