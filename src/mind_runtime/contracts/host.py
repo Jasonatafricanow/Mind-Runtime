@@ -38,9 +38,6 @@ from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
 
-if TYPE_CHECKING:
-    from mind_runtime.cognition.express import ProactiveExpressionArtifact
-
 
 # ---------------------------------------------------------------------------
 # Status enums
@@ -427,7 +424,7 @@ class HostWakeNotification:
 
 @dataclass(frozen=True, slots=True)
 class HostProactiveTurnResult:
-    """PUBLIC. What a Host gets back from begin_proactive_turn / run_proactive_turn.
+    """PUBLIC. What a Host gets back from begin_proactive_turn.
 
     Deliberately does NOT include raw affect, AppraisalResult,
     ProjectedMindState, AssessmentTrace, or any other MR internal object.
@@ -440,10 +437,9 @@ class HostProactiveTurnResult:
     decision_context_ref: str | None
     expression_ref: str | None
     debug_ref: str
-    bounded_context: dict[str, Any] | None = None
+    bounded_context: HostDecisionContext | None = None
     disposition: ExpressionDisposition | None = None
     would_send: str | None = None
-    proactive_expression: ProactiveExpressionArtifact | None = None
     reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -466,14 +462,21 @@ class HostProactiveTurnResult:
             "decision_context_ref": self.decision_context_ref,
             "expression_ref": self.expression_ref,
             "debug_ref": self.debug_ref,
-            "bounded_context": self.bounded_context,
-            "disposition": self.disposition.value if self.disposition is not None else None,
-            "would_send": self.would_send,
-            "proactive_expression": (
-                self.proactive_expression.as_dict()
-                if self.proactive_expression is not None
+            "bounded_context": (
+                {
+                    "intent_summary": self.bounded_context.intent_summary,
+                    "emotional_state": self.bounded_context.emotional_state,
+                    "situation_summary": self.bounded_context.situation_summary,
+                    "action_taken": self.bounded_context.action_taken,
+                    "next_steps": self.bounded_context.next_steps,
+                    "cognitive_meaning": self.bounded_context.cognitive_meaning,
+                    "provider_envelope_text": self.bounded_context.provider_envelope_text,
+                }
+                if self.bounded_context is not None
                 else None
             ),
+            "disposition": self.disposition.value if self.disposition is not None else None,
+            "would_send": self.would_send,
             "reason_codes": list(self.reason_codes),
         }
 

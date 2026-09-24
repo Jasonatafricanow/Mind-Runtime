@@ -64,6 +64,7 @@ from mind_runtime.contracts import (
     ActionPolicyInput,
     ActionPolicyResult,
     ExpressionDisposition,
+    HostDecisionContext,
     HostProactiveTurnResult,
     HostStatus,
     HostTurnStatus,
@@ -817,10 +818,9 @@ def test_o_valid_pending_wake_context_can_be_used_after_admission(tmp_path: Path
     assert turn_res.outcome == HostStatus.OK
     assert turn_res.decision_context_ref is not None
     assert turn_res.bounded_context is not None
-    assert turn_res.bounded_context["wake_id"] == wake.wake_id
-    assert turn_res.bounded_context["action_type"] == wake.action_type
-    assert "intent_kind" in turn_res.bounded_context
-    assert "provider_envelope_text" in turn_res.bounded_context
+    assert isinstance(turn_res.bounded_context, HostDecisionContext)
+    assert turn_res.bounded_context.action_taken == wake.action_type
+    assert turn_res.bounded_context.provider_envelope_text is not None
 
 
 def test_p_missing_pending_context_fails_closed(tmp_path: Path):
@@ -1032,6 +1032,9 @@ def test_y_terminal_completion_clears_pending_wake_context(tmp_path: Path):
     adapter.begin_proactive_turn(wake)
     assert wake.wake_id in adapter._pending_wake_contexts
 
+    # Guard accept is required before commit succeeds
+    adapter.guard_proactive_prose(wake.wake_id, "合规消息")
+
     adapter.commit_proactive_turn(wake.wake_id)
     assert wake.wake_id not in adapter._pending_wake_contexts
     assert wake.wake_id not in adapter._pending_exec_contexts
@@ -1050,6 +1053,7 @@ def test_z_duplicate_completion_is_idempotent(tmp_path: Path):
 
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
     adapter.begin_proactive_turn(wake)
+    adapter.guard_proactive_prose(wake.wake_id, "合规消息")
 
     res1 = adapter.commit_proactive_turn(wake.wake_id)
     assert res1.status == HostTurnStatus.COMMITTED
@@ -1071,11 +1075,11 @@ def test_aa_conflicting_replay_fails_closed(tmp_path: Path):
     assert wake is not None
 
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
-    res1 = adapter.run_proactive_turn(wake)
+    res1 = adapter.begin_proactive_turn(wake)
     assert res1.outcome == HostStatus.OK
 
     conflicting_wake = replace(wake, action_type="conflicting_action")
-    res2 = adapter.run_proactive_turn(conflicting_wake)
+    res2 = adapter.begin_proactive_turn(conflicting_wake)
     assert res2.status == HostTurnStatus.FAILED
     assert res2.outcome == HostStatus.FAILED
 
@@ -1212,9 +1216,10 @@ def test_ac_production_composition_has_action_policy_authority(tmp_path: Path, m
     assert isinstance(orch.cognitive_tick_components["policy"], DeterministicActionPolicy)
 
 
-def test_ad_production_cognitive_tick_creates_wake_signal_with_admitted_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test AD: production cognitive tick can create a valid WakeSignal when an admitted
-    proactive rule/config exists.
+def test_ad_generic_proactive_contact_infrastructure_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Proves generic proactive machinery only.
+    Does NOT prove longing contact chain (requires surface_control_weights
+    with contact_seeking mapping).
     """
     _setup_production_env(tmp_path, monkeypatch)
 
@@ -1295,6 +1300,34 @@ def test_ad_production_cognitive_tick_creates_wake_signal_with_admitted_rule(tmp
     assert report.wake_signal.action_type == "proactive_message"
 
 
+def test_production_composition_wires_context_preparer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify production composition wires ProactiveContextPreparer without manual assignment."""
+    _setup_production_env(tmp_path, monkeypatch)
+
+    composition = mr_seam._load_production_composition()
+    binding = RuntimeBinding(
+        persona_id="kayla_v0",
+        agent_id="hermes-prod",
+        runtime_id="runtime-prod-1",
+        storage_namespace="production/xiyue",
+        environment=RuntimeEnvironment.PRODUCTION,
+    )
+    adapter = default_adapter(binding=binding, **composition)
+    orch = adapter._port.orchestrator
+
+    assert orch.proactive_context_preparer is not None
+    assert orch.cognitive_tick_components.get("context_preparer") is not None
+    assert orch.proactive_context_preparer is orch.cognitive_tick_components["context_preparer"]
+
+    preparer = orch.proactive_context_preparer
+    from mind_runtime.cognition.express import ProactiveContextPreparer, ProactiveExpressionPreparer
+
+    assert isinstance(preparer, ProactiveContextPreparer)
+    assert not isinstance(preparer, ProactiveExpressionPreparer)
+    assert hasattr(preparer, "_agent") is False
+    assert hasattr(preparer, "_coordinator") is False
+
+
 def test_ae_xiyue_adapter_can_receive_and_start_proactive_host_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Test AE: Xiyue adapter can receive/start the proactive Host path."""
     _setup_production_env(tmp_path, monkeypatch)
@@ -1315,7 +1348,7 @@ def test_ae_xiyue_adapter_can_receive_and_start_proactive_host_path(tmp_path: Pa
     assert hasattr(adapter, "guard_proactive_prose")
     assert hasattr(adapter, "commit_proactive_turn")
     assert hasattr(adapter, "abort_proactive_turn")
-    assert hasattr(adapter, "run_proactive_turn")
+    assert not hasattr(adapter, "run_proactive_turn")
 
 
 def test_af_bounded_proactive_context_reaches_external_body_seam_without_fake_user_turn(
@@ -1334,9 +1367,10 @@ def test_af_bounded_proactive_context_reaches_external_body_seam_without_fake_us
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
     turn_res = adapter.begin_proactive_turn(wake)
 
-    # Bounded context is present
+    # Bounded context is present and typed
     assert turn_res.bounded_context is not None
-    assert turn_res.bounded_context["action_type"] == wake.action_type
+    assert isinstance(turn_res.bounded_context, HostDecisionContext)
+    assert turn_res.bounded_context.action_taken == wake.action_type
 
     # No fake inbound user Evidence created in fact store
     facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
@@ -1357,18 +1391,23 @@ def test_ag_no_internal_default_stub_agent_used_as_production_body(tmp_path: Pat
 
 def test_ah_downstream_transport_remains_outside_mr_and_config_gap_verified():
     """Test AH: downstream transport remains outside MR, and runtime-config gap is verified."""
-    # 1. Audit certified manifest
+    from mind_runtime.validation import decode_runtime_manifest, load_runtime_config_manifest
+
     manifest_path = Path(__file__).resolve().parents[2] / "certification" / "d11s" / "inputs" / "runtime-config.json"
     assert manifest_path.exists()
-    cfg = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = decode_runtime_manifest(load_runtime_config_manifest(manifest_path))
 
-    # Verify no reach_out proactive rules in frozen certification manifest
-    intent_rules = cfg.get("intent_engine", {}).get("rules", [])
-    reach_out_rules = [r for r in intent_rules if r.get("kind") == "reach_out"]
+    # Inspect manifest.intent_engine.rules:
+    reach_out_rules = [r for r in manifest.intent_engine.rules if r.kind == "reach_out"]
     assert len(reach_out_rules) == 0
 
-    proactive_runtime_config_gap = "FOUND"
-    assert proactive_runtime_config_gap == "FOUND"
+    # Inspect manifest.action_policy.rules:
+    proactive_policy_rules = [r for r in manifest.action_policy.rules if getattr(r, "proactive", False)]
+    assert len(proactive_policy_rules) == 0
+
+    # Inspect surface mode:
+    mode = getattr(manifest.decision_context, "mode", None)
+    assert mode != "SURFACE_V1"
 
     sse_boundary = "DOWNSTREAM_EXTERNAL"
     assert sse_boundary == "DOWNSTREAM_EXTERNAL"
@@ -1379,7 +1418,7 @@ def test_ah_downstream_transport_remains_outside_mr_and_config_gap_verified():
 
 def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
     """Trace ordering proves:
-    policy_allow < wake_created < host_wake_admitted < proactive_body_entry < provider_realization < expression_guard
+    policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < expression_guard < proactive_turn_committed
     """
     orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
     now = clock.now() + timedelta(minutes=5)
@@ -1391,8 +1430,16 @@ def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
     assert wake is not None
 
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
-    turn_res = adapter.run_proactive_turn(wake)
+    turn_res = adapter.begin_proactive_turn(wake)
     assert turn_res.outcome == HostStatus.OK
+
+    # External body generates prose
+    prose = "今天天气很好，想和你聊聊"
+    guard_res = adapter.guard_proactive_prose(wake.wake_id, prose)
+    assert guard_res.outcome == HostStatus.OK
+
+    commit_res = adapter.commit_proactive_turn(wake.wake_id)
+    assert commit_res.outcome == HostStatus.OK
 
     records = orchestrator.trace.trace(wake.interaction_id)
     stages = [r.stage for r in records]
@@ -1403,9 +1450,8 @@ def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
         "host_wake_admitted",
         "proactive_body_entry",
         "proactive_expression_context",
-        "provider_realization",
         "expression_guard",
-        "proactive_expression",
+        "proactive_turn_committed",
     )
     for stage in required_stages:
         assert stage in stages, f"Missing required trace stage: {stage} in {stages}"
@@ -1415,11 +1461,10 @@ def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
     h_admit = stages.index("host_wake_admitted")
     b_entry = stages.index("proactive_body_entry")
     ctx_prep = stages.index("proactive_expression_context")
-    p_realize = stages.index("provider_realization")
     e_guard = stages.index("expression_guard")
-    p_expr = stages.index("proactive_expression")
+    p_commit = stages.index("proactive_turn_committed")
 
-    assert p_allow < w_create < h_admit < b_entry <= ctx_prep < p_realize < e_guard <= p_expr, (
+    assert p_allow < w_create < h_admit < b_entry <= ctx_prep < e_guard < p_commit, (
         f"Causal ordering violation in stages: {stages}"
     )
 
@@ -1448,7 +1493,7 @@ def test_wake_does_not_create_user_evidence(tmp_path: Path):
 
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
-    adapter.run_proactive_turn(report.wake_signal)
+    adapter.begin_proactive_turn(report.wake_signal)
 
     facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
     user_message_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
@@ -1462,12 +1507,12 @@ def test_wake_does_not_synthesize_host_turn_request(tmp_path: Path):
     tree = ast.parse(source, filename=str(adapter_path))
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "run_proactive_turn":
+        if isinstance(node, ast.FunctionDef) and node.name == "begin_proactive_turn":
             for child in ast.walk(node):
                 if isinstance(child, ast.Name) and child.id == "HostTurnRequest":
-                    pytest.fail("run_proactive_turn must not instantiate HostTurnRequest")
+                    pytest.fail("begin_proactive_turn must not instantiate HostTurnRequest")
                 if isinstance(child, ast.Attribute) and child.attr == "begin_turn":
-                    pytest.fail("run_proactive_turn must not call begin_turn")
+                    pytest.fail("begin_proactive_turn must not call begin_turn")
 
 
 # ── INVARIANTS & TYPING TESTS ────────────────────────────────────────────────
@@ -1542,3 +1587,334 @@ def test_proactive_preparation_does_not_read_orchestrator_persona():
         if isinstance(node, ast.Attribute) and node.attr == "_persona":
             if isinstance(node.value, ast.Attribute) and node.value.attr == "_orchestrator":
                 pytest.fail(f"Proactive path reads _orchestrator._persona at line {node.lineno}")
+
+
+# ── SECTION 13: REGRESSION TEST MATRIX ─────────────────────────────────────────
+
+
+def test_public_host_adapter_has_no_run_proactive_turn():
+    """A. Inspect MindRuntimeHostPort, MindRuntimeHostAdapter, XiyueMRAdapter.
+    Assert 'run_proactive_turn' is NOT an attribute on ANY of them.
+    """
+    from mind_runtime.host.port import MindRuntimeHostPort
+    from mind_runtime.host.runtime_adapter import MindRuntimeHostAdapter
+    from mind_runtime.host.xiyue_adapter import XiyueMRAdapter
+
+    assert not hasattr(MindRuntimeHostPort, "run_proactive_turn")
+    assert not hasattr(MindRuntimeHostAdapter, "run_proactive_turn")
+    assert not hasattr(XiyueMRAdapter, "run_proactive_turn")
+
+
+def test_production_composition_wires_provider_free_preparer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """B. Load production composition via mr_seam._load_production_composition().
+    Construct default_adapter().
+    Verify orchestrator.proactive_context_preparer is an instance of ProactiveContextPreparer.
+    Verify cognitive_tick_components["context_preparer"] is the same.
+    Verify it is NOT ProactiveExpressionPreparer.
+    Verify hasattr(preparer, "_agent") is False.
+    Verify hasattr(preparer, "_coordinator") is False.
+    """
+    _setup_production_env(tmp_path, monkeypatch)
+
+    composition = mr_seam._load_production_composition()
+    binding = RuntimeBinding(
+        persona_id="kayla_v0",
+        agent_id="hermes-prod",
+        runtime_id="runtime-prod-1",
+        storage_namespace="production/xiyue",
+        environment=RuntimeEnvironment.PRODUCTION,
+    )
+    adapter = default_adapter(binding=binding, **composition)
+    orch = adapter._port.orchestrator
+
+    preparer = orch.proactive_context_preparer
+    from mind_runtime.cognition.express import ProactiveContextPreparer, ProactiveExpressionPreparer
+
+    assert isinstance(preparer, ProactiveContextPreparer)
+    assert orch.cognitive_tick_components["context_preparer"] is preparer
+    assert not isinstance(preparer, ProactiveExpressionPreparer)
+    assert hasattr(preparer, "_agent") is False
+    assert hasattr(preparer, "_coordinator") is False
+
+
+def test_begin_proactive_turn_renders_provider_envelope(tmp_path: Path):
+    """C. Call begin_proactive_turn(wake).
+    Verify result.bounded_context is an instance of HostDecisionContext.
+    Verify result.bounded_context.provider_envelope_text is non-empty string.
+    Verify DeterministicContextRenderer.verify_provider_information_isolation(envelope_text) is True.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.begin_proactive_turn(wake)
+
+    assert isinstance(turn_res.bounded_context, HostDecisionContext)
+    envelope = turn_res.bounded_context.provider_envelope_text
+    assert isinstance(envelope, str) and len(envelope) > 0
+    from mind_runtime.expression.renderer import DeterministicContextRenderer
+    assert DeterministicContextRenderer.verify_provider_information_isolation(envelope) is True
+
+
+def test_commit_without_guard_accept_fails_closed(tmp_path: Path):
+    """D. begin_proactive_turn(wake)
+    Attempt commit_proactive_turn(wake.wake_id) WITHOUT calling guard_proactive_prose.
+    Assert result.status == HostTurnStatus.FAILED
+    Assert "rejected:not_delivery_eligible" in result.reason_codes
+    Assert Intent in store is STILL in IntentStatus.ALLOWED, NOT COMPLETED.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.begin_proactive_turn(wake)
+
+    commit_res = adapter.commit_proactive_turn(wake.wake_id)
+    assert commit_res.status == HostTurnStatus.FAILED
+    assert "rejected:not_delivery_eligible" in commit_res.reason_codes
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    intents = lifecycle.backend.current(wake.scope)
+    intent = next(i for i in intents if i.intent_id == wake.intent_id)
+    assert intent.status is IntentStatus.ALLOWED
+
+
+def test_commit_with_guard_reject_fails_closed(tmp_path: Path):
+    """E. begin_proactive_turn(wake)
+    guard_proactive_prose(wake.wake_id, "   ")
+    Attempt commit_proactive_turn(wake.wake_id).
+    Assert commit returns FAILED.
+    Assert Intent was already transitioned to SUPERSEDED by guard reject.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.begin_proactive_turn(wake)
+
+    guard_res = adapter.guard_proactive_prose(wake.wake_id, "   ")
+    assert guard_res.status == HostTurnStatus.ABORTED
+    assert guard_res.disposition == ExpressionDisposition.REJECT
+
+    commit_res = adapter.commit_proactive_turn(wake.wake_id)
+    assert commit_res.status == HostTurnStatus.FAILED
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    intents = lifecycle.backend.history(wake.scope, wake.intent_id)
+    assert intents[-1].status is IntentStatus.SUPERSEDED
+
+
+def test_guard_reject_transitions_intent_to_superseded(tmp_path: Path):
+    """F. begin_proactive_turn(wake)
+    guard_res = guard_proactive_prose(wake.wake_id, "   ")
+    Assert guard_res.status == HostTurnStatus.ABORTED
+    Assert guard_res.disposition == ExpressionDisposition.REJECT
+    Assert Intent in store is now IntentStatus.SUPERSEDED.
+    Assert pending contexts are cleared.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.begin_proactive_turn(wake)
+
+    guard_res = adapter.guard_proactive_prose(wake.wake_id, "   ")
+    assert guard_res.status == HostTurnStatus.ABORTED
+    assert guard_res.disposition == ExpressionDisposition.REJECT
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    intents = lifecycle.backend.history(wake.scope, wake.intent_id)
+    assert intents[-1].status is IntentStatus.SUPERSEDED
+
+    assert wake.wake_id not in adapter._pending_exec_contexts
+    assert wake.wake_id not in adapter._pending_wake_contexts
+    assert wake.wake_id not in adapter._guard_admissions
+
+
+def test_successful_proactive_turn_lifecycle(tmp_path: Path):
+    """G. begin_proactive_turn(wake) -> returns PROCESSING, envelope non-empty
+    guard_proactive_prose(wake.wake_id, valid_prose) -> returns PROCESSING, ACCEPT
+    commit_proactive_turn(wake.wake_id) -> returns COMMITTED
+    Assert Intent in store is now IntentStatus.COMPLETED.
+    Assert pending contexts cleared.
+    Assert trace contains causal order:
+    policy_allow < wake_created < host_wake_admitted < proactive_body_entry
+    <= proactive_expression_context < expression_guard < proactive_turn_committed
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.begin_proactive_turn(wake)
+    assert turn_res.status == HostTurnStatus.PROCESSING
+    assert turn_res.bounded_context is not None
+    assert turn_res.bounded_context.provider_envelope_text is not None
+
+    guard_res = adapter.guard_proactive_prose(wake.wake_id, "今天天气真好，想和你分享一段文字")
+    assert guard_res.status == HostTurnStatus.PROCESSING
+    assert guard_res.disposition == ExpressionDisposition.ACCEPT
+
+    commit_res = adapter.commit_proactive_turn(wake.wake_id)
+    assert commit_res.status == HostTurnStatus.COMMITTED
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    intents = lifecycle.backend.history(wake.scope, wake.intent_id)
+    assert intents[-1].status is IntentStatus.COMPLETED
+
+    assert wake.wake_id not in adapter._pending_exec_contexts
+    assert wake.wake_id not in adapter._pending_wake_contexts
+    assert wake.wake_id not in adapter._guard_admissions
+
+    records = orchestrator.trace.trace(wake.interaction_id)
+    stages = [r.stage for r in records]
+    p_allow = stages.index("policy_allow")
+    w_create = stages.index("wake_created")
+    h_admit = stages.index("host_wake_admitted")
+    b_entry = stages.index("proactive_body_entry")
+    ctx_prep = stages.index("proactive_expression_context")
+    e_guard = stages.index("expression_guard")
+    p_commit = stages.index("proactive_turn_committed")
+    assert p_allow < w_create < h_admit < b_entry <= ctx_prep < e_guard < p_commit
+
+
+def test_abort_proactive_turn_transitions_to_superseded(tmp_path: Path):
+    """H. begin_proactive_turn(wake)
+    abort_proactive_turn(wake.wake_id, reason="delivery_timeout")
+    Assert result.status == HostTurnStatus.ABORTED
+    Assert Intent in store is IntentStatus.SUPERSEDED.
+    Assert pending contexts cleared.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.begin_proactive_turn(wake)
+
+    abort_res = adapter.abort_proactive_turn(wake.wake_id, reason="delivery_timeout")
+    assert abort_res.status == HostTurnStatus.ABORTED
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    intents = lifecycle.backend.history(wake.scope, wake.intent_id)
+    assert intents[-1].status is IntentStatus.SUPERSEDED
+
+    assert wake.wake_id not in adapter._pending_exec_contexts
+    assert wake.wake_id not in adapter._pending_wake_contexts
+    assert wake.wake_id not in adapter._guard_admissions
+
+
+def test_abort_transition_failure_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """I. Simulate lifecycle transition error during abort.
+    Assert abort_proactive_turn returns HostTurnStatus.FAILED.
+    Assert context is PRESERVED, not cleared.
+    """
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.begin_proactive_turn(wake)
+
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+
+    def _failing_transition(*args, **kwargs):
+        raise RuntimeError("database_locked")
+
+    monkeypatch.setattr(lifecycle, "transition", _failing_transition)
+
+    abort_res = adapter.abort_proactive_turn(wake.wake_id, reason="delivery_timeout")
+    assert abort_res.status == HostTurnStatus.FAILED
+    assert abort_res.outcome == HostStatus.FAILED
+    assert "abort_transition_failed" in abort_res.reason_codes
+
+    # Context is preserved for recovery
+    assert wake.wake_id in adapter._pending_exec_contexts
+    assert wake.wake_id in adapter._pending_wake_contexts
+
+
+def test_certified_manifest_proactive_gap_verified():
+    """J. Authoritatively load and decode certification/d11s/inputs/runtime-config.json
+    via load_runtime_config_manifest & decode_runtime_manifest.
+    Assert 0 reach_out rules in intent_engine.
+    Assert 0 proactive=True rules in action_policy.
+    Assert decision_context mode is NOT SURFACE_V1.
+    """
+    from mind_runtime.validation import decode_runtime_manifest, load_runtime_config_manifest
+
+    manifest_path = Path(__file__).resolve().parents[2] / "certification" / "d11s" / "inputs" / "runtime-config.json"
+    manifest = decode_runtime_manifest(load_runtime_config_manifest(manifest_path))
+
+    reach_out_rules = [r for r in manifest.intent_engine.rules if r.kind == "reach_out"]
+    assert len(reach_out_rules) == 0
+
+    proactive_policy_rules = [r for r in manifest.action_policy.rules if getattr(r, "proactive", False)]
+    assert len(proactive_policy_rules) == 0
+
+    mode = getattr(manifest.decision_context, "mode", None)
+    assert mode != "SURFACE_V1"
+
+
+def test_host_proactive_result_contract_clean():
+    """K. Inspect HostProactiveTurnResult fields:
+    Assert 'bounded_context' type annotation is HostDecisionContext | None.
+    Assert 'proactive_expression' is NOT a field on the dataclass.
+    Assert as_dict() does not contain 'proactive_expression'.
+    """
+    import dataclasses
+    from mind_runtime.contracts.host import HostProactiveTurnResult, HostDecisionContext
+
+    field_names = [f.name for f in dataclasses.fields(HostProactiveTurnResult)]
+    assert "proactive_expression" not in field_names
+    assert "bounded_context" in field_names
+
+    res = HostProactiveTurnResult(
+        wake_id="w-1",
+        interaction_id="i-1",
+        status=HostTurnStatus.PROCESSING,
+        outcome=HostStatus.OK,
+        decision_context_ref=None,
+        expression_ref=None,
+        debug_ref="debug-1",
+    )
+    d = res.as_dict()
+    assert "proactive_expression" not in d

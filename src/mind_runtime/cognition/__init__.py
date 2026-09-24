@@ -1,6 +1,8 @@
 """Host-level autonomous cognition coordination (C5B/C5C)."""
 
 from mind_runtime.cognition.express import (
+    ProactiveContextPreparer,
+    ProactiveExecutionContext,
     ProactiveExpressionArtifact,
     ProactiveExpressionConfig,
     ProactiveExpressionPreparer,
@@ -42,6 +44,8 @@ __all__ = [
     "CognitiveTickReport",
     "CognitiveTicker",
     "PolicyFactReader",
+    "ProactiveContextPreparer",
+    "ProactiveExecutionContext",
     "ProactiveExpressionArtifact",
     "ProactiveExpressionConfig",
     "ProactiveExpressionPreparer",

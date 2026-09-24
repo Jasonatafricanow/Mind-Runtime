@@ -293,10 +293,6 @@ class XiyueMRAdapter:
         """Abort proactive turn lifecycle on delivery failure."""
         return self._port.abort_proactive_turn(wake_id, reason)
 
-    def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
-        """Run complete proactive turn sequence (begin + guard)."""
-        return self._port.run_proactive_turn(wake)
-
     # ---- inspect (OW correlation) ---------------------------------------
 
     def inspect(self, interaction_id: str, *, include_trace: bool = False):
