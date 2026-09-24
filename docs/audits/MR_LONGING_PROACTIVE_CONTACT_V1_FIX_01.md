@@ -348,3 +348,13 @@ POST_FREEZE_SOURCE_REVIEW_VERDICT=NEEDS_TARGETED_FIX
 
 The frozen SHA remains useful as the **MR-side longing-to-wake baseline**. It should not be described as a fully closed `longing → Body proactive turn → external delivery` production chain until the wake is the actual cause of Body entry and the Host validates its lineage.
 
+---
+
+## 14. Subsequent Resolution
+
+The ordering gap, wake consumption gap, Host validation gaps, and typed integration debt identified above in the Post-Freeze Source Review were fully resolved by `MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01`.
+
+See the complete audit report:
+[`docs/audits/MR_LONGING_PROACTIVE_BODY_ENTRY_V1_01.md`](MR_LONGING_PROACTIVE_BODY_ENTRY_V1_01.md)
+
+

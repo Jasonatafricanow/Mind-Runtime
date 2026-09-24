@@ -63,11 +63,9 @@ If the function or consumer is unclear, keep the meaning in open semantic Apprai
 
 ## 4. Longing reference implementation
 
-Frozen MR-side baseline:
+Post-freeze baseline: `e48ce1ecacfbc7758359b6721dcfe84dd563e832`
 
-`e48ce1ecacfbc7758359b6721dcfe84dd563e832`
-
-Verified:
+Completed causal closure: `MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01`
 
 ```text
 agent.affect.longing
@@ -75,18 +73,20 @@ agent.affect.longing
 → proactive Intent
 → ActionPolicy
 → WakeSignal
+→ Host.consume_wake(...) (admission & lineage validation)
+→ Host.run_proactive_turn(...) (Body entry)
+→ ProactiveExpressionPreparer.prepare_context(...) (DecisionContext)
+→ ProactiveExpressionPreparer.realize_after_wake(...) (provider)
+→ ExpressionGuard
+→ delivery boundary
 ```
 
-Not yet production-closed:
-
-```text
-WakeSignal
-→ validated Host consumption
-→ Body proactive turn
-→ expression/delivery
-```
-
-The current ticker still invokes proactive expression preparation before creating the WakeSignal. Treat that as a transitional C5C preparation path, not as proof that Wake causes Body execution.
+Key causal rules verified:
+1. `provider_call_count == 0` prior to Host wake admission.
+2. CognitiveTicker does NOT invoke provider realization.
+3. Host rejects invalid wake without invoking provider.
+4. Host exactly-once idempotency: duplicate wake returns `ALREADY_PROCESSED` with 0 additional provider calls; conflicting payload fails closed.
+5. Guard rejection prevents external delivery without creating fake Evidence or uncommitted affect mutation.
 
 ## 5. Required test shape for future consumers
 
@@ -111,7 +111,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 
 | Fast state | Function | Next implementation work |
 |---|---|---|
-| `longing` | proactive contact | Close wake-to-Body wiring, Host lineage validation, and execution ordering; calibration remains separate. |
+| `longing` | proactive contact | **Closed**: Wake-to-Body wiring, Host lineage validation, and execution ordering closed in MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01. Calibration remains provisional (`PROACTIVE_CONTACT_CALIBRATION_GAP=FOUND`). |
 | `sharing_urge` | proactive share | Define one share Intent/action consumer after longing wake boundary is closed. |
 | `curiosity` | inquiry/exploration | Bind to question/retrieval Intent without turning retrieval into authority. |
 | `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |

@@ -38,7 +38,7 @@ Consumer closure is tracked separately:
 
 | State | Functional contract | Current consumer implementation |
 |---|---|---|
-| `agent.affect.longing` | `PROACTIVE_CONTACT` | **MR-side wake path implemented**: Dynamics → Surface `contact_seeking` → Intent → ActionPolicy → `WakeSignal`. The public Body-start path is not yet production-wired from that wake. |
+| `agent.affect.longing` | `PROACTIVE_CONTACT` | **Production-wired & causal**: Dynamics → Surface `contact_seeking` → Intent → ActionPolicy → `WakeSignal` → Host wake admission (`consume_wake`) → Body proactive turn (`run_proactive_turn`) → `DecisionContext` → provider realization → `ExpressionGuard` → Delivery boundary. |
 | `agent.affect.sharing_urge` | `PROACTIVE_SHARE` | Contract locked; dedicated consumer binding not yet certified. |
 | `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | Contract locked; dedicated consumer binding not yet certified. |
 | `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | Existing Surface/Intent/expression roots exist; no new V1 consumer certification is implied by this registry. |
@@ -47,13 +47,13 @@ Consumer closure is tracked separately:
 | `agent.affect.diligence_pressure` | `FOLLOW_UP_PERSISTENCE` | Contract locked; dedicated unresolved-item persistence consumer not yet certified. |
 | `agent.affect.fatigue` | `COGNITIVE_REST_PRESSURE` | `REGISTERED_ONLY`; no canonical dynamics or sleep/daydream consumer yet. |
 
-### Longing V1 source-review boundary
+### Longing V1 closure boundary
 
-Frozen code baseline:
+Post-freeze baseline:
 
 `LONGING_PROACTIVE_WAKE_V1_SHA = e48ce1ecacfbc7758359b6721dcfe84dd563e832`
 
-What is verified at that SHA:
+Completed causal closure (`MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01`):
 
 ```text
 longing
@@ -61,34 +61,19 @@ longing
 → proactive Intent
 → ActionPolicy
 → WakeSignal
-```
-
-What is **not** yet verified as one production execution chain:
-
-```text
-WakeSignal
-→ Host consumes and validates wake lineage
-→ Body starts proactive turn
-→ DecisionContext
-→ provider generation
+→ Host consumes and validates wake lineage (consume_wake)
+→ Body starts proactive turn (run_proactive_turn)
+→ DecisionContext (prepare_context)
+→ provider generation (realize_after_wake)
 → ExpressionGuard
-→ external delivery
+→ existing C7 / delivery boundary
 ```
 
-At the frozen SHA, `CognitiveTicker.tick()` still prepares proactive expression before constructing the `WakeSignal`; `run_cognitive_tick()` returns the report but does not itself invoke `MindRuntimeHostAdapter.consume_wake()`. Therefore tests that observe both a wake and a proactive expression in the same tick prove coexistence, not wake-caused Body execution.
-
-The final negative-pole target remains:
-
-```text
-ActionPolicy ALLOW
-→ WakeSignal
-→ Host/Adapter
-→ Body proactive turn
-→ DecisionContext
-→ provider
-→ ExpressionGuard
-→ C7 / external delivery
-```
-
-Do not use provider generation inside the ticker as evidence that the wake-to-Body boundary is closed.
+Verified invariants:
+1. **Provider call count before admission == 0**: CognitiveTicker never directly invokes provider generation; provider is called only after successful Host wake admission.
+2. **Lineage preservation**: HostWakeNotification retains `wake_id`, `runtime_id`, `scope`, `intent_id`, `intent_version`, `action_type`, `interaction_id`, `policy_decision_ref`, `occurred_at`, `reason`, and `eligible`.
+3. **Replay & conflict**: Process-local exactly-once admission; same wake is idempotent, conflicting payload on same `wake_id` fails closed.
+4. **Guard enforcement**: Guard rejection aborts the turn without external delivery or uncommitted affect state modification.
+5. **Causal trace ordering**:
+   `policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < provider_realization < expression_guard <= proactive_expression`.
 

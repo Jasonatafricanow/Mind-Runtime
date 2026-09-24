@@ -24,11 +24,13 @@ from datetime import datetime
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPolicyResult,
+    DecisionContext,
     ExpressionDisposition,
     Intent,
     ProjectedMindState,
     RuntimeState,
     Situation,
+    SurfaceProjectionResult,
 )
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.late_projection import AcceptedAppraisal
@@ -85,6 +87,17 @@ class ProactiveExpressionArtifact:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ProactiveExecutionContext:
+    """Bounded typed proactive execution context prepared before or at wake admission."""
+
+    interaction_id: str
+    intent: Intent
+    policy_result: ActionPolicyResult
+    context: DecisionContext
+    at: datetime
+
+
 class ProactiveExpressionPreparer:
     """Drive the frozen D10 expression chain for one proactive ALLOW.
 
@@ -125,7 +138,7 @@ class ProactiveExpressionPreparer:
             and permission.action_type in self._config.proactive_action_types
         )
 
-    def prepare(
+    def prepare_context(
         self,
         *,
         interaction_id: str,
@@ -138,22 +151,19 @@ class ProactiveExpressionPreparer:
         persona_ref: str | None,
         now: datetime,
         accepted_appraisals: tuple[AcceptedAppraisal, ...] = (),
-        surface: object | None = None,
-    ) -> ProactiveExpressionArtifact:
-        """Prepare one would-send artifact; never writes facts or lifecycle."""
+        surface: SurfaceProjectionResult | None = None,
+        mode: str | None = None,
+        persona_version: int | None = None,
+        persona_content_digest: str | None = None,
+    ) -> ProactiveExecutionContext | None:
+        """Soul preparation: compile DecisionContext; never invokes provider."""
 
-        base = ProactiveExpressionArtifact(
-            interaction_id=interaction_id,
-            intent_id=intent.intent_id,
-            action_type=policy_result.permission.action_type
-            if policy_result.permission is not None
-            else "",
-        )
         permission = policy_result.permission
         if policy_result.decision is not ActionDecision.ALLOW or permission is None:
-            return replace(base, skip_reason="not_allowed")
+            return None
         if permission.action_type not in self._config.proactive_action_types:
-            return replace(base, skip_reason="not_proactive")
+            return None
+
         # Effective State is resolved through the orchestrator's frozen
         # authority over the tick's loaded durable rows — never raw state.
         effective = self._orchestrator.effective_state.effective(
@@ -165,12 +175,6 @@ class ProactiveExpressionPreparer:
         )
         previous = self._previous_expression.previous(
             scope=intent.scope, action_type=permission.action_type
-        )
-        compiler_mode = getattr(self._compiler._config, "mode", None)
-        persona = getattr(self._orchestrator, "_persona", None)
-        persona_version = getattr(persona, "version", None) if persona is not None else None
-        persona_content_digest = (
-            getattr(persona, "persona_content_digest", None) if persona is not None else None
         )
         context, _compile_trace = self._compiler.compile(
             DecisionContextCompilerInput(
@@ -188,8 +192,8 @@ class ProactiveExpressionPreparer:
                 attempt=0,
                 rewrite_reason_codes=(),
                 accepted_appraisals=accepted_appraisals,
-                surface=surface,  # type: ignore[arg-type]
-                mode=compiler_mode,
+                surface=surface,
+                mode=mode,
                 persona_version=persona_version,
                 persona_content_digest=persona_content_digest,
             )
@@ -200,9 +204,46 @@ class ProactiveExpressionPreparer:
             ref=context.context_id,
             at=now,
         )
-        outcome = self._coordinator.express(context)
+        return ProactiveExecutionContext(
+            interaction_id=interaction_id,
+            intent=intent,
+            policy_result=policy_result,
+            context=context,
+            at=now,
+        )
+
+    def realize_after_wake(
+        self,
+        exec_ctx: ProactiveExecutionContext,
+        *,
+        now: datetime,
+    ) -> ProactiveExpressionArtifact:
+        """Body execution: provider realization + ExpressionGuard."""
+
+        base = ProactiveExpressionArtifact(
+            interaction_id=exec_ctx.interaction_id,
+            intent_id=exec_ctx.intent.intent_id,
+            action_type=exec_ctx.policy_result.permission.action_type
+            if exec_ctx.policy_result.permission is not None
+            else "",
+            context_id=exec_ctx.context.context_id,
+        )
         self._orchestrator.trace.record(
-            interaction_id,
+            exec_ctx.interaction_id,
+            "provider_realization",
+            ref=exec_ctx.context.context_id,
+            at=now,
+        )
+        outcome = self._coordinator.express(exec_ctx.context)
+        self._orchestrator.trace.record(
+            exec_ctx.interaction_id,
+            "expression_guard",
+            ref=outcome.outcome_id,
+            outcome=outcome.final_disposition.value,
+            at=now,
+        )
+        self._orchestrator.trace.record(
+            exec_ctx.interaction_id,
             "proactive_expression",
             ref=outcome.outcome_id,
             outcome=outcome.final_disposition.value,
@@ -210,9 +251,61 @@ class ProactiveExpressionPreparer:
         )
         return replace(
             base,
-            context_id=context.context_id,
             outcome_id=outcome.outcome_id,
             disposition=outcome.final_disposition,
             would_send=outcome.accepted_expression,
             attempt_count=len(outcome.attempts),
         )
+
+    def prepare(
+        self,
+        *,
+        interaction_id: str,
+        intent: Intent,
+        policy_result: ActionPolicyResult,
+        situation: Situation,
+        projected: ProjectedMindState,
+        assessment_trace_ref: str,
+        state_rows: tuple[RuntimeState, ...],
+        persona_ref: str | None,
+        now: datetime,
+        accepted_appraisals: tuple[AcceptedAppraisal, ...] = (),
+        surface: SurfaceProjectionResult | None = None,
+        mode: str | None = None,
+        persona_version: int | None = None,
+        persona_content_digest: str | None = None,
+    ) -> ProactiveExpressionArtifact:
+        """Prepare one would-send artifact; never writes facts or lifecycle."""
+
+        base = ProactiveExpressionArtifact(
+            interaction_id=interaction_id,
+            intent_id=intent.intent_id,
+            action_type=policy_result.permission.action_type
+            if policy_result.permission is not None
+            else "",
+        )
+        permission = policy_result.permission
+        if policy_result.decision is not ActionDecision.ALLOW or permission is None:
+            return replace(base, skip_reason="not_allowed")
+        if permission.action_type not in self._config.proactive_action_types:
+            return replace(base, skip_reason="not_proactive")
+
+        exec_ctx = self.prepare_context(
+            interaction_id=interaction_id,
+            intent=intent,
+            policy_result=policy_result,
+            situation=situation,
+            projected=projected,
+            assessment_trace_ref=assessment_trace_ref,
+            state_rows=state_rows,
+            persona_ref=persona_ref,
+            now=now,
+            accepted_appraisals=accepted_appraisals,
+            surface=surface,
+            mode=mode,
+            persona_version=persona_version,
+            persona_content_digest=persona_content_digest,
+        )
+        if exec_ctx is None:
+            return replace(base, skip_reason="prepare_context_failed")
+        return self.realize_after_wake(exec_ctx, now=now)

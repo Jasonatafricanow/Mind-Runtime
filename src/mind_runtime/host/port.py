@@ -22,6 +22,7 @@ from mind_runtime.contracts.host import (
     HostCommitRequest,
     HostInspectRequest,
     HostInspectResult,
+    HostProactiveTurnResult,
     HostProviderProseRequest,
     HostProviderProseResult,
     HostTurnRequest,
@@ -76,4 +77,8 @@ class MindRuntimeHostPort(Protocol):
 
     def consume_wake(self, wake: WakeSignal) -> HostWakeNotification:
         """HI-1: Smallest typed consumer of proactive wake signals at the Host boundary."""
+        ...
+
+    def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """HI-1: Execute a proactive Body turn following wake admission."""
         ...
