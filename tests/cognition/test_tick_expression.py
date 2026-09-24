@@ -15,6 +15,7 @@ would-send/sent history (C7/C8), not a new rule.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -23,6 +24,7 @@ import pytest
 from tests.support.fake_clock import FakeClock
 
 from mind_runtime.cognition import build_cognitive_ticker
+from mind_runtime.cognition.express import ProactiveExpressionArtifact
 from mind_runtime.cognition.tick import CognitiveTicker, observation_fact_reader
 from mind_runtime.contracts import (
     AffectiveDimensionProfile,
@@ -31,6 +33,7 @@ from mind_runtime.contracts import (
     DeliveryStatus,
     Evidence,
     ExpressionDisposition,
+    HostStatus,
     HostTurnStatus,
     IntentStatus,
     PolicyResources,
@@ -40,6 +43,114 @@ from mind_runtime.contracts import (
     ScopeDomain,
     SyncFields,
 )
+from mind_runtime.contracts.host import HostProactiveTurnResult
+
+
+@dataclass
+class _TestTurnResult:
+    result: HostProactiveTurnResult
+    proactive_expression: ProactiveExpressionArtifact | None
+
+    @property
+    def status(self) -> HostTurnStatus:
+        return self.result.status
+
+    @property
+    def outcome(self) -> HostStatus:
+        return self.result.outcome
+
+    @property
+    def bounded_context(self):
+        return self.result.bounded_context
+
+    @property
+    def debug_ref(self):
+        return self.result.debug_ref
+
+    @property
+    def decision_context_ref(self):
+        return self.result.decision_context_ref
+
+    @property
+    def expression_ref(self):
+        return self.result.expression_ref
+
+
+def _run_test_proactive_turn(stack: _Stack, wake: WakeSignal) -> _TestTurnResult:
+    adapter = stack["adapter"]
+    prep_result = adapter.begin_proactive_turn(wake)
+    if prep_result.status is not HostTurnStatus.PROCESSING or prep_result.outcome is not HostStatus.OK:
+        return _TestTurnResult(prep_result, None)
+
+    preparer = stack["preparer"]
+    exec_ctx = adapter._pending_exec_contexts.get(wake.wake_id)
+    if preparer is None or exec_ctx is None:
+        return _TestTurnResult(prep_result, None)
+
+    now = wake.woken_at
+    tick_ctx = adapter._pending_wake_contexts.get(wake.wake_id) or {}
+    if tick_ctx.get("transition_result") is None:
+        artifact = ProactiveExpressionArtifact(
+            interaction_id=wake.interaction_id,
+            intent_id=wake.intent_id,
+            action_type=wake.action_type,
+            context_id=exec_ctx.context.context_id,
+            skip_reason="no_transition",
+        )
+        fail_res = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.ABORTED,
+            outcome=HostStatus.FAILED,
+            decision_context_ref=exec_ctx.context.context_id,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            bounded_context=prep_result.bounded_context,
+            reason_codes=("no_transition",),
+        )
+        return _TestTurnResult(fail_res, artifact)
+
+    try:
+        artifact = preparer.realize_after_wake(exec_ctx, now=now)
+    except Exception as exc:
+        artifact = ProactiveExpressionArtifact(
+            interaction_id=wake.interaction_id,
+            intent_id=wake.intent_id,
+            action_type=wake.action_type,
+            context_id=exec_ctx.context.context_id,
+            skip_reason="agent_failure",
+        )
+        fail_res = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.ABORTED,
+            outcome=HostStatus.FAILED,
+            decision_context_ref=exec_ctx.context.context_id,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            bounded_context=prep_result.bounded_context,
+            reason_codes=("agent_failure", str(exc)),
+        )
+        return _TestTurnResult(fail_res, artifact)
+
+    if artifact.disposition is ExpressionDisposition.ACCEPT:
+        guard_res = adapter.guard_proactive_prose(wake.wake_id, artifact.would_send or "")
+        return _TestTurnResult(guard_res, artifact)
+    else:
+        fail_res = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.ABORTED,
+            outcome=HostStatus.FAILED,
+            decision_context_ref=artifact.context_id,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            bounded_context=prep_result.bounded_context,
+            disposition=artifact.disposition,
+            would_send=artifact.would_send,
+            reason_codes=(artifact.skip_reason,) if artifact.skip_reason else (),
+        )
+        return _TestTurnResult(fail_res, artifact)
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.expression import (
     AffectBand,
@@ -366,7 +477,7 @@ def test_ce1_allowed_intent_prepares_would_send(tmp_path: Path) -> None:
     assert report.proactive_expression is None
     assert stack["agent"].call_count == 0
 
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
     assert turn_result.status is HostTurnStatus.PROCESSING
     artifact = turn_result.proactive_expression
     assert artifact is not None
@@ -400,7 +511,7 @@ def test_ce1b_provider_view_is_bounded_and_counter_free(tmp_path: Path) -> None:
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
 
     artifact = turn_result.proactive_expression
     assert artifact is not None and artifact.would_send is not None
@@ -426,7 +537,7 @@ def test_ce2_prefix_duplicate_rejects_and_intent_survives(tmp_path: Path) -> Non
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
 
     assert turn_result.status is HostTurnStatus.ABORTED
     artifact = turn_result.proactive_expression
@@ -469,7 +580,7 @@ def test_ce3_prefix_rewrite_succeeds(tmp_path: Path) -> None:
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
 
     assert turn_result.status is HostTurnStatus.PROCESSING
     artifact = turn_result.proactive_expression
@@ -489,7 +600,7 @@ def test_ce3b_temporal_conflict_rewrites_for_night(tmp_path: Path) -> None:
 
     report = stack["ticker"].tick(scope=stack["scope"], now=NIGHT)
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
 
     assert turn_result.status is HostTurnStatus.PROCESSING
     artifact = turn_result.proactive_expression
@@ -533,7 +644,7 @@ def test_ce4_counter_facts_never_mutated_by_preparation(tmp_path: Path) -> None:
     before = snapshot()
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
     after = snapshot()
 
     assert turn_result.proactive_expression is not None
@@ -572,7 +683,7 @@ def test_ce6_elapsed_zero_pass_skips_preparation(tmp_path: Path) -> None:
     assert report.proactive_expression is None
     assert stack["agent"].call_count == 0
     assert report.wake_signal is not None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
     artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is None
@@ -593,7 +704,7 @@ def test_ce7_agent_failure_never_breaks_the_tick(tmp_path: Path) -> None:
     assert report.policy_allowed == 1
     assert report.wake_signal is not None
     assert report.proactive_expression is None
-    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
     assert turn_result.status is HostTurnStatus.ABORTED
 
     artifact = turn_result.proactive_expression

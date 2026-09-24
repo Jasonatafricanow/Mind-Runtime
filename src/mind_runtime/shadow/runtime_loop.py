@@ -484,7 +484,35 @@ def build_cognitive_components(
         runtime_id=origin_runtime_id,
         config=cognitive_tick_config,
     )
-    return {
+    context_preparer = None
+    compiler = getattr(orchestrator, "decision_context_compiler", None)
+    if compiler is not None:
+        from mind_runtime.cognition.express import (
+            ProactiveContextPreparer,
+            ProactiveExpressionConfig,
+        )
+        from mind_runtime.expression.history import NullPreviousExpressionPort
+
+        proactive_actions = tuple(
+            dict.fromkeys(
+                rule.action_type
+                for rule in action_policy_config.rules
+                if getattr(rule, "proactive", False)
+            )
+        )
+        if not proactive_actions:
+            proactive_actions = ("proactive_message",)
+
+        context_preparer = ProactiveContextPreparer(
+            orchestrator=orchestrator,
+            compiler=compiler,
+            previous_expression=NullPreviousExpressionPort(),
+            config=ProactiveExpressionConfig(proactive_action_types=proactive_actions),
+            runtime_id=origin_runtime_id,
+        )
+        orchestrator.proactive_context_preparer = context_preparer
+
+    result: dict[str, object] = {
         "ticker": ticker,
         "lifecycle": lifecycle,
         "intent_backend": intent_backend,
@@ -493,6 +521,10 @@ def build_cognitive_components(
         "policy": policy,
         "resources": resources,
     }
+    if context_preparer is not None:
+        result["context_preparer"] = context_preparer
+        result["expression_preparer"] = context_preparer
+    return result
 
 
 def run_cognitive_tick(

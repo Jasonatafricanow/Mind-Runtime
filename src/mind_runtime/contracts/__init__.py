@@ -72,6 +72,7 @@ from mind_runtime.contracts.historical import (
     HistoricalContextQuery,
 )
 from mind_runtime.contracts.host import (
+    HostDecisionContext,
     HostProactiveTurnResult,
     HostStatus,
     HostTurnStatus,
@@ -166,6 +167,7 @@ __all__ = [
     "HistoricalContextBundle",
     "HistoricalContextItem",
     "HistoricalContextQuery",
+    "HostDecisionContext",
     "HostProactiveTurnResult",
     "HostStatus",
     "HostTurnStatus",

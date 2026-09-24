@@ -98,12 +98,18 @@ class ProactiveExecutionContext:
     at: datetime
 
 
-class ProactiveExpressionPreparer:
-    """Drive the frozen D10 expression chain for one proactive ALLOW.
+class ProactiveContextPreparer:
+    """Smallest provider-free context preparation component.
 
-    Fail-closed by construction: the compiler, the coordinator (which owns
-    renderer, agent, and guard chain), the read-only previous-expression
-    port, and the proactive action-type set are all explicitly injected.
+    - DecisionContextCompiler
+    - PreviousExpressionPort
+    - runtime_id
+    - proactive action config
+    - NO Agent
+    - NO ExpressionCoordinator
+    - NO provider invocation
+
+    It owns ONLY: authoritative tick context -> DecisionContext.
     """
 
     def __init__(
@@ -111,26 +117,23 @@ class ProactiveExpressionPreparer:
         *,
         orchestrator: TurnOrchestrator,
         compiler: DecisionContextCompiler,
-        coordinator: DeterministicExpressionCoordinator,
         previous_expression: PreviousExpressionPort,
         config: ProactiveExpressionConfig,
         runtime_id: str,
     ) -> None:
-        if not isinstance(compiler, DecisionContextCompiler):
+        from mind_runtime.pipeline.stubs import StubDecisionContextCompiler
+
+        if not isinstance(compiler, (DecisionContextCompiler, StubDecisionContextCompiler)):
             raise ValueError("compiler must be a DecisionContextCompiler")
-        if not isinstance(coordinator, DeterministicExpressionCoordinator):
-            raise ValueError("coordinator must be a DeterministicExpressionCoordinator")
         require_non_empty(runtime_id, "runtime_id")
         self._orchestrator = orchestrator
         self._compiler = compiler
-        self._coordinator = coordinator
         self._previous_expression = previous_expression
         self._config = config
         self._runtime_id = runtime_id
 
     def handles(self, *, policy_result: ActionPolicyResult) -> bool:
         """Whether this ALLOW's action type is a proactive preparation target."""
-
         permission = policy_result.permission
         return (
             policy_result.decision is ActionDecision.ALLOW
@@ -157,7 +160,6 @@ class ProactiveExpressionPreparer:
         persona_content_digest: str | None = None,
     ) -> ProactiveExecutionContext | None:
         """Soul preparation: compile DecisionContext; never invokes provider."""
-
         permission = policy_result.permission
         if policy_result.decision is not ActionDecision.ALLOW or permission is None:
             return None
@@ -211,6 +213,36 @@ class ProactiveExpressionPreparer:
             context=context,
             at=now,
         )
+
+
+class ProactiveExpressionPreparer(ProactiveContextPreparer):
+    """Drive the frozen D10 expression chain for one proactive ALLOW.
+
+    Fail-closed by construction: the compiler, the coordinator (which owns
+    renderer, agent, and guard chain), the read-only previous-expression
+    port, and the proactive action-type set are all explicitly injected.
+    """
+
+    def __init__(
+        self,
+        *,
+        orchestrator: TurnOrchestrator,
+        compiler: DecisionContextCompiler,
+        coordinator: DeterministicExpressionCoordinator,
+        previous_expression: PreviousExpressionPort,
+        config: ProactiveExpressionConfig,
+        runtime_id: str,
+    ) -> None:
+        if not isinstance(coordinator, DeterministicExpressionCoordinator):
+            raise ValueError("coordinator must be a DeterministicExpressionCoordinator")
+        super().__init__(
+            orchestrator=orchestrator,
+            compiler=compiler,
+            previous_expression=previous_expression,
+            config=config,
+            runtime_id=runtime_id,
+        )
+        self._coordinator = coordinator
 
     def realize_after_wake(
         self,

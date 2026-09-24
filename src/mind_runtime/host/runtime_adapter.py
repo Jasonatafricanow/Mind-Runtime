@@ -33,12 +33,12 @@ Hard rules:
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
 from mind_runtime.cognition.express import (
-    ProactiveExpressionArtifact,
+    ProactiveContextPreparer,
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
@@ -56,6 +56,13 @@ from mind_runtime.contracts import (
     Situation,
     SyncFields,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _GuardAdmission:
+    disposition: ExpressionDisposition
+    guard_ref: str | None
+    accepted_at: datetime
 from mind_runtime.contracts.host import (
     HostAbortReceipt,
     HostAbortRequest,
@@ -333,7 +340,7 @@ class MindRuntimeHostAdapter:
         *,
         orchestrator: TurnOrchestrator,
         trace: TraceRecorder | None = None,
-        expression_preparer: ProactiveExpressionPreparer | None = None,
+        expression_preparer: ProactiveContextPreparer | ProactiveExpressionPreparer | None = None,
     ) -> None:
         if orchestrator is None:
             raise ValueError("orchestrator is required")
@@ -344,6 +351,7 @@ class MindRuntimeHostAdapter:
         self._proactive_turn_results: dict[str, HostProactiveTurnResult] = {}
         self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
         self._pending_exec_contexts: dict[str, Any] = {}
+        self._guard_admissions: dict[str, _GuardAdmission] = {}
         # Terminal record store: interaction_id -> _TerminalRecord.
         # Populated at commit/abort time. Acts as the in-process
         # replay guard; the stored user_message is used for the
@@ -853,16 +861,21 @@ class MindRuntimeHostAdapter:
             reason="proactive_intent_allowed",
         )
 
-    def _resolve_expression_preparer(self) -> ProactiveExpressionPreparer | None:
+    def _resolve_expression_preparer(
+        self,
+    ) -> ProactiveContextPreparer | ProactiveExpressionPreparer | None:
         if self._expression_preparer is not None:
             return self._expression_preparer
-        direct = getattr(self._orchestrator, "proactive_expression_preparer", None)
-        if direct is not None and isinstance(direct, ProactiveExpressionPreparer):
-            return direct
+        direct_ctx = getattr(self._orchestrator, "proactive_context_preparer", None)
+        if direct_ctx is not None and isinstance(direct_ctx, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
+            return direct_ctx
+        direct_expr = getattr(self._orchestrator, "proactive_expression_preparer", None)
+        if direct_expr is not None and isinstance(direct_expr, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
+            return direct_expr
         components = getattr(self._orchestrator, "cognitive_tick_components", None)
         if isinstance(components, dict):
-            prep = components.get("expression_preparer")
-            if isinstance(prep, ProactiveExpressionPreparer):
+            prep = components.get("context_preparer") or components.get("expression_preparer")
+            if isinstance(prep, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
                 return prep
         return None
 
@@ -916,6 +929,9 @@ class MindRuntimeHostAdapter:
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("wake_rejected", notification.reason),
             )
+
+        # Clear any prior guard admission for this wake_id
+        self._guard_admissions.pop(wake.wake_id, None)
 
         now = wake.woken_at
         if hasattr(self._orchestrator, "trace") and self._orchestrator.trace is not None:
@@ -988,17 +1004,20 @@ class MindRuntimeHostAdapter:
 
         envelope_text = None
         renderer = getattr(self._orchestrator, "context_renderer", None)
-        if renderer is not None and hasattr(renderer, "render_provider_envelope"):
-            envelope_text = renderer.render_provider_envelope(exec_ctx.context)
+        if renderer is not None and hasattr(renderer, "render"):
+            provider_context = renderer.render(exec_ctx.context)
+            envelope_text = getattr(provider_context, "text", None) or str(provider_context)
+            if envelope_text and hasattr(renderer, "verify_provider_information_isolation"):
+                renderer.verify_provider_information_isolation(envelope_text)
 
-        bounded = {
-            "wake_id": wake.wake_id,
-            "interaction_id": wake.interaction_id,
-            "action_type": wake.action_type,
-            "intent_kind": tick_ctx["intent"].kind,
-            "provider_envelope_text": envelope_text,
-            "intent_summary": f"proactive:{wake.action_type}",
-        }
+        bounded = HostDecisionContext(
+            intent_summary=f"proactive:{wake.action_type}",
+            emotional_state="admitted proactive expression context",
+            situation_summary=f"interaction={wake.interaction_id}; wake_id={wake.wake_id}",
+            action_taken=wake.action_type,
+            next_steps=None,
+            provider_envelope_text=envelope_text,
+        )
 
         result = HostProactiveTurnResult(
             wake_id=wake.wake_id,
@@ -1070,7 +1089,14 @@ class MindRuntimeHostAdapter:
                 at=wake.woken_at,
             )
 
+        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+
         if guard_res.disposition is ExpressionDisposition.ACCEPT:
+            self._guard_admissions[wake_id] = _GuardAdmission(
+                disposition=ExpressionDisposition.ACCEPT,
+                guard_ref=getattr(guard_res, "guard_id", f"guard-{wake_id}"),
+                accepted_at=now,
+            )
             return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
@@ -1083,8 +1109,75 @@ class MindRuntimeHostAdapter:
                 would_send=prose,
                 reason_codes=(),
             )
-        else:
+        elif guard_res.disposition is ExpressionDisposition.REWRITE:
+            self._guard_admissions[wake_id] = _GuardAdmission(
+                disposition=ExpressionDisposition.REWRITE,
+                guard_ref=getattr(guard_res, "guard_id", f"guard-{wake_id}"),
+                accepted_at=now,
+            )
             return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.PROCESSING,
+                outcome=HostStatus.DEGRADED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=getattr(guard_res, "guard_id", f"guard-{wake_id}"),
+                debug_ref=f"debug-{wake.interaction_id}",
+                disposition=ExpressionDisposition.REWRITE,
+                would_send=None,
+                reason_codes=tuple(guard_res.violations),
+            )
+        else:
+            components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
+            lifecycle = (
+                components.get("lifecycle")
+                or components.get("intent_lifecycle")
+                or getattr(self._orchestrator, "intent_lifecycle", None)
+                or getattr(self._orchestrator, "_intent_lifecycle", None)
+            )
+            if lifecycle is None:
+                return HostProactiveTurnResult(
+                    wake_id=wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    reason_codes=("intent_authority_unavailable",),
+                )
+            try:
+                lifecycle.transition(
+                    scope=wake.scope,
+                    intent_id=wake.intent_id,
+                    to_status=IntentStatus.SUPERSEDED,
+                    reason_codes=("proactive_guard_rejected", *guard_res.violations),
+                    occurred_at=now,
+                    idempotency_key=f"proactive-reject-{wake.intent_id}-v{wake.intent_version}",
+                )
+            except Exception as exc:
+                _logger.warning("guard_proactive_prose reject transition failed: %s", exc)
+                return HostProactiveTurnResult(
+                    wake_id=wake.wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    disposition=guard_res.disposition,
+                    would_send=None,
+                    reason_codes=("reject_transition_failed", str(exc)),
+                )
+
+            self._guard_admissions.pop(wake_id, None)
+            self._pending_exec_contexts.pop(wake_id, None)
+            self._pending_wake_contexts.pop(wake_id, None)
+            ticker = components.get("ticker")
+            if ticker is not None and hasattr(ticker, "_pending_wake_contexts"):
+                ticker._pending_wake_contexts.pop(wake_id, None)
+
+            result = HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.ABORTED,
@@ -1096,6 +1189,8 @@ class MindRuntimeHostAdapter:
                 would_send=None,
                 reason_codes=tuple(guard_res.violations),
             )
+            self._proactive_turn_results[wake_id] = result
+            return result
 
     def commit_proactive_turn(self, wake_id: str) -> HostProactiveTurnResult:
         """HI-1: Complete proactive turn lifecycle following successful external delivery."""
@@ -1124,6 +1219,33 @@ class MindRuntimeHostAdapter:
                 reason_codes=("unknown_wake_id",),
             )
 
+        exec_ctx = self._pending_exec_contexts.get(wake_id)
+        if exec_ctx is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("missing_authoritative_wake_context",),
+            )
+
+        # Enforce Guard ACCEPT required before commit
+        guard_adm = self._guard_admissions.get(wake_id)
+        if guard_adm is None or guard_adm.disposition is not ExpressionDisposition.ACCEPT:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("rejected:not_delivery_eligible",),
+            )
+
         components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
         lifecycle = (
             components.get("lifecycle")
@@ -1137,23 +1259,65 @@ class MindRuntimeHostAdapter:
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
                 outcome=HostStatus.FAILED,
-                decision_context_ref=None,
+                decision_context_ref=exec_ctx.context.context_id,
                 expression_ref=None,
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("intent_authority_unavailable",),
             )
 
-        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
-        lifecycle.transition(
-            scope=wake.scope,
-            intent_id=wake.intent_id,
-            to_status=IntentStatus.COMPLETED,
-            reason_codes=("proactive_delivery_committed",),
-            occurred_at=now,
-            idempotency_key=f"proactive-commit-{wake.intent_id}-v{wake.intent_version}",
-        )
+        # Verify Intent is still in ALLOWED status and version matches wake
+        if hasattr(lifecycle, "backend"):
+            try:
+                history = lifecycle.backend.history(wake.scope, wake.intent_id)
+                current_intent = history[-1]
+            except Exception as exc:
+                return HostProactiveTurnResult(
+                    wake_id=wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    reason_codes=("intent_lookup_failed", str(exc)),
+                )
+            if current_intent.status is not IntentStatus.ALLOWED or current_intent.sync.version != wake.intent_version:
+                return HostProactiveTurnResult(
+                    wake_id=wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    reason_codes=("intent_not_allowed", f"status={current_intent.status.value}", f"version={current_intent.sync.version}"),
+                )
 
-        exec_ctx = self._pending_exec_contexts.pop(wake_id, None)
+        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        try:
+            lifecycle.transition(
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                to_status=IntentStatus.COMPLETED,
+                reason_codes=("proactive_delivery_committed",),
+                occurred_at=now,
+                idempotency_key=f"proactive-commit-{wake.intent_id}-v{wake.intent_version}",
+            )
+        except Exception as exc:
+            _logger.warning("commit_proactive_turn transition failed: %s", exc)
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("commit_transition_failed", str(exc)),
+            )
+
+        self._guard_admissions.pop(wake_id, None)
+        self._pending_exec_contexts.pop(wake_id, None)
         self._pending_wake_contexts.pop(wake_id, None)
         ticker = components.get("ticker")
         if ticker is not None and hasattr(ticker, "_pending_wake_contexts"):
@@ -1173,7 +1337,7 @@ class MindRuntimeHostAdapter:
             interaction_id=wake.interaction_id,
             status=HostTurnStatus.COMMITTED,
             outcome=HostStatus.OK,
-            decision_context_ref=exec_ctx.context.context_id if exec_ctx else None,
+            decision_context_ref=exec_ctx.context.context_id,
             expression_ref=None,
             debug_ref=f"debug-{wake.interaction_id}",
             reason_codes=("proactive_delivery_committed",),
@@ -1215,20 +1379,42 @@ class MindRuntimeHostAdapter:
             or getattr(self._orchestrator, "intent_lifecycle", None)
             or getattr(self._orchestrator, "_intent_lifecycle", None)
         )
-        if lifecycle is not None:
-            now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
-            try:
-                lifecycle.transition(
-                    scope=wake.scope,
-                    intent_id=wake.intent_id,
-                    to_status=IntentStatus.SUPERSEDED,
-                    reason_codes=("proactive_delivery_aborted", reason or "host_abort"),
-                    occurred_at=now,
-                    idempotency_key=f"proactive-abort-{wake.intent_id}-v{wake.intent_version}",
-                )
-            except Exception:
-                pass
+        if lifecycle is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=self._pending_exec_contexts.get(wake_id).context.context_id if wake_id in self._pending_exec_contexts else None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("intent_authority_unavailable",),
+            )
 
+        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        try:
+            lifecycle.transition(
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                to_status=IntentStatus.SUPERSEDED,
+                reason_codes=("proactive_delivery_aborted", reason or "host_abort"),
+                occurred_at=now,
+                idempotency_key=f"proactive-abort-{wake.intent_id}-v{wake.intent_version}",
+            )
+        except Exception as exc:
+            _logger.warning("abort_proactive_turn transition failed: %s", exc)
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=self._pending_exec_contexts.get(wake_id).context.context_id if wake_id in self._pending_exec_contexts else None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("abort_transition_failed", str(exc)),
+            )
+
+        self._guard_admissions.pop(wake_id, None)
         exec_ctx = self._pending_exec_contexts.pop(wake_id, None)
         self._pending_wake_contexts.pop(wake_id, None)
         ticker = components.get("ticker")
@@ -1246,97 +1432,6 @@ class MindRuntimeHostAdapter:
             reason_codes=("proactive_delivery_aborted", reason or "host_abort"),
         )
         self._proactive_turn_results[wake_id] = result
-        return result
-
-    def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
-        """HI-1: Execute a proactive Body turn following wake admission."""
-        prep_result = self.begin_proactive_turn(wake)
-        if prep_result.status is not HostTurnStatus.PROCESSING or prep_result.outcome is not HostStatus.OK:
-            return prep_result
-
-        now = wake.woken_at
-        preparer = self._resolve_expression_preparer()
-        exec_ctx = self._pending_exec_contexts.get(wake.wake_id)
-        if preparer is None or exec_ctx is None:
-            return prep_result
-
-        tick_ctx = self._pending_wake_contexts.get(wake.wake_id) or {}
-        if tick_ctx.get("transition_result") is None:
-            artifact = ProactiveExpressionArtifact(
-                interaction_id=wake.interaction_id,
-                intent_id=wake.intent_id,
-                action_type=wake.action_type,
-                context_id=exec_ctx.context.context_id,
-                skip_reason="no_transition",
-            )
-            return HostProactiveTurnResult(
-                wake_id=wake.wake_id,
-                interaction_id=wake.interaction_id,
-                status=HostTurnStatus.ABORTED,
-                outcome=HostStatus.FAILED,
-                decision_context_ref=exec_ctx.context.context_id,
-                expression_ref=None,
-                debug_ref=f"debug-{wake.interaction_id}",
-                bounded_context=prep_result.bounded_context,
-                proactive_expression=artifact,
-                reason_codes=("no_transition",),
-            )
-
-        # Body execution (provider realization + guard)
-        try:
-            artifact = preparer.realize_after_wake(exec_ctx, now=now)
-        except Exception as exc:
-            artifact = ProactiveExpressionArtifact(
-                interaction_id=wake.interaction_id,
-                intent_id=wake.intent_id,
-                action_type=wake.action_type,
-                context_id=exec_ctx.context.context_id,
-                skip_reason="agent_failure",
-            )
-            fail_result = HostProactiveTurnResult(
-                wake_id=wake.wake_id,
-                interaction_id=wake.interaction_id,
-                status=HostTurnStatus.ABORTED,
-                outcome=HostStatus.FAILED,
-                decision_context_ref=exec_ctx.context.context_id,
-                expression_ref=None,
-                debug_ref=f"debug-{wake.interaction_id}",
-                bounded_context=prep_result.bounded_context,
-                proactive_expression=artifact,
-                reason_codes=("agent_failure", str(exc)),
-            )
-            self._proactive_turn_results[wake.wake_id] = fail_result
-            return fail_result
-
-        turn_status = (
-            HostTurnStatus.PROCESSING
-            if artifact.disposition is ExpressionDisposition.ACCEPT
-            else HostTurnStatus.ABORTED
-        )
-        outcome_status = (
-            HostStatus.OK
-            if artifact.disposition is ExpressionDisposition.ACCEPT
-            else HostStatus.FAILED
-        )
-        result = HostProactiveTurnResult(
-            wake_id=wake.wake_id,
-            interaction_id=wake.interaction_id,
-            status=turn_status,
-            outcome=outcome_status,
-            decision_context_ref=artifact.context_id,
-            expression_ref=(
-                artifact.outcome_id
-                if artifact.disposition is ExpressionDisposition.ACCEPT
-                else None
-            ),
-            debug_ref=f"debug-{wake.interaction_id}",
-            bounded_context=prep_result.bounded_context,
-            disposition=artifact.disposition,
-            would_send=artifact.would_send,
-            proactive_expression=artifact,
-            reason_codes=(artifact.skip_reason,) if artifact.skip_reason else (),
-        )
-        self._proactive_turn_results[wake.wake_id] = result
         return result
 
     # ----- internal: terminal record management -----------------------
