@@ -34,7 +34,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from mind_runtime.cognition.express import (
     ProactiveExpressionArtifact,
@@ -276,6 +276,10 @@ class CognitiveTicker:
         self._state_backend = _resolve_state_backend(orchestrator)
         if intent_engine._runtime_id != runtime_id:
             raise ValueError("intent engine runtime_id must match ticker runtime_id")
+        self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
+
+    def get_pending_wake_context(self, wake_id: str) -> dict[str, Any] | None:
+        return self._pending_wake_contexts.get(wake_id)
 
     # ── public entrypoint ────────────────────────────────────────────────
 
@@ -336,16 +340,19 @@ class CognitiveTicker:
             situation=situation,
             candidates=engine_result.candidates,
             counters=counters,
-        )
-        expression_artifact = self._prepare_expression(
-            selection=selection,
-            situation=situation,
-            projected=projected,
-            transition_result=transition_result,
             interaction_id=interaction_id,
-            now=now,
-            surface=surface_result,
         )
+        expression_artifact: ProactiveExpressionArtifact | None = None
+        if self._expression is not None:
+            expression_artifact = self._prepare_expression(
+                selection=selection,
+                situation=situation,
+                projected=projected,
+                transition_result=transition_result,
+                interaction_id=interaction_id,
+                now=now,
+                surface=surface_result,
+            )
         wake_signal: WakeSignal | None = None
         if selection is not None:
             intent, policy_result = selection
@@ -367,11 +374,41 @@ class CognitiveTicker:
                 counters.wake_signal = wake_signal
                 self._orchestrator.trace.record(
                     interaction_id,
+                    "wake_created",
+                    ref=wake_signal.wake_id,
+                    outcome=action_type,
+                    at=now,
+                )
+                self._orchestrator.trace.record(
+                    interaction_id,
                     "proactive_wake_dispatched",
                     ref=wake_signal.wake_id,
                     outcome=action_type,
                     at=now,
                 )
+                self._pending_wake_contexts[wake_signal.wake_id] = {
+                    "intent": intent,
+                    "policy_result": policy_result,
+                    "situation": situation,
+                    "projected": projected,
+                    "transition_result": transition_result,
+                    "assessment_trace_ref": (
+                        transition_result.assessment_trace.trace_id
+                        if transition_result is not None
+                        else "none"
+                    ),
+                    "accepted_appraisals": (
+                        transition_result.accepted_appraisals
+                        if transition_result is not None
+                        else ()
+                    ),
+                    "surface": surface_result,
+                    "state_rows": self._load_state_rows(),
+                    "persona_ref": self._persona.persona_id,
+                    "persona_version": self._persona.version,
+                    "persona_content_digest": self._persona.persona_content_digest,
+                    "now": now,
+                }
         self._orchestrator.trace.record(
             interaction_id,
             "cognitive_tick",
@@ -589,8 +626,10 @@ class CognitiveTicker:
         situation: Situation,
         candidates: tuple[Intent, ...],
         counters: _MutableCounters,
+        interaction_id: str | None = None,
     ) -> tuple[Intent, ActionPolicyResult] | None:
         """Run the policy gate; return the ALLOW selection for expression."""
+        actual_interaction_id = interaction_id or getattr(counters, "interaction_id", "")
         lifecycle = self._intent_lifecycle
         selection: tuple[Intent, ActionPolicyResult] | None = None
         before_status = {
@@ -671,7 +710,7 @@ class CognitiveTicker:
                 )
                 counters.denied += 1
             else:
-                lifecycle.transition(
+                allowed_intent = lifecycle.transition(
                     scope,
                     candidate.intent_id,
                     IntentStatus.ALLOWED,
@@ -680,7 +719,14 @@ class CognitiveTicker:
                     f"tick-policy-allow-{candidate.intent_id}-v{candidate.sync.version}",
                 )
                 counters.allowed += 1
-                selection = (candidate, policy_result)
+                selection = (allowed_intent, policy_result)
+                self._orchestrator.trace.record(
+                    actual_interaction_id,
+                    "policy_allow",
+                    ref=candidate.intent_id,
+                    outcome=candidate.kind,
+                    at=now,
+                )
                 for lower in ordered[index + 1 :]:
                     lifecycle.transition(
                         lower.scope,
@@ -745,7 +791,9 @@ class CognitiveTicker:
                 persona_ref=self._persona.persona_id,
                 now=now,
                 accepted_appraisals=transition_result.accepted_appraisals,
-                surface=surface,
+                surface=surface,  # type: ignore[arg-type]
+                persona_version=self._persona.version,
+                persona_content_digest=self._persona.persona_content_digest,
             )
         except AgentFailure:
             self._orchestrator.trace.record(

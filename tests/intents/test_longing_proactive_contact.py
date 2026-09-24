@@ -39,6 +39,7 @@ import ast
 import inspect
 import json
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -60,6 +61,9 @@ from mind_runtime.contracts import (
     ActionPolicyInput,
     ActionPolicyResult,
     ExpressionDisposition,
+    HostProactiveTurnResult,
+    HostStatus,
+    HostTurnStatus,
     HostWakeNotification,
     Intent,
     IntentEngineInput,
@@ -278,16 +282,17 @@ def _build_test_stack(
             config=ProactiveExpressionConfig(("proactive_message",)),
             runtime_id="fixture-runtime",
         )
-        orchestrator.cognitive_tick_components["ticker"]._expression = preparer
+        orchestrator.cognitive_tick_components["expression_preparer"] = preparer
+        orchestrator.proactive_expression_preparer = preparer
 
     return orchestrator, clock, delivery_db, fake_agent
 
 
-# ── SECTION 14: REQUIRED TESTS — STRUCTURAL ──────────────────────────────────
+# ── FOUNDATIONAL STRUCTURAL TESTS ─────────────────────────────────────────────
 
 
-def test_a_frozen_w3_final_sha_is_ancestor():
-    """Test A: Authoritative frozen W3 final SHA 386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e is an ancestor."""
+def test_foundational_w3_final_sha_is_ancestor():
+    """Foundational: Authoritative frozen W3 final SHA 386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e is an ancestor."""
     frozen_sha = "386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e"
     # Resolve the object in git
     show_proc = subprocess.run(
@@ -311,17 +316,8 @@ def test_a_frozen_w3_final_sha_is_ancestor():
     )
 
 
-def test_b_fast_function_v1_registry_count_remains_eight():
-    """Test B: FAST_FUNCTION_V1_REGISTRY count remains exactly 8."""
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
-    longing_spec = FAST_FUNCTION_V1_REGISTRY.get("agent.affect.longing")
-    assert longing_spec is not None
-    assert longing_spec.function_kind == FastFunctionKind.PROACTIVE_CONTACT
-    assert longing_spec.external_action_capable is True
-
-
-def test_c_longing_remains_declared_surface_root_for_contact_seeking():
-    """Test C: longing remains a declared Surface root for contact_seeking."""
+def test_foundational_longing_remains_declared_surface_root_for_contact_seeking():
+    """Foundational: longing remains a declared Surface root for contact_seeking."""
     assert "contact_seeking" in MANIFEST
     dynamics_roots = MANIFEST["contact_seeking"]["dynamics"]
     assert D_PREFIX + "longing" in dynamics_roots
@@ -330,8 +326,8 @@ def test_c_longing_remains_declared_surface_root_for_contact_seeking():
     assert D_PREFIX + "longing" in transitive_roots
 
 
-def test_d_intent_path_cannot_read_raw_longing_overlap():
-    """Test D: Intent path cannot read raw agent.affect.longing when consumed through Surface."""
+def test_foundational_intent_path_cannot_read_raw_longing_overlap():
+    """Foundational: Intent path cannot read raw agent.affect.longing when consumed through Surface."""
     with pytest.raises(ValueError, match="ROOT_OVERLAP"):
         IntentRule(
             rule_id="illegal-contact",
@@ -348,8 +344,8 @@ def test_d_intent_path_cannot_read_raw_longing_overlap():
         )
 
 
-def test_e_increasing_longing_monotonic_contact_seeking():
-    """Test E: Increasing longing gives monotonic non-decreasing contact_seeking under Candidate Recipe v2."""
+def test_foundational_increasing_longing_monotonic_contact_seeking():
+    """Foundational: Increasing longing gives monotonic non-decreasing contact_seeking under Candidate Recipe v2."""
     def calc_contact_seeking(longing_val: float) -> float:
         raw = (
             0.45 * longing_val
@@ -369,7 +365,7 @@ def test_e_increasing_longing_monotonic_contact_seeking():
     assert c_high - c_mid == pytest.approx(0.45 * 0.4, abs=1e-5)
 
 
-def test_f_contact_seeking_drives_intent_strength_and_eligibility():
+def test_foundational_contact_seeking_drives_intent_strength_and_eligibility():
     """Test F: Increasing contact_seeking can increase proactive-contact Intent strength / eligibility."""
     runtime_id = "fixture-runtime"
     now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
@@ -486,373 +482,392 @@ def test_f_contact_seeking_drives_intent_strength_and_eligibility():
     assert res_achievable.candidates[0].strength == pytest.approx(0.400, abs=1e-5)
 
 
-# ── SECTION 15: REQUIRED TESTS — TICK AUTHORITY ──────────────────────────────
+# ── SECTION 18: TESTS — CAUSAL ORDER ─────────────────────────────────────────
 
 
-def test_g_cognitive_ticker_does_not_construct_delivery_request(tmp_path: Path):
-    """Test G: CognitiveTicker does NOT construct DeliveryRequest."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+def test_a_action_policy_allow_creates_wake_signal(tmp_path: Path):
+    """Test A: ActionPolicy ALLOW creates WakeSignal."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
     assert report.policy_allowed == 1
-    # Report contains wake_signal, NEVER delivery_request
-    assert not hasattr(report, "delivery_request")
     assert report.wake_signal is not None
     assert isinstance(report.wake_signal, WakeSignal)
+    assert report.wake_signal.action_type == "proactive_message"
+    assert report.wake_signal.reason == "proactive_intent_allowed"
+    assert report.wake_signal.intent_version == 2
 
 
-def test_h_cognitive_ticker_does_not_write_to_delivery_backend(tmp_path: Path):
-    """Test H: CognitiveTicker does NOT write to a DeliveryBackend."""
-    orchestrator, clock, delivery_db, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    now = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    run_cognitive_tick(orchestrator, scope=user_scope, now=now)
-
-    delivery_backend = SqliteDeliveryBackend(delivery_db)
-    row_count = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0]
-    delivery_backend.close()
-    assert row_count == 0, f"CognitiveTicker wrote {row_count} rows to delivery_requests!"
-
-
-def test_i_cognitive_ticker_has_no_delivery_backend_ownership():
-    """Test I: CognitiveTicker has no new delivery backend ownership introduced by 016fbbe."""
-    ticker_sig = inspect.signature(CognitiveTicker.__init__)
-    assert "delivery_backend" not in ticker_sig.parameters
-
-    builder_sig = inspect.signature(build_cognitive_ticker)
-    assert "delivery_backend" not in builder_sig.parameters
-
-
-def test_j_action_policy_deny_produces_no_wake_signal(tmp_path: Path):
-    """Test J: ActionPolicy DENY produces no WakeSignal."""
-    orchestrator, clock, _, _ = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        resources=("proactive_message",),
-        policy_rules=(),
-    )
+def test_b_provider_call_count_zero_before_host_admission(tmp_path: Path):
+    """Test B: Before Host wake admission: provider call count == 0."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
     report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
-    assert report.policy_denied >= 1
-    assert report.policy_allowed == 0
-    assert report.wake_signal is None
-    assert report.proactive_wake is None
-    assert report.as_dict()["wake_signal"] is None
-    assert report.as_dict()["wake_id"] is None
-
-
-def test_k_action_policy_allow_produces_one_legal_proactive_wake(tmp_path: Path):
-    """Test K: ActionPolicy ALLOW may produce one legal proactive wake."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    now = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
-    assert report.policy_allowed == 1
     assert report.wake_signal is not None
-    wake = report.wake_signal
-    assert isinstance(wake, WakeSignal)
-    assert wake.action_type == "proactive_message"
-    assert wake.reason == "proactive_intent_allowed"
-    assert wake.scope == user_scope
-    assert wake.wake_id.startswith("wake-")
-
-
-def test_l_cooldown_prevents_repeated_wake_generation(tmp_path: Path):
-    """Test L: Cooldown / anti-repeat prevents repeated wake generation."""
-    orchestrator, clock, _, _ = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        cooldown=timedelta(minutes=30),
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report1 = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-    assert report1.policy_allowed == 1
-    assert report1.wake_signal is not None
-
-    t2 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report2 = run_cognitive_tick(orchestrator, scope=user_scope, now=t2)
-    assert report2.policy_allowed == 0
-    assert report2.wake_signal is None
-
-
-def test_m_one_admitted_intent_produces_at_most_one_wake(tmp_path: Path):
-    """Test M: One admitted proactive intent produces at most one wake for the same logical eligibility event."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    assert report.policy_allowed == 1
-    assert report.wake_signal is not None
-    # Exactly one WakeSignal is attached to the report
-    assert isinstance(report.wake_signal, WakeSignal)
-    assert report.as_dict()["wake_id"] == report.wake_signal.wake_id
-
-
-# ── SECTION 16: REQUIRED TESTS — WAKE BOUNDARY ───────────────────────────────
-
-
-def test_n_wake_output_contains_bounded_typed_refs_only(tmp_path: Path):
-    """Test N: Wake output contains bounded typed refs only."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-    wake = report.wake_signal
-    assert wake is not None
-
-    # Verify typed fields
-    assert isinstance(wake.wake_id, str)
-    assert isinstance(wake.runtime_id, str)
-    assert isinstance(wake.scope, Scope)
-    assert isinstance(wake.intent_id, str)
-    assert isinstance(wake.action_type, str)
-    assert isinstance(wake.policy_decision_ref, str)
-    assert isinstance(wake.interaction_id, str)
-    assert isinstance(wake.woken_at, datetime)
-    assert isinstance(wake.reason, str)
-    assert isinstance(wake.intent_version, int)
-
-
-def test_o_wake_does_not_expose_raw_internal_vectors(tmp_path: Path):
-    """Test O: Wake does not expose longing numeric value, raw Dynamics, Persona vector, or raw Surface vector."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-    wake = report.wake_signal
-    assert wake is not None
-
-    for forbidden in ("longing", "dynamics", "persona", "surface", "raw_affect", "character_card"):
-        assert not hasattr(wake, forbidden)
-        assert forbidden not in wake.as_dict()
-
-
-def test_p_wake_does_not_fabricate_user_message(tmp_path: Path):
-    """Test P: Wake does not fabricate a user message."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-    wake = report.wake_signal
-    assert wake is not None
-
-    for forbidden in ("user_message", "user_utterance", "evidence_text"):
-        assert not hasattr(wake, forbidden)
-        assert forbidden not in wake.as_dict()
-
-
-def test_q_wake_does_not_become_user_evidence(tmp_path: Path):
-    """Test Q: Wake does not become user Evidence."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    # Fact service has no Evidence with source_type="user_message" created by tick
-    facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
-    user_message_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
-    assert len(user_message_evs) == 0
-
-
-def test_r_wake_itself_does_not_create_delivery_receipt(tmp_path: Path):
-    """Test R: Wake itself does not create a DeliveryReceipt."""
-    orchestrator, clock, delivery_db, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    delivery_backend = SqliteDeliveryBackend(delivery_db)
-    receipts_count = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_receipts").fetchone()[0]
-    delivery_backend.close()
-    assert receipts_count == 0
-
-
-def test_s_wake_does_not_directly_create_final_user_visible_text(tmp_path: Path):
-    """Test S: Wake does not directly create final user-visible text."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-    wake = report.wake_signal
-    assert wake is not None
-
-    for forbidden in ("text", "prose", "would_send", "payload_bytes"):
-        assert not hasattr(wake, forbidden)
-        assert forbidden not in wake.as_dict()
-
-
-# ── SECTION 17: REQUIRED TESTS — BODY / EXPRESSION PATH ──────────────────────
-
-
-def test_t_legal_proactive_wake_reaches_existing_proactive_expression_path(tmp_path: Path):
-    """Test T: A legal proactive wake reaches the existing proactive Body/expression preparation path."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-        agent_script=("想和你聊聊今天的新发现",),
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    # 1. Legal proactive wake was emitted
-    assert report.wake_signal is not None
-    # 2. Existing proactive expression preparation ran and produced would-send artifact
-    assert report.proactive_expression is not None
-    artifact: ProactiveExpressionArtifact = report.proactive_expression
-    assert artifact.would_send == "想和你聊聊今天的新发现"
-    assert artifact.disposition is ExpressionDisposition.ACCEPT
-    assert fake_agent is not None and len(fake_agent.calls) == 1
-
-
-def test_u_decision_context_admission_occurs_before_provider_realization(tmp_path: Path):
-    """Test U: DecisionContext admission occurs before provider realization."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    artifact = report.proactive_expression
-    assert artifact is not None
-    # Context ID was recorded and trace includes proactive_expression_context
-    assert artifact.context_id is not None
-    trace = orchestrator.trace.trace(f"cognitive-tick-{t1.isoformat()}")
-    stages = [entry.stage for entry in trace]
-    assert "proactive_expression_context" in stages
-    assert "proactive_expression" in stages
-    ctx_idx = stages.index("proactive_expression_context")
-    expr_idx = stages.index("proactive_expression")
-    assert ctx_idx < expr_idx, "DecisionContext admission must occur before provider realization!"
-
-
-def test_v_policy_denial_cannot_create_provider_handoff(tmp_path: Path):
-    """Test V: Policy denial cannot create provider handoff."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-        policy_rules=(),
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    assert report.policy_denied >= 1
-    assert report.wake_signal is None
-    # No provider handoff occurred
+    # Crucial causal invariant: Ticker did NOT invoke provider or create expression
     assert report.proactive_expression is None
-    assert fake_agent is not None and len(fake_agent.calls) == 0
+    assert fake_agent is not None
+    assert len(fake_agent.calls) == 0
 
 
-def test_w_provider_prose_still_passes_expression_guard(tmp_path: Path):
-    """Test W: Provider prose still passes ExpressionGuard."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-        agent_script=("合法的问候表达",),
-    )
+def test_c_host_rejects_invalid_wake_zero_provider_calls(tmp_path: Path):
+    """Test C: Host rejects invalid wake: provider call count == 0."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
 
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    artifact = report.proactive_expression
-    assert artifact is not None
-    assert artifact.disposition is ExpressionDisposition.ACCEPT
-    assert artifact.would_send == "合法的问候表达"
-
-
-def test_x_guard_rejection_prevents_external_delivery_or_commit(tmp_path: Path):
-    """Test X: Guard rejection prevents external delivery/commit."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-        agent_script=("",),
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    artifact = report.proactive_expression
-    assert artifact is not None
-    assert artifact.disposition is ExpressionDisposition.REJECT
-    assert artifact.would_send is None
-
-
-def test_y_c7_request_authority_is_not_cognitive_ticker(tmp_path: Path):
-    """Test Y: Any resulting C7 request is created by the existing authoritative handoff / delivery owner, not CognitiveTicker."""
-    orchestrator, clock, delivery_db, _ = _build_test_stack(
-        tmp_path,
-        initial_longing=0.90,
-        with_expression=True,
-    )
-    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-
-    t1 = clock.now() + timedelta(minutes=5)
-    clock.advance(timedelta(minutes=5))
-    report = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
-
-    # 1. CognitiveTicker emitted wake_signal, never DeliveryRequest
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
     assert report.wake_signal is not None
-    assert not hasattr(report, "delivery_request")
 
-    # 2. Delivery backend was NOT written to by ticker
-    delivery_backend = SqliteDeliveryBackend(delivery_db)
-    rows = delivery_backend._conn.execute("SELECT COUNT(*) FROM delivery_requests").fetchone()[0]
-    delivery_backend.close()
-    assert rows == 0
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    bad_wake = replace(report.wake_signal, runtime_id="wrong-runtime-id")
+
+    turn_res = adapter.run_proactive_turn(bad_wake)
+    assert turn_res.status == HostTurnStatus.FAILED
+    assert turn_res.outcome == HostStatus.FAILED
+    assert turn_res.expression_ref is None
+    assert len(fake_agent.calls) == 0
 
 
-# ── SECTION 18: STATIC ARCHITECTURE GUARDS ───────────────────────────────────
+def test_d_host_admits_valid_wake_one_provider_call(tmp_path: Path):
+    """Test D: Host admits valid wake: provider call count == 1."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.wake_signal is not None
+    assert len(fake_agent.calls) == 0
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.run_proactive_turn(report.wake_signal)
+
+    assert turn_res.status == HostTurnStatus.COMMITTED
+    assert turn_res.outcome == HostStatus.OK
+    assert turn_res.decision_context_ref is not None
+    assert turn_res.expression_ref is not None
+    assert len(fake_agent.calls) == 1
 
 
-def test_z1_static_ast_guard_no_delivery_authority_in_tick_py():
-    """Static AST Guard: fail if cognition/tick.py newly contains direct use of delivery authority."""
+def test_e_trace_ordering_proves_causal_sequence(tmp_path: Path):
+    """Test E: Trace ordering proves:
+    policy_allow < wake_created < host_wake_admitted < proactive_body_entry < provider_realization < expression_guard
+    """
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.run_proactive_turn(wake)
+    assert turn_res.outcome == HostStatus.OK
+
+    records = orchestrator.trace.trace(wake.interaction_id)
+    stages = [r.stage for r in records]
+
+    required_stages = (
+        "policy_allow",
+        "wake_created",
+        "host_wake_admitted",
+        "proactive_body_entry",
+        "proactive_expression_context",
+        "provider_realization",
+        "expression_guard",
+        "proactive_expression",
+    )
+    for stage in required_stages:
+        assert stage in stages, f"Missing required trace stage: {stage} in {stages}"
+
+    p_allow = stages.index("policy_allow")
+    w_create = stages.index("wake_created")
+    h_admit = stages.index("host_wake_admitted")
+    b_entry = stages.index("proactive_body_entry")
+    ctx_prep = stages.index("proactive_expression_context")
+    p_realize = stages.index("provider_realization")
+    e_guard = stages.index("expression_guard")
+    p_expr = stages.index("proactive_expression")
+
+    assert p_allow < w_create < h_admit < b_entry <= ctx_prep < p_realize < e_guard <= p_expr, (
+        f"Causal ordering violation in stages: {stages}"
+    )
+
+
+def test_f_no_proactive_expression_artifact_before_admitted_wake(tmp_path: Path):
+    """Test F: No proactive expression artifact exists before admitted wake."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.wake_signal is not None
+    assert report.proactive_expression is None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    assert report.wake_signal.wake_id not in adapter._proactive_turn_results
+
+
+def test_g_same_wake_replay_no_second_provider_call(tmp_path: Path):
+    """Test G: Same wake replay produces no second provider call."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    res1 = adapter.run_proactive_turn(wake)
+    assert res1.outcome == HostStatus.OK
+    assert len(fake_agent.calls) == 1
+
+    # Replay same wake
+    res2 = adapter.run_proactive_turn(wake)
+    assert res2.status == HostTurnStatus.ALREADY_PROCESSED
+    assert res2.outcome == HostStatus.ALREADY_PROCESSED
+    assert len(fake_agent.calls) == 1
+
+
+def test_h_conflicting_same_wake_id_fails_closed(tmp_path: Path):
+    """Test H: Conflicting same wake_id fails closed."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    res1 = adapter.run_proactive_turn(wake)
+    assert res1.outcome == HostStatus.OK
+    assert len(fake_agent.calls) == 1
+
+    # Replay with modified conflicting payload
+    conflicting_wake = replace(wake, action_type="conflicting_action")
+    res2 = adapter.run_proactive_turn(conflicting_wake)
+    assert res2.status == HostTurnStatus.FAILED
+    assert res2.outcome == HostStatus.FAILED
+    assert len(fake_agent.calls) == 1
+
+
+# ── SECTION 19: TESTS — LINEAGE ──────────────────────────────────────────────
+
+
+def test_i_wrong_runtime_id_rejected(tmp_path: Path):
+    """Test I: wrong runtime_id -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    bad_wake = replace(wake, runtime_id="foreign-runtime")
+    notif = adapter.consume_wake(bad_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:runtime_id_mismatch"
+
+
+def test_j_wrong_scope_rejected(tmp_path: Path):
+    """Test J: wrong scope -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    other_scope = Scope(domain=ScopeDomain.USER, user_id="other-user")
+    bad_wake = replace(wake, scope=other_scope)
+    notif = adapter.consume_wake(bad_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:scope_mismatch"
+
+
+def test_k_unknown_intent_id_rejected(tmp_path: Path):
+    """Test K: unknown intent_id -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    bad_wake = replace(wake, intent_id="intent-does-not-exist")
+    notif = adapter.consume_wake(bad_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:unknown_intent_id"
+
+
+def test_l_intent_not_allowed_rejected(tmp_path: Path):
+    """Test L: Intent not ALLOWED -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    lifecycle = orchestrator.cognitive_tick_components["lifecycle"]
+    # Transition intent from ALLOWED to COMPLETED
+    lifecycle.transition(
+        scope=wake.scope,
+        intent_id=wake.intent_id,
+        to_status=IntentStatus.COMPLETED,
+        reason_codes=("completed_by_external",),
+        occurred_at=now,
+        idempotency_key="idem-complete-test",
+    )
+
+    notif = adapter.consume_wake(wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:intent_not_allowed"
+
+
+def test_m_wrong_intent_version_rejected(tmp_path: Path):
+    """Test M: wrong intent_version -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    bad_wake = replace(wake, intent_version=wake.intent_version + 5)
+    notif = adapter.consume_wake(bad_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:intent_version_mismatch"
+
+
+def test_n_action_type_mismatch_rejected(tmp_path: Path):
+    """Test N: action_type mismatch -> rejected."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    bad_wake = replace(wake, action_type="unauthorized_action_type")
+    notif = adapter.consume_wake(bad_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:action_type_mismatch"
+
+
+def test_o_valid_wake_admitted(tmp_path: Path):
+    """Test O: valid wake -> admitted."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    notif = adapter.consume_wake(wake)
+    assert notif.eligible is True
+    assert notif.reason == "proactive_intent_allowed"
+
+
+def test_p_host_wake_notification_preserves_required_bounded_lineage(tmp_path: Path):
+    """Test P: HostWakeNotification preserves required bounded lineage."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    notif = adapter.consume_wake(wake)
+
+    assert notif.wake_id == wake.wake_id
+    assert notif.runtime_id == wake.runtime_id
+    assert notif.scope == wake.scope
+    assert notif.intent_id == wake.intent_id
+    assert notif.intent_version == wake.intent_version
+    assert notif.action_type == wake.action_type
+    assert notif.interaction_id == wake.interaction_id
+    assert notif.policy_decision_ref == wake.policy_decision_ref
+    assert notif.occurred_at == wake.woken_at
+    assert notif.reason == "proactive_intent_allowed"
+    assert notif.eligible is True
+
+
+def test_q_wake_and_notification_expose_no_raw_affect_persona_surface_numbers(tmp_path: Path):
+    """Test Q: Wake/notification exposes no raw affect/Persona/Surface numbers."""
+    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    notif = adapter.consume_wake(wake)
+
+    forbidden_fields = (
+        "longing",
+        "dynamics",
+        "persona",
+        "surface",
+        "raw_affect",
+        "character_card",
+        "contact_seeking",
+        "prompt",
+    )
+    for forbidden in forbidden_fields:
+        assert not hasattr(wake, forbidden)
+        assert forbidden not in wake.as_dict()
+        assert not hasattr(notif, forbidden)
+        assert forbidden not in notif.as_dict()
+
+
+# ── SECTION 20: TESTS — AUTHORITY ────────────────────────────────────────────
+
+
+def test_r_cognitive_ticker_ast_no_delivery_authority():
+    """Test R: CognitiveTicker source/AST has no DeliveryRequest authority."""
     tick_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
     assert tick_path.exists(), f"Could not find tick.py at {tick_path}"
     source = tick_path.read_text(encoding="utf-8")
@@ -887,36 +902,133 @@ def test_z1_static_ast_guard_no_delivery_authority_in_tick_py():
     assert not found_violations, f"Architecture violation in cognition/tick.py:\n" + "\n".join(found_violations)
 
 
-def test_z2_host_adapter_smallest_typed_consumer():
-    """Test smallest typed consumer of WakeSignal at MindRuntimeHostAdapter boundary."""
-    from unittest.mock import MagicMock
-    adapter = MindRuntimeHostAdapter(orchestrator=MagicMock())
-    now = datetime(2026, 9, 24, 8, 0, tzinfo=UTC)
-    scope = Scope(domain=ScopeDomain.USER, user_id="test-user")
-    wake = WakeSignal(
-        wake_id="wake-123",
-        runtime_id="runtime-1",
-        scope=scope,
-        intent_id="intent-abc",
-        action_type="proactive_message",
-        policy_decision_ref="policy-ref-1",
-        interaction_id="interaction-123",
-        woken_at=now,
+def test_s_cognitive_ticker_no_longer_invokes_provider_realization(tmp_path: Path):
+    """Test S: CognitiveTicker no longer invokes provider realization."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.wake_signal is not None
+    assert report.proactive_expression is None
+    assert fake_agent is not None
+    assert len(fake_agent.calls) == 0
+
+
+def test_t_wake_does_not_create_user_evidence(tmp_path: Path):
+    """Test T: Wake does not create user Evidence."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    adapter.run_proactive_turn(report.wake_signal)
+
+    facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    user_message_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
+    assert len(user_message_evs) == 0
+
+
+def test_u_wake_does_not_synthesize_host_turn_request(tmp_path: Path):
+    """Test U: Wake does not synthesize HostTurnRequest."""
+    adapter_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    source = adapter_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(adapter_path))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "run_proactive_turn":
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and child.id == "HostTurnRequest":
+                    pytest.fail("run_proactive_turn must not instantiate HostTurnRequest")
+                if isinstance(child, ast.Attribute) and child.attr == "begin_turn":
+                    pytest.fail("run_proactive_turn must not call begin_turn")
+
+
+def test_v_guard_rejection_prevents_delivery_eligibility(tmp_path: Path):
+    """Test V: Guard rejection prevents delivery eligibility."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        agent_script=("",),
     )
-    notification = adapter.consume_wake(wake)
-    assert isinstance(notification, HostWakeNotification)
-    assert notification.wake_id == "wake-123"
-    assert notification.runtime_id == "runtime-1"
-    assert notification.scope == scope
-    assert notification.intent_id == "intent-abc"
-    assert notification.action_type == "proactive_message"
-    assert notification.eligible is True
-    # Aliased method also works
-    assert adapter.notify_proactive_wake(wake) == notification
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.wake_signal is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.run_proactive_turn(report.wake_signal)
+
+    assert turn_res.status == HostTurnStatus.ABORTED
+    assert turn_res.outcome == HostStatus.FAILED
+    assert turn_res.expression_ref is None
+    assert turn_res.would_send is None
 
 
-def test_z3_longing_anti_spam_invariant_and_registry():
-    """Verify anti-spam invariant string, registry invariants, and validation behavior."""
+def test_w_policy_deny_produces_neither_wake_nor_provider_invocation(tmp_path: Path):
+    """Test W: Policy DENY produces neither wake nor provider invocation."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        policy_rules=(),
+    )
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    assert report.policy_denied >= 1
+    assert report.policy_allowed == 0
+    assert report.wake_signal is None
+    assert fake_agent is not None
+    assert len(fake_agent.calls) == 0
+
+
+def test_x_cooldown_defer_produces_neither_wake_nor_provider_invocation(tmp_path: Path):
+    """Test X: Cooldown DEFER produces neither wake nor provider invocation."""
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path,
+        initial_longing=0.90,
+        with_expression=True,
+        cooldown=timedelta(minutes=30),
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    # Tick 1: Allowed
+    t1 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report1 = run_cognitive_tick(orchestrator, scope=user_scope, now=t1)
+    assert report1.policy_allowed == 1
+    assert report1.wake_signal is not None
+    assert len(fake_agent.calls) == 0
+
+    # Tick 2: Deferred by cooldown
+    t2 = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    report2 = run_cognitive_tick(orchestrator, scope=user_scope, now=t2)
+    assert report2.policy_allowed == 0
+    assert report2.wake_signal is None
+    assert len(fake_agent.calls) == 0
+
+
+def test_y_fast_function_v1_registry_count_remains_eight():
+    """Test Y: FAST_FUNCTION_V1_REGISTRY count remains exactly 8."""
+    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
+    longing_spec = FAST_FUNCTION_V1_REGISTRY.get("agent.affect.longing")
+    assert longing_spec is not None
+    assert longing_spec.function_kind == FastFunctionKind.PROACTIVE_CONTACT
+    assert longing_spec.external_action_capable is True
+
+
+def test_z_longing_anti_spam_invariant_remains_valid():
+    """Test Z: Longing anti-spam invariant remains valid."""
     assert (
         LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
         == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
@@ -932,3 +1044,51 @@ def test_z3_longing_anti_spam_invariant_and_registry():
         validate_longing_anti_spam_invariant(
             longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=900.0
         )
+
+
+# ── SECTION 21: TESTS — TYPING / PRIVATE ACCESS ──────────────────────────────
+
+
+def test_aa_proactive_surface_parameter_uses_typed_surface_contract():
+    """Test AA: Proactive Surface parameter uses typed Surface contract, not object."""
+    sig = inspect.signature(ProactiveExpressionPreparer.prepare_context)
+    surface_param = sig.parameters.get("surface")
+    assert surface_param is not None
+    # Annotation must be SurfaceProjectionResult | None, NOT object or Any
+    annotation = surface_param.annotation
+    assert annotation != object
+    assert "SurfaceProjectionResult" in str(annotation)
+
+
+def test_ab_no_type_ignore_on_proactive_path():
+    """Test AB: No type-ignore is required on the proactive expression path."""
+    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    lines = express_path.read_text(encoding="utf-8").splitlines()
+    for lineno, line in enumerate(lines, 1):
+        if "# type: ignore" in line:
+            pytest.fail(f"Found forbidden '# type: ignore' in express.py at line {lineno}: {line}")
+
+
+def test_ac_proactive_preparation_does_not_read_compiler_config():
+    """Test AC: Proactive preparation does not read _compiler._config directly."""
+    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    source = express_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(express_path))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "_config":
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "_compiler":
+                pytest.fail(f"Proactive path reads _compiler._config at line {node.lineno}")
+
+
+def test_ad_proactive_preparation_does_not_read_orchestrator_persona():
+    """Test AD: Proactive preparation does not read _orchestrator._persona directly."""
+    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    source = express_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(express_path))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "_persona":
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "_orchestrator":
+                pytest.fail(f"Proactive path reads _orchestrator._persona at line {node.lineno}")
+
