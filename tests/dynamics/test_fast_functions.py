@@ -22,6 +22,8 @@ from pathlib import Path
 import pytest
 
 from mind_runtime.dynamics.fast_functions import (
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY,
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
@@ -32,6 +34,7 @@ from mind_runtime.dynamics.fast_functions import (
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
+    validate_curiosity_anti_spam_invariant,
     validate_diligence_anti_spam_invariant,
     validate_sharing_urge_anti_spam_invariant,
 )
@@ -263,6 +266,35 @@ def test_sharing_urge_maps_to_proactive_share() -> None:
     with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
         validate_sharing_urge_anti_spam_invariant(
             sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
+        )
+
+
+def test_curiosity_maps_to_inquiry_exploration() -> None:
+    """curiosity maps to INQUIRY_EXPLORATION and preserves anti-spam invariants."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.curiosity"]
+    assert spec.function_kind == FastFunctionKind.INQUIRY_EXPLORATION
+    assert spec.primary_consumer == "Intent / retrieval-or-question path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY"
+    )
+    assert (
+        CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY
+        == CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+    )
+    assert validate_curiosity_anti_spam_invariant(
+        curiosity=0.9,
+        base_cooldown_seconds=1800.0,
+        effective_cooldown_seconds=1800.0,
+    ) is True
+    with pytest.raises(ValueError, match="Curiosity anti-spam violation"):
+        validate_curiosity_anti_spam_invariant(
+            curiosity=0.9,
             base_cooldown_seconds=1800.0,
             effective_cooldown_seconds=600.0,
         )
