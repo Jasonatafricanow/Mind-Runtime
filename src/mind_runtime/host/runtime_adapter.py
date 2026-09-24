@@ -822,6 +822,20 @@ class MindRuntimeHostAdapter:
                 policy_decision_ref=wake.policy_decision_ref,
                 reason="rejected:unsupported_intent_action",
             )
+        if not getattr(rule, "proactive", False):
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:intent_not_proactive",
+            )
         if wake.action_type != rule.action_type:
             return HostWakeNotification(
                 wake_id=wake.wake_id,
