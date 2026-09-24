@@ -65,7 +65,7 @@ If the function or consumer is unclear, keep the meaning in open semantic Apprai
 
 Post-freeze baseline: `e48ce1ecacfbc7758359b6721dcfe84dd563e832`
 
-Completed causal closure: `MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01`
+Causal-seam candidate: `MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01` (`57515c89bf3893d7a7fe3e15c444039bab9abfe3`)
 
 ```text
 agent.affect.longing
@@ -83,7 +83,7 @@ agent.affect.longing
 
 Key causal rules verified:
 1. `provider_call_count == 0` prior to Host wake admission.
-2. CognitiveTicker does NOT invoke provider realization.
+2. In the intended production-style composition the ticker is built without an expression preparer, so provider calls remain zero before Host admission. The class still retains a legacy injectable expression path; remove it before treating this as a structural invariant.
 3. Host rejects invalid wake without invoking provider.
 4. Host exactly-once idempotency: duplicate wake returns `ALREADY_PROCESSED` with 0 additional provider calls; conflicting payload fails closed.
 5. Guard rejection prevents external delivery without creating fake Evidence or uncommitted affect mutation.
@@ -111,7 +111,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 
 | Fast state | Function | Next implementation work |
 |---|---|---|
-| `longing` | proactive contact | **Closed**: Wake-to-Body wiring, Host lineage validation, and execution ordering closed in MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01. Calibration remains provisional (`PROACTIVE_CONTACT_CALIBRATION_GAP=FOUND`). |
+| `longing` | proactive contact | **Needs one hardening pass**: remove the ticker's legacy provider seam, wire the proactive expression preparer into real production composition, make wake admission fail closed without lifecycle authority, remove synthetic restart reconstruction, and avoid reporting expression acceptance as delivery commit. Calibration remains provisional. |
 | `sharing_urge` | proactive share | Define one share Intent/action consumer after longing wake boundary is closed. |
 | `curiosity` | inquiry/exploration | Bind to question/retrieval Intent without turning retrieval into authority. |
 | `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |
@@ -137,3 +137,17 @@ expression suppression or release
 ```
 
 The fast-state layer stays small and function-defined. Open semantic meaning remains upstream and may stay unmapped when no runtime consumer exists.
+
+
+## 8. Production-closure checklist learned from Longing V1
+
+A passing causal harness is not enough to claim production wiring. Before a consumer is marked production-closed, verify all of the following in the real composition root:
+
+- the runtime builder actually wires every required component;
+- the external Host adapter has a reachable entry path for the wake/result;
+- no legacy optional injection can bypass the intended authority boundary;
+- missing authority fails closed rather than skipping validation;
+- restart/recovery either uses durable authoritative artifacts or explicitly fails closed;
+- accepted expression is not labeled as committed delivery unless the delivery authority actually committed it.
+
+The Longing V1 candidate currently passes causal ordering in its explicit test composition but still fails this production-closure checklist.
