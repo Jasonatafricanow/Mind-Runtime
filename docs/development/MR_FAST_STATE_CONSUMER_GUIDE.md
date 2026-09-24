@@ -115,7 +115,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 |---|---|---|
 | `longing` | proactive contact | **Production hardened & architecture closed**: ticker provider capability removed; fail-closed admission against real authorities; no synthetic context reconstruction; explicit `commit_proactive_turn` transitions Intent to `COMPLETED`; real production composition wired. Certified manifest config gap noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). Calibration remains provisional. |
 | `sharing_urge` | proactive share | **Architecture closed & verified under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Bound directly via `dimension_weights=(("agent.affect.sharing_urge", 1.0),)` with `surface_control_weights=()`. `Surface.initiative` was rejected because it is a composite control ($0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$), inducing cross-talk from curiosity and sadness. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
-| `curiosity` | inquiry/exploration | Bind to question/retrieval Intent without turning retrieval into authority. |
+| `curiosity` | inquiry/exploration | **Architecture closed & verified under MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01**: Question branch closed via direct binding `dimension_weights=(("agent.affect.curiosity", 1.0),)` and `surface_control_weights=()`. Autonomous retrieval branch remains explicitly deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`). Anti-spam invariant verified: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
 | `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |
 | `sadness` | initiative suppression | Audit existing initiative/expression coverage; prefer suppression over new action types. |
 | `restlessness` | activity wake | Define activity/wake consumer separately from proactive contact. |
@@ -182,5 +182,42 @@ Task: `MR-SHARING-URGE-PROACTIVE-SHARE-V1-01`
 - **Delivery Commitment**: Delivery is committed only via explicit `commit_proactive_turn` after external delivery.
 - **Evidence & Isolation Bounds**: `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items); `RAW_SHARING_URGE_PROVIDER_LEAK=NONE` (MR does not expose raw `sharing_urge` state to provider-visible context).
 - **Config-Gated Production Activation**: While runtime code is wired and verified, production activation is blocked by the certified manifest until calibration is completed (`SHARING_URGE_CALIBRATION_STATUS=PROVISIONAL`, `SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
+## 10. Curiosity Implementation and Boundary Choices
+
+Task: `MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01`
+
+### 10.1 Causal Architecture
+- State: `agent.affect.curiosity`
+- Intent Kind: `proactive_inquiry`
+- Action Type: `proactive_question` (`proactive=True`)
+- Downstream seam: `WakeSignal` → `Host.consume_wake` → `begin_proactive_turn` → external Body / provider generation → `guard_proactive_prose` → transport → `commit_proactive_turn`.
+
+### 10.2 Rationale: Why `surface_control_weights=()` was chosen over `Surface.initiative`
+1. **Cross-Talk Prevention**:
+   In Candidate Recipe v2, `Surface.initiative` is defined as:
+   $$\text{initiative} = 0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$$
+   `proactive_inquiry` does not use `Surface.initiative` because `initiative` is a composite control of `sharing_urge + curiosity + sadness`. Using it would introduce cross-talk into dedicated `INQUIRY_EXPLORATION`, where changes in sharing urge or sadness would modulate inquiry pressure even with constant `curiosity`.
+2. **Preserving Candidate Recipe v2 Integrity**:
+   Adding a dedicated surface control (such as `curiosity_drive` or `inquiry_pressure`) would alter `CANDIDATE_RECIPE_V2_DIGEST` (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`) and invalidate the frozen 5-control surface manifest.
+3. **Dedicated Dimension Weighting**:
+   By configuring `IntentRule(kind="proactive_inquiry", dimension_weights=(("agent.affect.curiosity", 1.0),), surface_control_weights=())`, curiosity directly drives intent scoring with zero coupling to other affects and zero disruption to the Surface plane.
+
+### 10.3 Rationale: Why Autonomous Retrieval Remains Deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`)
+1. **Retrieval Is Context, Not Authority**:
+   Memory retrieval (`MemoryRetrievalService.search(...)`) provides bounded historical and factual context. It has zero authority to fabricate an Intent candidate, grant `ActionPolicyResult(ALLOW)`, or emit a `WakeSignal`.
+2. **Separation of Epistemic Drive from Tool Execution**:
+   In V1, curiosity manifests as conversational inquiry / follow-up questions to the user (`proactive_question`). Autonomous background retrieval / tool execution requires dedicated resource budgeting, provenance tracking, and policy permissioning that remain outside the V1 companion-first scope.
+3. **Cognitive Ticker Independence**:
+   `CognitiveTicker` does not invoke retrieval; tick situation has `historical_context=None`. This ensures deterministic, clock-governed ticks without external I/O or vector database dependencies.
+
+### 10.4 Invariants Enforced
+- **Anti-Spam Invariant**: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Curiosity increases scoring pressure for follow-up questions; it has zero authority to shorten, bypass, or modulate `ActionPolicy` cooldowns.
+- **MR Pre-Body Ordering**: `policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < BODY_BOUNDARY`. External Body then performs provider generation. When prose returns to MR, `ExpressionGuard` determines delivery eligibility, and explicit `commit_proactive_turn` transitions Intent to `COMPLETED`.
+- **Fail-Closed Prose Guard**: Provider-generated prose is validated by `ExpressionGuard` before transport; empty or banned prose triggers `abort_proactive_turn` (`HostTurnStatus.ABORTED`), moving the Intent to `SUPERSEDED` and committing zero messages.
+- **Delivery Commitment**: Delivery is committed only via explicit `commit_proactive_turn` after external delivery.
+- **Evidence & Isolation Bounds**: `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items); `RAW_CURIOSITY_PROVIDER_LEAK=NONE` (MR does not expose raw `curiosity` state to provider-visible context).
+- **Multi-Urge Competition**: When `reach_out`, `spontaneous_share`, and `proactive_inquiry` compete, exactly one `WakeSignal` is emitted per tick. Candidate scoring is strictly governed by rule weights and dimension values; no hardcoded emotional priority exists.
+- **Config-Gated Production Activation**: While runtime code is wired and verified, production activation is blocked by the certified manifest until calibration is completed (`CURIOSITY_CALIBRATION_STATUS=PROVISIONAL`, `CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
 
 

@@ -74,6 +74,13 @@ SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY: Final[str] = (
     SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
 )
 
+CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
+    "CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY"
+)
+CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY: Final[str] = (
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+)
+
 
 def validate_diligence_anti_spam_invariant(
     *,
@@ -132,6 +139,25 @@ def validate_sharing_urge_anti_spam_invariant(
     return True
 
 
+def validate_curiosity_anti_spam_invariant(
+    *,
+    curiosity: float,
+    base_cooldown_seconds: float,
+    effective_cooldown_seconds: float,
+) -> bool:
+    """Explicit executable invariant: CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY.
+
+    Higher curiosity increases pressure to explore, inquire, or ask follow-up questions,
+    but MUST NOT shorten outbound cooldown or bypass ActionPolicy gating.
+    """
+    if effective_cooldown_seconds < base_cooldown_seconds:
+        raise ValueError(
+            f"Curiosity anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under curiosity={curiosity}"
+        )
+    return True
+
+
 FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
     FastStateFunctionSpec(
         state_key="agent.affect.longing",
@@ -167,7 +193,13 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="Intent / retrieval-or-question path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes="Drives inquiry, knowledge exploration, and follow-up questions.",
+        notes=(
+            "Invariant: CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY. "
+            "Higher curiosity increases pressure to explore / inquire via dedicated Intent (proactive_inquiry) "
+            "and proactive ActionPolicy (proactive_question), while question frequency remains strictly "
+            "governed by ActionPolicy and cooldown. Concrete V1 closes the question branch only; "
+            "autonomous retrieval subsystem remains deferred."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.anger",

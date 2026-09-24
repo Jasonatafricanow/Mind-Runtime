@@ -40,7 +40,7 @@ Consumer closure is tracked separately:
 |---|---|---|
 | `agent.affect.longing` | `PROACTIVE_CONTACT` | **Production hardened & architecture closed**: explicit test composition proves Dynamics → Surface → Intent → ActionPolicy → `WakeSignal` → Host admission → Body proactive turn → external provider generation → ExpressionGuard → explicit delivery commit. Ticker provider capability is removed; host admission fails closed against real lifecycle/policy authorities; restart context loss fails closed with `missing_authoritative_wake_context`; replay is process-local; Guard accept returns `PROCESSING` and explicit `commit_proactive_turn` transitions Intent to `COMPLETED` and marks `COMMITTED`. Production runtime config gap is explicitly noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). |
 | `agent.affect.sharing_urge` | `PROACTIVE_SHARE` | **Verified & architecture closed under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Dedicated consumer binding verified via `agent.affect.sharing_urge` → `IntentRule(kind="spontaneous_share", dimension_weights=(("agent.affect.sharing_urge", 1.0),), surface_control_weights=())` → `ActionPolicy(action_type="proactive_share", proactive=True)` → `WakeSignal` → Host lifecycle & guard pipeline. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Direct dimension binding preserves frozen candidate recipe digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`). Production activation is blocked by config (`SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`). Calibration is provisional (`PROVISIONAL`). |
-| `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | Contract locked; dedicated consumer binding not yet certified. |
+| `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | **Verified & architecture closed under MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01**: Question branch closed via dedicated Intent (`proactive_inquiry`, `surface_control_weights=()`) and proactive ActionPolicy (`proactive_question`, `proactive=True`) → `WakeSignal` → Host lifecycle & guard pipeline. Autonomous retrieval branch remains explicitly deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`). Anti-spam invariant verified: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Direct dimension binding preserves Candidate Recipe v2 digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`). Production activation is blocked by config (`CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`). Calibration is provisional (`PROVISIONAL`). |
 | `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | Existing Surface/Intent/expression roots exist; no new V1 consumer certification is implied by this registry. |
 | `agent.affect.sadness` | `INITIATIVE_SUPPRESSION` | Existing initiative/expression roots exist; no new V1 consumer certification is implied by this registry. |
 | `agent.affect.restlessness` | `ACTIVITY_WAKE` | Contract locked; dedicated activity-wake consumer not yet certified. |
@@ -140,5 +140,55 @@ External Body then performs provider generation. When prose returns to MR, `Expr
    Reuses the standard proactive delivery pipeline and Hermes transport; does not introduce a secondary outbound path.
 8. **Production Activation Blocked by Config**:
    Runtime machinery is fully wired and verified. Production activation is blocked by configuration pending parameter calibration (`SHARING_URGE_CALIBRATION_STATUS=PROVISIONAL`, `SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
+### Curiosity V1 closure boundary
+
+Closed at task `MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01` (Base SHA: `be16499d8a673940dba3e6196f51ff7dd79be054`).
+
+#### 1. Causal Pipeline
+```text
+agent.affect.curiosity
+→ IntentRule(kind="proactive_inquiry", dimension_weights=(("agent.affect.curiosity", 1.0),), surface_control_weights=())
+→ DeterministicIntentEngine
+→ ActionPolicy(action_type="proactive_question", proactive=True)
+→ CognitiveTicker stops strictly at WakeSignal
+→ Host validates wake lineage & authority (consume_wake)
+→ Body begins proactive turn (begin_proactive_turn -> HostTurnStatus.PROCESSING)
+→ DecisionContext handed to external Body (< BODY_BOUNDARY)
+→ external Body runs provider generation (content-dependent prose)
+→ ExpressionGuard validates external prose (guard_proactive_prose)
+→ Hermes/external transport sends message (existing delivery mechanism)
+→ Host commits delivery (commit_proactive_turn -> HostTurnStatus.COMMITTED, Intent ALLOWED -> COMPLETED)
+```
+
+The MR-side pre-Body ordering is:
+`policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < BODY_BOUNDARY`
+
+External Body then performs provider generation. When prose returns to MR, `ExpressionGuard` determines delivery eligibility. After external delivery success, `commit_proactive_turn` transitions Intent to `COMPLETED`.
+
+#### 2. Key Verified Invariants
+1. **Question Branch Closed & Retrieval Branch Deferred**:
+   `CURIOSITY_RETRIEVAL_BRANCH=DEFERRED` and `RETRIEVAL_IS_ACTION_AUTHORITY=NO`. This ticket closes the question branch only (`proactive_inquiry` / `proactive_question`). Retrieval provides informational context only, never action authority. Retrieval results cannot create an Intent, cannot produce `ActionPolicyResult(ALLOW)`, and cannot emit a `WakeSignal`. `CognitiveTicker` does not invoke retrieval, and tick situation has `historical_context=None`.
+2. **Anti-Spam Invariant (`CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`)**:
+   `validate_curiosity_anti_spam_invariant` verifies that high curiosity increases inquiry scoring pressure, but has zero authority to shorten or override `ActionPolicy` cooldowns.
+3. **Surface Recipe Digest Invariant & Cross-Talk Freedom**:
+   `Surface.initiative` is defined as:
+   $$\text{initiative} = 0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$$
+   `proactive_inquiry` does not use `Surface.initiative` because `initiative` is a composite control containing `sharing_urge + curiosity + sadness`. Using it would introduce cross-talk into dedicated `INQUIRY_EXPLORATION` from `sharing_urge` and `sadness`. No new Surface control (`curiosity_drive`, etc.) was introduced. Candidate Recipe v2 digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`) and 5 surface controls are preserved intact.
+4. **Host Wake Admission & Replay Idempotency**:
+   Wake admission validates against real lifecycle and policy authorities. Duplicate wakes are idempotent and return `ALREADY_PROCESSED` with 0 provider calls. Conflicting wake payloads fail closed.
+5. **Fail-Closed Guard & Explicit Delivery Commit**:
+   Guard rejection (e.g. empty or forbidden openings) immediately aborts the turn (`HostTurnStatus.ABORTED`), transitions Intent to `SUPERSEDED`, and commits zero delivery. Guard acceptance transitions to `PROCESSING`; only explicit `commit_proactive_turn` marks delivery `COMMITTED` and Intent `COMPLETED`.
+6. **No Synthetic Evidence & No Raw State Provider Leak**:
+   `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items merely because `curiosity` is high).
+   `RAW_CURIOSITY_PROVIDER_LEAK=NONE` (MR does not expose raw `curiosity` state keys or values to provider-visible context).
+   *(Note: This bounds MR context construction; it does not claim external LLM hallucination is impossible).*
+7. **Delivery Mechanism Reuse**:
+   Reuses the standard proactive delivery pipeline and Hermes transport; does not introduce a secondary outbound path.
+8. **Multi-Urge Competition**:
+   When `reach_out`, `spontaneous_share`, and `proactive_inquiry` compete, exactly one `WakeSignal` is emitted per tick. Candidate scoring is strictly governed by rule weights and dimension values; no hardcoded emotional priority exists.
+9. **Production Activation Blocked by Config**:
+   Runtime machinery is fully wired and verified. Production activation is blocked by configuration pending parameter calibration (`CURIOSITY_CALIBRATION_STATUS=PROVISIONAL`, `CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
 
 
