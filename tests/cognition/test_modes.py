@@ -273,3 +273,89 @@ def test_spec_immutability_and_validation() -> None:
             parent_mode=None,
             candidate_output_only=True,
         )
+
+
+def test_spec_rejects_invalid_field_types_and_entries() -> None:
+    """Validation branches fail closed instead of accepting malformed mode specs."""
+    cases: list[tuple[str, object, type[Exception], str]] = [
+        ("mode", "active", TypeError, "mode must be a CognitiveMode"),
+        ("purpose", "", ValueError, "purpose must be a non-empty string"),
+        ("interactive", "yes", TypeError, "interactive must be a bool"),
+        (
+            "background_processing",
+            "yes",
+            TypeError,
+            "background_processing must be a bool",
+        ),
+        (
+            "outbound_allowed_by_mode",
+            "yes",
+            TypeError,
+            "outbound_allowed_by_mode must be a bool",
+        ),
+        ("interruptible", "yes", TypeError, "interruptible must be a bool"),
+        (
+            "parent_mode",
+            "sleep",
+            TypeError,
+            "parent_mode must be None or a CognitiveMode instance",
+        ),
+        (
+            "candidate_output_only",
+            "yes",
+            TypeError,
+            "candidate_output_only must be a bool",
+        ),
+        (
+            "future_consumers",
+            ["consumer"],
+            TypeError,
+            "future_consumers must be a tuple",
+        ),
+        (
+            "future_consumers",
+            ("",),
+            ValueError,
+            "future_consumers entries must be non-empty strings",
+        ),
+    ]
+
+    for field, bad_value, exc_type, message in cases:
+        kwargs: dict[str, object] = {
+            "mode": CognitiveMode.ACTIVE,
+            "purpose": "test",
+            "interactive": True,
+            "background_processing": False,
+            "outbound_allowed_by_mode": True,
+            "interruptible": True,
+            "parent_mode": None,
+            "candidate_output_only": False,
+            "future_consumers": (),
+        }
+        kwargs[field] = bad_value
+        with pytest.raises(exc_type, match=message):
+            CognitiveModeSpec(**kwargs)  # type: ignore[arg-type]
+
+
+def test_non_active_modes_require_candidate_only_output() -> None:
+    """Non-active cognition cannot silently become authoritative output."""
+    with pytest.raises(ValueError, match="output must be candidate-only"):
+        CognitiveModeSpec(
+            mode=CognitiveMode.SLEEP,
+            purpose="test",
+            interactive=False,
+            background_processing=True,
+            outbound_allowed_by_mode=False,
+            interruptible=True,
+            parent_mode=None,
+            candidate_output_only=False,
+        )
+
+
+def test_future_consumer_alias_and_non_registry_lookup() -> None:
+    """Compatibility alias is readable and unknown non-string keys fail closed."""
+    spec = COGNITIVE_MODE_V0_REGISTRY[CognitiveMode.ACTIVE]
+    assert spec.future_consumer == spec.future_consumers
+
+    with pytest.raises(KeyError, match="Cognitive mode not registered"):
+        get_cognitive_mode_spec(object())  # type: ignore[arg-type]
