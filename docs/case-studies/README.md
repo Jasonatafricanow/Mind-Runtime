@@ -6,8 +6,10 @@ it insufficient, the boundary that replaced it, and the evidence still
 available in the public source tree.
 
 They are curated architecture notes, not a dump of private development logs or
-historical work-order reports.
+historical work-order reports. Case 00 is explicitly retrospective; its
+verifiable anchors and evidence limits are stated in the document.
 
+- [00 — Origin and scope freeze](00-origin-and-scope-freeze.md)
 - [01 — From memory retrieval to a cognition runtime](01-memory-to-cognition-runtime.md)
 - [02 — Faculty boundaries](02-faculty-boundaries.md)
 - [03 — Why LCE is separate](03-why-lce-is-separate.md)
