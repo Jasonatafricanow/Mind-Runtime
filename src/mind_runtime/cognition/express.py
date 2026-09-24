@@ -138,6 +138,7 @@ class ProactiveExpressionPreparer:
         persona_ref: str | None,
         now: datetime,
         accepted_appraisals: tuple[AcceptedAppraisal, ...] = (),
+        surface: object | None = None,
     ) -> ProactiveExpressionArtifact:
         """Prepare one would-send artifact; never writes facts or lifecycle."""
 
@@ -165,6 +166,12 @@ class ProactiveExpressionPreparer:
         previous = self._previous_expression.previous(
             scope=intent.scope, action_type=permission.action_type
         )
+        compiler_mode = getattr(self._compiler._config, "mode", None)
+        persona = getattr(self._orchestrator, "_persona", None)
+        persona_version = getattr(persona, "version", None) if persona is not None else None
+        persona_content_digest = (
+            getattr(persona, "persona_content_digest", None) if persona is not None else None
+        )
         context, _compile_trace = self._compiler.compile(
             DecisionContextCompilerInput(
                 interaction_id=interaction_id,
@@ -181,6 +188,10 @@ class ProactiveExpressionPreparer:
                 attempt=0,
                 rewrite_reason_codes=(),
                 accepted_appraisals=accepted_appraisals,
+                surface=surface,  # type: ignore[arg-type]
+                mode=compiler_mode,
+                persona_version=persona_version,
+                persona_content_digest=persona_content_digest,
             )
         )
         self._orchestrator.trace.record(

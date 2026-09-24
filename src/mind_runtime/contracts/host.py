@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from mind_runtime.contracts.common import require_non_empty
+from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.scope import Scope
 
 
@@ -369,6 +369,42 @@ class HostInspectResult:
         ):
             if ref is not None:
                 require_non_empty(ref, "ref")
+
+
+@dataclass(frozen=True, slots=True)
+class HostWakeNotification:
+    """Notification to Host/Body that a proactive turn is eligible."""
+
+    wake_id: str
+    runtime_id: str
+    scope: Scope
+    intent_id: str
+    action_type: str
+    occurred_at: datetime
+    eligible: bool = True
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.wake_id, "wake_id")
+        require_non_empty(self.runtime_id, "runtime_id")
+        require_non_empty(self.intent_id, "intent_id")
+        require_non_empty(self.action_type, "action_type")
+        require_aware_utc(self.occurred_at, "occurred_at")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "wake_id": self.wake_id,
+            "runtime_id": self.runtime_id,
+            "scope": {
+                "domain": self.scope.domain.value,
+                "user_id": self.scope.user_id,
+                "agent_id": self.scope.agent_id,
+                "persona_id": self.scope.persona_id,
+            },
+            "intent_id": self.intent_id,
+            "action_type": self.action_type,
+            "occurred_at": self.occurred_at.isoformat(),
+            "eligible": self.eligible,
+        }
 
 
 # ---------------------------------------------------------------------------

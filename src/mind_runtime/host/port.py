@@ -26,7 +26,9 @@ from mind_runtime.contracts.host import (
     HostProviderProseResult,
     HostTurnRequest,
     HostTurnResult,
+    HostWakeNotification,
 )
+from mind_runtime.contracts.intent import WakeSignal
 
 
 @runtime_checkable
@@ -70,4 +72,8 @@ class MindRuntimeHostPort(Protocol):
         ...
 
     def inspect(self, request: HostInspectRequest) -> HostInspectResult:
+        ...
+
+    def consume_wake(self, wake: WakeSignal) -> HostWakeNotification:
+        """HI-1: Smallest typed consumer of proactive wake signals at the Host boundary."""
         ...

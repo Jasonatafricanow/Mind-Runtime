@@ -244,3 +244,59 @@ class IntentWake:
         if isinstance(self.intent_version, bool) or self.intent_version < 1:
             raise ValueError("intent_version must be at least 1")
         require_aware_utc(self.woken_at, "woken_at")
+
+
+@dataclass(frozen=True, slots=True)
+class WakeSignal:
+    """Soul-to-Body proactive wake notification that an allowed intent is eligible for execution."""
+
+    wake_id: str
+    runtime_id: str
+    scope: Scope
+    intent_id: str
+    action_type: str
+    policy_decision_ref: str
+    interaction_id: str
+    woken_at: datetime
+    reason: str = "proactive_intent_allowed"
+    intent_version: int = 1
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.wake_id, "wake_id")
+        require_non_empty(self.runtime_id, "runtime_id")
+        require_non_empty(self.intent_id, "intent_id")
+        require_non_empty(self.action_type, "action_type")
+        require_non_empty(self.policy_decision_ref, "policy_decision_ref")
+        require_non_empty(self.interaction_id, "interaction_id")
+        if isinstance(self.intent_version, bool) or self.intent_version < 1:
+            raise ValueError("intent_version must be at least 1")
+        require_aware_utc(self.woken_at, "woken_at")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "wake_id": self.wake_id,
+            "runtime_id": self.runtime_id,
+            "scope": {
+                "domain": self.scope.domain.value,
+                "user_id": self.scope.user_id,
+                "agent_id": self.scope.agent_id,
+                "persona_id": self.scope.persona_id,
+            },
+            "intent_id": self.intent_id,
+            "action_type": self.action_type,
+            "policy_decision_ref": self.policy_decision_ref,
+            "interaction_id": self.interaction_id,
+            "woken_at": self.woken_at.isoformat(),
+            "reason": self.reason,
+            "intent_version": self.intent_version,
+        }
+
+    def to_intent_wake(self) -> IntentWake:
+        return IntentWake(
+            wake_id=self.wake_id,
+            scope=self.scope,
+            intent_id=self.intent_id,
+            reason=self.reason,
+            woken_at=self.woken_at,
+            intent_version=self.intent_version,
+        )
