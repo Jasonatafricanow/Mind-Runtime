@@ -32,9 +32,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
+from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
+
+if TYPE_CHECKING:
+    from mind_runtime.cognition.express import ProactiveExpressionArtifact
+
 
 # ---------------------------------------------------------------------------
 # Status enums
@@ -381,6 +387,10 @@ class HostWakeNotification:
     action_type: str
     occurred_at: datetime
     eligible: bool = True
+    intent_version: int = 1
+    interaction_id: str = ""
+    policy_decision_ref: str = ""
+    reason: str = "proactive_intent_allowed"
 
     def __post_init__(self) -> None:
         require_non_empty(self.wake_id, "wake_id")
@@ -388,6 +398,11 @@ class HostWakeNotification:
         require_non_empty(self.intent_id, "intent_id")
         require_non_empty(self.action_type, "action_type")
         require_aware_utc(self.occurred_at, "occurred_at")
+        if self.intent_version < 1:
+            raise ValueError("intent_version must be >= 1")
+        if self.eligible:
+            require_non_empty(self.interaction_id, "interaction_id")
+            require_non_empty(self.policy_decision_ref, "policy_decision_ref")
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -403,6 +418,63 @@ class HostWakeNotification:
             "action_type": self.action_type,
             "occurred_at": self.occurred_at.isoformat(),
             "eligible": self.eligible,
+            "intent_version": self.intent_version,
+            "interaction_id": self.interaction_id,
+            "policy_decision_ref": self.policy_decision_ref,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class HostProactiveTurnResult:
+    """PUBLIC. What a Host gets back from begin_proactive_turn / run_proactive_turn.
+
+    Deliberately does NOT include raw affect, AppraisalResult,
+    ProjectedMindState, AssessmentTrace, or any other MR internal object.
+    """
+
+    wake_id: str
+    interaction_id: str
+    status: HostTurnStatus
+    outcome: HostStatus
+    decision_context_ref: str | None
+    expression_ref: str | None
+    debug_ref: str
+    bounded_context: dict[str, Any] | None = None
+    disposition: ExpressionDisposition | None = None
+    would_send: str | None = None
+    proactive_expression: ProactiveExpressionArtifact | None = None
+    reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.wake_id, "wake_id")
+        require_non_empty(self.interaction_id, "interaction_id")
+        if not isinstance(self.status, HostTurnStatus):
+            raise ValueError("status must be a HostTurnStatus")
+        if not isinstance(self.outcome, HostStatus):
+            raise ValueError("outcome must be a HostStatus")
+        require_non_empty(self.debug_ref, "debug_ref")
+        for code in self.reason_codes:
+            require_non_empty(code, "reason_codes entries")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "wake_id": self.wake_id,
+            "interaction_id": self.interaction_id,
+            "status": self.status.value,
+            "outcome": self.outcome.value,
+            "decision_context_ref": self.decision_context_ref,
+            "expression_ref": self.expression_ref,
+            "debug_ref": self.debug_ref,
+            "bounded_context": self.bounded_context,
+            "disposition": self.disposition.value if self.disposition is not None else None,
+            "would_send": self.would_send,
+            "proactive_expression": (
+                self.proactive_expression.as_dict()
+                if self.proactive_expression is not None
+                else None
+            ),
+            "reason_codes": list(self.reason_codes),
         }
 
 
@@ -412,7 +484,8 @@ class HostWakeNotification:
 
 # PUBLIC: HostTurnRequest, HostTurnResult, HostCommitRequest, HostCommitReceipt,
 #         HostAbortRequest, HostAbortReceipt, HostInspectRequest, HostInspectResult,
-#         HostStatus, HostTurnStatus, MindRuntimeHostPort
+#         HostStatus, HostTurnStatus, HostWakeNotification, HostProactiveTurnResult,
+#         MindRuntimeHostPort
 #
 # INTERNAL MR SEAM (NOT exported through this contract, reachable only through
 # the production pipeline and inspect() refs):

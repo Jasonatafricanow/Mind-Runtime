@@ -203,6 +203,10 @@ def _load_production_composition() -> dict[str, object]:
         )
     )
 
+    from mind_runtime.expression.guards import DeterministicExpressionGuardChain
+
+    expression_guard = DeterministicExpressionGuardChain(config=decoded.expression_guard)
+
     return {
         "persona": decoded.persona_profile,
         "situation": decoded.situation,
@@ -213,6 +217,10 @@ def _load_production_composition() -> dict[str, object]:
         "homeostasis_gate": homeostasis_gate,
         "semantic_provider": semantic_provider,
         "slow_plasticity_window_size": decoded.slow_plasticity.window_size,
+        "intent_rules": decoded.intent_engine.rules,
+        "action_policy_config": decoded.action_policy,
+        "policy_resources": decoded.policy_resources.available_actions,
+        "expression_guard": expression_guard,
     }
 
 
@@ -250,6 +258,10 @@ def get_mr_adapter():
                     homeostasis_gate=composition["homeostasis_gate"],
                     semantic_provider=composition["semantic_provider"],
                     slow_plasticity_window_size=composition["slow_plasticity_window_size"],
+                    intent_rules=composition.get("intent_rules"),
+                    action_policy_config=composition.get("action_policy_config"),
+                    policy_resources=composition.get("policy_resources"),
+                    expression_guard=composition.get("expression_guard"),
                     telemetry_sink=get_trace_journal(),
                 )
                 _logger.info("XiyueMRAdapter initialized (thread %s)", threading.get_ident())

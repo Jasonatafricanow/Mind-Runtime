@@ -38,7 +38,6 @@ from typing import Any, Protocol
 
 from mind_runtime.cognition.express import (
     ProactiveExpressionArtifact,
-    ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
     ActionDecision,
@@ -65,7 +64,6 @@ from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.policy import DeterministicActionPolicy
 from mind_runtime.intents.scheduler import IntentScheduler
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator
-from mind_runtime.pipeline.ports import AgentFailure
 from mind_runtime.situation.derived import media_photo_cadence_eligible
 from mind_runtime.situation.temporal import daypart
 from mind_runtime.state.persistence import StateBackend
@@ -246,10 +244,12 @@ class CognitiveTicker:
         runtime_id: str,
         fact_reader: PolicyFactReader | None = None,
         projection_scope: Scope | None = None,
-        expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
+        **kwargs: Any,
     ) -> None:
+        if "expression" in kwargs:
+            raise TypeError("CognitiveTicker cannot be constructed with an expression provider/executor")
         composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
         if (
             surface_projection_port is not None
@@ -267,9 +267,6 @@ class CognitiveTicker:
         self._runtime_id = runtime_id
         self._fact_reader = fact_reader
         self._projection_scope = projection_scope
-        if expression is not None and not isinstance(expression, ProactiveExpressionPreparer):
-            raise ValueError("expression must be a ProactiveExpressionPreparer")
-        self._expression = expression
         if config is not None and not isinstance(config, CognitiveTickConfig):
             raise ValueError("config must be a CognitiveTickConfig")
         self._config = config or CognitiveTickConfig()
@@ -342,21 +339,12 @@ class CognitiveTicker:
             counters=counters,
             interaction_id=interaction_id,
         )
-        expression_artifact: ProactiveExpressionArtifact | None = None
-        if self._expression is not None:
-            expression_artifact = self._prepare_expression(
-                selection=selection,
-                situation=situation,
-                projected=projected,
-                transition_result=transition_result,
-                interaction_id=interaction_id,
-                now=now,
-                surface=surface_result,
-            )
         wake_signal: WakeSignal | None = None
         if selection is not None:
             intent, policy_result = selection
-            if policy_result.decision is ActionDecision.ALLOW:
+            rule = getattr(self._action_policy, "_rules", {}).get(intent.kind)
+            is_proactive = rule.proactive if rule is not None else False
+            if policy_result.decision is ActionDecision.ALLOW and is_proactive:
                 permission = policy_result.permission
                 action_type = permission.action_type if permission is not None else intent.kind
                 wake_signal = WakeSignal(
@@ -420,7 +408,7 @@ class CognitiveTicker:
             scope=scope,
             now=now,
             tick_ref=interaction_id,
-            expression=expression_artifact,
+            expression=None,
             wake_signal=wake_signal,
         )
 
@@ -740,70 +728,6 @@ class CognitiveTicker:
                 break
         return selection
 
-    def _prepare_expression(
-        self,
-        *,
-        selection: tuple[Intent, ActionPolicyResult] | None,
-        situation: Situation,
-        projected: ProjectedMindState,
-        transition_result: EmotionalTransitionResult | None,
-        interaction_id: str,
-        now: datetime,
-        surface: object | None = None,
-    ) -> ProactiveExpressionArtifact | None:
-        """Prepare the would-send artifact for a proactive ALLOW (C5C).
-
-        Fail-closed: unwired seam -> None; a pass without a real
-        EmotionalTransition skips (no honest assessment trace to cite);
-        agent failure is recorded and never corrupts state. Preparation
-        never writes facts — counter facts stay read-only inputs.
-        """
-
-        preparer = self._expression
-        if selection is None or preparer is None:
-            return None
-        intent, policy_result = selection
-        if not preparer.handles(policy_result=policy_result):
-            return None
-        permission = policy_result.permission
-        base = ProactiveExpressionArtifact(
-            interaction_id=interaction_id,
-            intent_id=intent.intent_id,
-            action_type=permission.action_type if permission is not None else "",
-        )
-        if transition_result is None:
-            self._orchestrator.trace.record(
-                interaction_id,
-                "proactive_expression",
-                outcome="skipped:no_transition",
-                at=now,
-            )
-            return replace(base, skip_reason="no_transition")
-        try:
-            return preparer.prepare(
-                interaction_id=interaction_id,
-                intent=intent,
-                policy_result=policy_result,
-                situation=situation,
-                projected=projected,
-                assessment_trace_ref=transition_result.assessment_trace.trace_id,
-                state_rows=self._load_state_rows(),
-                persona_ref=self._persona.persona_id,
-                now=now,
-                accepted_appraisals=transition_result.accepted_appraisals,
-                surface=surface,  # type: ignore[arg-type]
-                persona_version=self._persona.version,
-                persona_content_digest=self._persona.persona_content_digest,
-            )
-        except AgentFailure:
-            self._orchestrator.trace.record(
-                interaction_id,
-                "proactive_expression",
-                outcome="agent_failure",
-                at=now,
-            )
-            return replace(base, skip_reason="agent_failure")
-
     def _count_status(self, scope: Scope, status: IntentStatus) -> int:
         return sum(
             1 for intent in self._intent_lifecycle.backend.current(scope) if intent.status is status
@@ -896,7 +820,6 @@ def build_cognitive_ticker(
     intent_lifecycle: IntentLifecycleService,
     runtime_id: str,
     fact_reader: PolicyFactReader | None = None,
-    expression: ProactiveExpressionPreparer | None = None,
     config: CognitiveTickConfig | None = None,
 ) -> CognitiveTicker:
     """Assemble a ticker from explicitly injected real components.
@@ -905,9 +828,7 @@ def build_cognitive_ticker(
     deterministic IntentEngine, the deterministic ActionPolicy with explicit
     PolicyResources, and a durable Intent lifecycle. The turn orchestrator's
     own stub ports are never repurposed — the C2.10 turn path stays frozen.
-    The optional C5C ``expression`` seam (ProactiveExpressionPreparer) adds
-    would-send preparation after the policy gate; without it the tick is
-    the C5B behavior.
+    The ticker terminates at WakeSignal and does not prepare expression.
     """
     if not isinstance(persona, PersonaProfile):
         raise ValueError("cognitive tick requires a PersonaProfile")
@@ -938,6 +859,5 @@ def build_cognitive_ticker(
         runtime_id=runtime_id,
         fact_reader=fact_reader or observation_fact_reader(orchestrator),
         projection_scope=projection_scope,
-        expression=expression,
         config=config,
     )

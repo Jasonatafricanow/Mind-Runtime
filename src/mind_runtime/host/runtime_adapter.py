@@ -346,6 +346,8 @@ class MindRuntimeHostAdapter:
         self._expression_preparer = expression_preparer
         self._consumed_wakes: dict[str, WakeSignal] = {}
         self._proactive_turn_results: dict[str, HostProactiveTurnResult] = {}
+        self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
+        self._pending_exec_contexts: dict[str, Any] = {}
         # Terminal record store: interaction_id -> _TerminalRecord.
         # Populated at commit/abort time. Acts as the in-process
         # replay guard; the stored user_message is used for the
@@ -676,120 +678,160 @@ class MindRuntimeHostAdapter:
                 reason="rejected:runtime_id_mismatch",
             )
 
-        # 2. Validate against intent lifecycle if available
+        # 2. Validate against intent lifecycle (FAIL CLOSED)
         components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
         lifecycle = (
-            getattr(self._orchestrator, "intent_lifecycle", None)
-            or getattr(self._orchestrator, "_intent_lifecycle", None)
-            or components.get("lifecycle")
+            components.get("lifecycle")
             or components.get("intent_lifecycle")
+            or getattr(self._orchestrator, "intent_lifecycle", None)
+            or getattr(self._orchestrator, "_intent_lifecycle", None)
         )
-        if lifecycle is not None and hasattr(lifecycle, "backend"):
-            current_intent = None
-            try:
-                history = lifecycle.backend.history(wake.scope, wake.intent_id)
-                if history:
-                    current_intent = history[-1]
-            except Exception:
-                current_intent = None
-
-            if current_intent is None:
-                exists_other_scope = False
-                conn = getattr(lifecycle.backend, "_conn", None)
-                if conn is not None:
-                    try:
-                        row = conn.execute(
-                            "SELECT 1 FROM intents WHERE intent_id = ? LIMIT 1",
-                            (wake.intent_id,),
-                        ).fetchone()
-                        if row is not None:
-                            exists_other_scope = True
-                    except Exception:
-                        pass
-                raw_hist = getattr(lifecycle.backend, "_history", None)
-                if isinstance(raw_hist, dict):
-                    for (sc, i_id), _ in raw_hist.items():
-                        if i_id == wake.intent_id and sc != wake.scope:
-                            exists_other_scope = True
-                            break
-
-                reason = (
-                    "rejected:scope_mismatch"
-                    if exists_other_scope
-                    else "rejected:unknown_intent_id"
-                )
-                return HostWakeNotification(
-                    wake_id=wake.wake_id,
-                    runtime_id=wake.runtime_id,
-                    scope=wake.scope,
-                    intent_id=wake.intent_id,
-                    action_type=wake.action_type,
-                    occurred_at=wake.woken_at,
-                    eligible=False,
-                    intent_version=wake.intent_version,
-                    interaction_id=wake.interaction_id,
-                    policy_decision_ref=wake.policy_decision_ref,
-                    reason=reason,
-                )
-
-            # Validate intent status
-            if current_intent.status is not IntentStatus.ALLOWED:
-                return HostWakeNotification(
-                    wake_id=wake.wake_id,
-                    runtime_id=wake.runtime_id,
-                    scope=wake.scope,
-                    intent_id=wake.intent_id,
-                    action_type=wake.action_type,
-                    occurred_at=wake.woken_at,
-                    eligible=False,
-                    intent_version=wake.intent_version,
-                    interaction_id=wake.interaction_id,
-                    policy_decision_ref=wake.policy_decision_ref,
-                    reason="rejected:intent_not_allowed",
-                )
-
-            # Validate intent version
-            if current_intent.sync.version != wake.intent_version:
-                return HostWakeNotification(
-                    wake_id=wake.wake_id,
-                    runtime_id=wake.runtime_id,
-                    scope=wake.scope,
-                    intent_id=wake.intent_id,
-                    action_type=wake.action_type,
-                    occurred_at=wake.woken_at,
-                    eligible=False,
-                    intent_version=wake.intent_version,
-                    interaction_id=wake.interaction_id,
-                    policy_decision_ref=wake.policy_decision_ref,
-                    reason="rejected:intent_version_mismatch",
-                )
-
-            # Validate action_type
-            action_policy = (
-                getattr(self._orchestrator, "action_policy", None)
-                or getattr(self._orchestrator, "_action_policy", None)
-                or components.get("policy")
-                or components.get("action_policy")
+        if lifecycle is None or not hasattr(lifecycle, "backend"):
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:intent_authority_unavailable",
             )
-            expected_action = None
-            if action_policy is not None and hasattr(action_policy, "_rules"):
-                rule = action_policy._rules.get(current_intent.kind)
-                if rule is not None:
-                    expected_action = rule.action_type
-            if expected_action is not None and wake.action_type != expected_action:
-                return HostWakeNotification(
-                    wake_id=wake.wake_id,
-                    runtime_id=wake.runtime_id,
-                    scope=wake.scope,
-                    intent_id=wake.intent_id,
-                    action_type=wake.action_type,
-                    occurred_at=wake.woken_at,
-                    eligible=False,
-                    intent_version=wake.intent_version,
-                    interaction_id=wake.interaction_id,
-                    policy_decision_ref=wake.policy_decision_ref,
-                    reason="rejected:action_type_mismatch",
-                )
+
+        # 3. Validate against action policy (FAIL CLOSED)
+        action_policy = (
+            components.get("policy")
+            or components.get("action_policy")
+            or getattr(self._orchestrator, "action_policy", None)
+            or getattr(self._orchestrator, "_action_policy", None)
+        )
+        if action_policy is None or not hasattr(action_policy, "_rules"):
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:policy_authority_unavailable",
+            )
+
+        current_intent = None
+        try:
+            history = lifecycle.backend.history(wake.scope, wake.intent_id)
+            if history:
+                current_intent = history[-1]
+        except Exception:
+            current_intent = None
+
+        if current_intent is None:
+            exists_other_scope = False
+            conn = getattr(lifecycle.backend, "_conn", None)
+            if conn is not None:
+                try:
+                    row = conn.execute(
+                        "SELECT 1 FROM intents WHERE intent_id = ? LIMIT 1",
+                        (wake.intent_id,),
+                    ).fetchone()
+                    if row is not None:
+                        exists_other_scope = True
+                except Exception:
+                    pass
+            raw_hist = getattr(lifecycle.backend, "_history", None)
+            if isinstance(raw_hist, dict):
+                for (sc, i_id), _ in raw_hist.items():
+                    if i_id == wake.intent_id and sc != wake.scope:
+                        exists_other_scope = True
+                        break
+
+            reason = (
+                "rejected:scope_mismatch"
+                if exists_other_scope
+                else "rejected:unknown_intent_id"
+            )
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason=reason,
+            )
+
+        # Validate intent status
+        if current_intent.status is not IntentStatus.ALLOWED:
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:intent_not_allowed",
+            )
+
+        # Validate intent version
+        if current_intent.sync.version != wake.intent_version:
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:intent_version_mismatch",
+            )
+
+        # Validate action_type
+        rule = action_policy._rules.get(current_intent.kind)
+        if rule is None:
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:unsupported_intent_action",
+            )
+        if wake.action_type != rule.action_type:
+            return HostWakeNotification(
+                wake_id=wake.wake_id,
+                runtime_id=wake.runtime_id,
+                scope=wake.scope,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                occurred_at=wake.woken_at,
+                eligible=False,
+                intent_version=wake.intent_version,
+                interaction_id=wake.interaction_id,
+                policy_decision_ref=wake.policy_decision_ref,
+                reason="rejected:action_type_mismatch",
+            )
 
         # Admitted!
         self._consumed_wakes[wake.wake_id] = wake
@@ -826,14 +868,11 @@ class MindRuntimeHostAdapter:
             prep = components.get("expression_preparer")
             if isinstance(prep, ProactiveExpressionPreparer):
                 return prep
-            ticker = components.get("ticker")
-            if ticker is not None:
-                expr = getattr(ticker, "_expression", None)
-                if isinstance(expr, ProactiveExpressionPreparer):
-                    return expr
         return None
 
     def _resolve_tick_context(self, wake: WakeSignal) -> dict[str, Any] | None:
+        if wake.wake_id in self._pending_wake_contexts:
+            return self._pending_wake_contexts[wake.wake_id]
         components = getattr(self._orchestrator, "cognitive_tick_components", None)
         if isinstance(components, dict):
             ticker = components.get("ticker")
@@ -841,82 +880,14 @@ class MindRuntimeHostAdapter:
                 ctx = ticker.get_pending_wake_context(wake.wake_id)
                 if ctx is not None:
                     return ctx
-        # Fallback reconstruction
-        components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
-        lifecycle = (
-            getattr(self._orchestrator, "intent_lifecycle", None)
-            or getattr(self._orchestrator, "_intent_lifecycle", None)
-            or components.get("lifecycle")
-            or components.get("intent_lifecycle")
-        )
-        if lifecycle is None:
-            return None
-        history = lifecycle.backend.history(wake.scope, wake.intent_id)
-        if not history:
-            return None
-        intent = history[-1]
-        now = wake.woken_at
-        situation = Situation(
-            situation_id=f"situation-{wake.interaction_id}",
-            scope=wake.scope,
-            origin_runtime_id=wake.runtime_id,
-            derived_facts=(),
-            effective_state_ref="none",
-            observed_at=now,
-            historical_context=None,
-            persona_id=None,
-            relationship_ids=(),
-            evidence_refs=(),
-        )
-        persona = getattr(self._orchestrator, "_persona", None)
-        state_backend = getattr(self._orchestrator, "_state_backend", None) or getattr(
-            self._orchestrator, "state_backend", None
-        )
-        if state_backend is not None:
-            state_rows = tuple(state_backend.load_states())
-        else:
-            state_rows = tuple(self._orchestrator.canonical)
-        proj_id = f"projection-{wake.interaction_id}"
-        projected = ProjectedMindState(
-            projection_id=proj_id,
-            scope=wake.scope,
-            origin_runtime_id=wake.runtime_id,
-            projected_states=state_rows,
-            sync=SyncFields(wake.scope, wake.runtime_id, proj_id, 1, f"idem-{proj_id}"),
-            committed=False,
-        )
-        policy_result = ActionPolicyResult(
-            policy_id=wake.policy_decision_ref or f"policy-{wake.interaction_id}",
-            decision=ActionDecision.ALLOW,
-            permission=ActionPermission(
-                action_type=wake.action_type,
-                proactive=True,
-                interrupts_active_conversation=False,
-                media_counter_fact=None,
-                media_limit=None,
-                required_resource=None,
-            ),
-            reason_codes=("proactive_intent_allowed",),
-        )
-        return {
-            "intent": intent,
-            "policy_result": policy_result,
-            "situation": situation,
-            "projected": projected,
-            "state_rows": state_rows,
-            "persona_ref": getattr(persona, "persona_id", None) if persona else None,
-            "persona_version": getattr(persona, "version", None) if persona else None,
-            "persona_content_digest": getattr(persona, "persona_content_digest", None) if persona else None,
-            "mode": "SURFACE_V1",
-            "now": now,
-        }
+        return None
 
-    def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
-        """HI-1: Execute a proactive Body turn following wake admission."""
+    def begin_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """HI-1: Admit wake and prepare bounded execution context for external Body."""
         if not isinstance(wake, WakeSignal):
             raise ValueError("wake must be a WakeSignal")
 
-        # Replay check
+        # Process-local replay check
         if wake.wake_id in self._proactive_turn_results:
             cached = self._proactive_turn_results[wake.wake_id]
             if wake.wake_id in self._consumed_wakes and self._consumed_wakes[wake.wake_id] != wake:
@@ -939,7 +910,7 @@ class MindRuntimeHostAdapter:
         # Admission check
         notification = self.consume_wake(wake)
         if not notification.eligible:
-            fail_result = HostProactiveTurnResult(
+            return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
@@ -949,7 +920,6 @@ class MindRuntimeHostAdapter:
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("wake_rejected", notification.reason),
             )
-            return fail_result
 
         now = wake.woken_at
         if hasattr(self._orchestrator, "trace") and self._orchestrator.trace is not None:
@@ -963,7 +933,7 @@ class MindRuntimeHostAdapter:
 
         preparer = self._resolve_expression_preparer()
         if preparer is None:
-            fail_result = HostProactiveTurnResult(
+            return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
@@ -973,12 +943,10 @@ class MindRuntimeHostAdapter:
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("unwired_expression_preparer",),
             )
-            self._proactive_turn_results[wake.wake_id] = fail_result
-            return fail_result
 
         tick_ctx = self._resolve_tick_context(wake)
         if tick_ctx is None:
-            fail_result = HostProactiveTurnResult(
+            return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
@@ -986,12 +954,12 @@ class MindRuntimeHostAdapter:
                 decision_context_ref=None,
                 expression_ref=None,
                 debug_ref=f"debug-{wake.interaction_id}",
-                reason_codes=("missing_tick_context",),
+                reason_codes=("missing_authoritative_wake_context",),
             )
-            self._proactive_turn_results[wake.wake_id] = fail_result
-            return fail_result
 
-        # Phase A: Soul preparation (compile DecisionContext)
+        self._pending_wake_contexts[wake.wake_id] = tick_ctx
+
+        # Soul preparation (compile DecisionContext)
         exec_ctx = preparer.prepare_context(
             interaction_id=wake.interaction_id,
             intent=tick_ctx["intent"],
@@ -1004,12 +972,12 @@ class MindRuntimeHostAdapter:
             now=now,
             accepted_appraisals=tick_ctx.get("accepted_appraisals", ()),
             surface=tick_ctx.get("surface"),
-            mode=tick_ctx.get("mode", "SURFACE_V1"),
+            mode=tick_ctx.get("mode"),
             persona_version=tick_ctx.get("persona_version"),
             persona_content_digest=tick_ctx.get("persona_content_digest"),
         )
         if exec_ctx is None:
-            fail_result = HostProactiveTurnResult(
+            return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
@@ -1019,28 +987,333 @@ class MindRuntimeHostAdapter:
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("prepare_context_failed",),
             )
-            self._proactive_turn_results[wake.wake_id] = fail_result
-            return fail_result
 
-        # Phase B: Body execution (provider realization + guard)
-        try:
-            artifact = preparer.realize_after_wake(exec_ctx, now=now)
-        except Exception as exc:
-            fail_result = HostProactiveTurnResult(
-                wake_id=wake.wake_id,
+        self._pending_exec_contexts[wake.wake_id] = exec_ctx
+
+        envelope_text = None
+        renderer = getattr(self._orchestrator, "context_renderer", None)
+        if renderer is not None and hasattr(renderer, "render_provider_envelope"):
+            envelope_text = renderer.render_provider_envelope(exec_ctx.context)
+
+        bounded = {
+            "wake_id": wake.wake_id,
+            "interaction_id": wake.interaction_id,
+            "action_type": wake.action_type,
+            "intent_kind": tick_ctx["intent"].kind,
+            "provider_envelope_text": envelope_text,
+            "intent_summary": f"proactive:{wake.action_type}",
+        }
+
+        result = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.PROCESSING,
+            outcome=HostStatus.OK,
+            decision_context_ref=exec_ctx.context.context_id,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            bounded_context=bounded,
+            reason_codes=(),
+        )
+        return result
+
+    def guard_proactive_prose(self, wake_id: str, prose: str) -> HostProactiveTurnResult:
+        """HI-1: Guard Body-generated prose against ExpressionGuard before delivery."""
+        if not isinstance(wake_id, str) or not wake_id.strip():
+            raise ValueError("wake_id must be a non-empty string")
+        if not isinstance(prose, str):
+            raise ValueError("prose must be a string")
+
+        exec_ctx = self._pending_exec_contexts.get(wake_id)
+        wake = self._consumed_wakes.get(wake_id)
+        if exec_ctx is None or wake is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=f"unknown-{wake_id}",
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake_id}",
+                reason_codes=("missing_authoritative_wake_context",),
+            )
+
+        preparer = self._resolve_expression_preparer()
+        guard = None
+        if preparer is not None and hasattr(preparer, "_coordinator") and hasattr(preparer._coordinator, "_guard"):
+            guard = preparer._coordinator._guard
+        if guard is None:
+            guard = getattr(self._orchestrator, "expression_guard", None)
+        if guard is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
                 outcome=HostStatus.FAILED,
                 decision_context_ref=exec_ctx.context.context_id,
                 expression_ref=None,
                 debug_ref=f"debug-{wake.interaction_id}",
-                reason_codes=("provider_realization_failed", type(exc).__name__),
+                reason_codes=("guard_unavailable",),
+            )
+
+        from mind_runtime.expression.guards import ExpressionGuardInput
+        guard_input = ExpressionGuardInput(
+            draft_id=f"proactive-{wake_id}",
+            decision_context=exec_ctx.context,
+            expression=prose,
+            attempt=exec_ctx.context.attempt,
+        )
+        guard_res = guard.guard(guard_input)
+
+        if hasattr(self._orchestrator, "trace") and self._orchestrator.trace is not None:
+            self._orchestrator.trace.record(
+                wake.interaction_id,
+                "expression_guard",
+                ref=guard_res.guard_id if hasattr(guard_res, "guard_id") else None,
+                outcome=guard_res.disposition.value,
+                at=wake.woken_at,
+            )
+
+        if guard_res.disposition is ExpressionDisposition.ACCEPT:
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.PROCESSING,
+                outcome=HostStatus.OK,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=getattr(guard_res, "guard_id", f"guard-{wake_id}"),
+                debug_ref=f"debug-{wake.interaction_id}",
+                disposition=ExpressionDisposition.ACCEPT,
+                would_send=prose,
+                reason_codes=(),
+            )
+        else:
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.ABORTED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                disposition=guard_res.disposition,
+                would_send=None,
+                reason_codes=tuple(guard_res.violations),
+            )
+
+    def commit_proactive_turn(self, wake_id: str) -> HostProactiveTurnResult:
+        """HI-1: Complete proactive turn lifecycle following successful external delivery."""
+        if not isinstance(wake_id, str) or not wake_id.strip():
+            raise ValueError("wake_id must be a non-empty string")
+
+        if wake_id in self._proactive_turn_results:
+            cached = self._proactive_turn_results[wake_id]
+            if cached.status is HostTurnStatus.COMMITTED:
+                return replace(
+                    cached,
+                    status=HostTurnStatus.ALREADY_PROCESSED,
+                    outcome=HostStatus.ALREADY_PROCESSED,
+                )
+
+        wake = self._consumed_wakes.get(wake_id)
+        if wake is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=f"unknown-{wake_id}",
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake_id}",
+                reason_codes=("unknown_wake_id",),
+            )
+
+        components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
+        lifecycle = (
+            components.get("lifecycle")
+            or components.get("intent_lifecycle")
+            or getattr(self._orchestrator, "intent_lifecycle", None)
+            or getattr(self._orchestrator, "_intent_lifecycle", None)
+        )
+        if lifecycle is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("intent_authority_unavailable",),
+            )
+
+        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        lifecycle.transition(
+            scope=wake.scope,
+            intent_id=wake.intent_id,
+            to_status=IntentStatus.COMPLETED,
+            reason_codes=("proactive_delivery_committed",),
+            occurred_at=now,
+            idempotency_key=f"proactive-commit-{wake.intent_id}-v{wake.intent_version}",
+        )
+
+        exec_ctx = self._pending_exec_contexts.pop(wake_id, None)
+        self._pending_wake_contexts.pop(wake_id, None)
+        ticker = components.get("ticker")
+        if ticker is not None and hasattr(ticker, "_pending_wake_contexts"):
+            ticker._pending_wake_contexts.pop(wake_id, None)
+
+        if hasattr(self._orchestrator, "trace") and self._orchestrator.trace is not None:
+            self._orchestrator.trace.record(
+                wake.interaction_id,
+                "proactive_turn_committed",
+                ref=wake.wake_id,
+                outcome="completed",
+                at=now,
+            )
+
+        result = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.COMMITTED,
+            outcome=HostStatus.OK,
+            decision_context_ref=exec_ctx.context.context_id if exec_ctx else None,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            reason_codes=("proactive_delivery_committed",),
+        )
+        self._proactive_turn_results[wake_id] = result
+        return result
+
+    def abort_proactive_turn(self, wake_id: str, reason: str = "") -> HostProactiveTurnResult:
+        """HI-1: Abort proactive turn lifecycle on delivery failure."""
+        if not isinstance(wake_id, str) or not wake_id.strip():
+            raise ValueError("wake_id must be a non-empty string")
+
+        if wake_id in self._proactive_turn_results:
+            cached = self._proactive_turn_results[wake_id]
+            if cached.status in (HostTurnStatus.COMMITTED, HostTurnStatus.ABORTED):
+                return replace(
+                    cached,
+                    status=HostTurnStatus.ALREADY_PROCESSED,
+                    outcome=HostStatus.ALREADY_PROCESSED,
+                )
+
+        wake = self._consumed_wakes.get(wake_id)
+        if wake is None:
+            return HostProactiveTurnResult(
+                wake_id=wake_id,
+                interaction_id=f"unknown-{wake_id}",
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake_id}",
+                reason_codes=("unknown_wake_id",),
+            )
+
+        components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
+        lifecycle = (
+            components.get("lifecycle")
+            or components.get("intent_lifecycle")
+            or getattr(self._orchestrator, "intent_lifecycle", None)
+            or getattr(self._orchestrator, "_intent_lifecycle", None)
+        )
+        if lifecycle is not None:
+            now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+            try:
+                lifecycle.transition(
+                    scope=wake.scope,
+                    intent_id=wake.intent_id,
+                    to_status=IntentStatus.SUPERSEDED,
+                    reason_codes=("proactive_delivery_aborted", reason or "host_abort"),
+                    occurred_at=now,
+                    idempotency_key=f"proactive-abort-{wake.intent_id}-v{wake.intent_version}",
+                )
+            except Exception:
+                pass
+
+        exec_ctx = self._pending_exec_contexts.pop(wake_id, None)
+        self._pending_wake_contexts.pop(wake_id, None)
+        ticker = components.get("ticker")
+        if ticker is not None and hasattr(ticker, "_pending_wake_contexts"):
+            ticker._pending_wake_contexts.pop(wake_id, None)
+
+        result = HostProactiveTurnResult(
+            wake_id=wake.wake_id,
+            interaction_id=wake.interaction_id,
+            status=HostTurnStatus.ABORTED,
+            outcome=HostStatus.FAILED,
+            decision_context_ref=exec_ctx.context.context_id if exec_ctx else None,
+            expression_ref=None,
+            debug_ref=f"debug-{wake.interaction_id}",
+            reason_codes=("proactive_delivery_aborted", reason or "host_abort"),
+        )
+        self._proactive_turn_results[wake_id] = result
+        return result
+
+    def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """HI-1: Execute a proactive Body turn following wake admission."""
+        prep_result = self.begin_proactive_turn(wake)
+        if prep_result.status is not HostTurnStatus.PROCESSING or prep_result.outcome is not HostStatus.OK:
+            return prep_result
+
+        now = wake.woken_at
+        preparer = self._resolve_expression_preparer()
+        exec_ctx = self._pending_exec_contexts.get(wake.wake_id)
+        if preparer is None or exec_ctx is None:
+            return prep_result
+
+        tick_ctx = self._pending_wake_contexts.get(wake.wake_id) or {}
+        if tick_ctx.get("transition_result") is None:
+            artifact = ProactiveExpressionArtifact(
+                interaction_id=wake.interaction_id,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                context_id=exec_ctx.context.context_id,
+                skip_reason="no_transition",
+            )
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.ABORTED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                bounded_context=prep_result.bounded_context,
+                proactive_expression=artifact,
+                reason_codes=("no_transition",),
+            )
+
+        # Body execution (provider realization + guard)
+        try:
+            artifact = preparer.realize_after_wake(exec_ctx, now=now)
+        except Exception as exc:
+            artifact = ProactiveExpressionArtifact(
+                interaction_id=wake.interaction_id,
+                intent_id=wake.intent_id,
+                action_type=wake.action_type,
+                context_id=exec_ctx.context.context_id,
+                skip_reason="agent_failure",
+            )
+            fail_result = HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.ABORTED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=exec_ctx.context.context_id,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                bounded_context=prep_result.bounded_context,
+                proactive_expression=artifact,
+                reason_codes=("agent_failure", str(exc)),
             )
             self._proactive_turn_results[wake.wake_id] = fail_result
             return fail_result
 
         turn_status = (
-            HostTurnStatus.COMMITTED
+            HostTurnStatus.PROCESSING
             if artifact.disposition is ExpressionDisposition.ACCEPT
             else HostTurnStatus.ABORTED
         )
@@ -1061,6 +1334,7 @@ class MindRuntimeHostAdapter:
                 else None
             ),
             debug_ref=f"debug-{wake.interaction_id}",
+            bounded_context=prep_result.bounded_context,
             disposition=artifact.disposition,
             would_send=artifact.would_send,
             proactive_expression=artifact,
