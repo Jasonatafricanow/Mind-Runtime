@@ -275,3 +275,15 @@ POST_PUSH_SOURCE_REVIEW_VERDICT=NEEDS_TARGETED_FIX
 ```
 
 Commit `57515c89...` should be retained as a useful causal-seam candidate, but not frozen as the final production closure.
+
+---
+
+## 9. Superseded Notice
+
+This audit report was superseded by `MR-LONGING-PROACTIVE-PRODUCTION-HARDENING-V1-01` (`docs/audits/MR_LONGING_PROACTIVE_PRODUCTION_HARDENING_V1_01.md`), which resolved all five identified gaps:
+- `TICKER_PROVIDER_CAPABILITY` removed.
+- `WAKE_ADMISSION_FAIL_CLOSED` passed against real authorities.
+- `RESTART_CONTEXT_AUTHORITY` fail-closed process-local (no synthetic fallback).
+- `PROACTIVE_DELIVERY_COMMIT` implemented via `commit_proactive_turn`.
+- `PRODUCTION_COMPOSITION_STATUS` wired in `default_adapter` and `XiyueMRAdapter`.
+

@@ -488,6 +488,7 @@ def build_cognitive_components(
         "ticker": ticker,
         "lifecycle": lifecycle,
         "intent_backend": intent_backend,
+        "backend": intent_backend,
         "engine": engine,
         "policy": policy,
         "resources": resources,

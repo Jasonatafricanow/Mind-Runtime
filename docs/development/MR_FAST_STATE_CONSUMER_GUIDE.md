@@ -65,28 +65,30 @@ If the function or consumer is unclear, keep the meaning in open semantic Apprai
 
 Post-freeze baseline: `e48ce1ecacfbc7758359b6721dcfe84dd563e832`
 
-Causal-seam candidate: `MR-LONGING-PROACTIVE-BODY-ENTRY-V1-01` (`57515c89bf3893d7a7fe3e15c444039bab9abfe3`)
+Hardened production closure: `MR-LONGING-PROACTIVE-PRODUCTION-HARDENING-V1-01`
 
 ```text
 agent.affect.longing
 → Surface.contact_seeking
-→ proactive Intent
-→ ActionPolicy
-→ WakeSignal
-→ Host.consume_wake(...) (admission & lineage validation)
-→ Host.run_proactive_turn(...) (Body entry)
-→ ProactiveExpressionPreparer.prepare_context(...) (DecisionContext)
-→ ProactiveExpressionPreparer.realize_after_wake(...) (provider)
-→ ExpressionGuard
-→ delivery boundary
+→ proactive Intent (IntentEngine)
+→ ActionPolicy (DeterministicActionPolicy)
+→ WakeSignal (CognitiveTicker stops strictly at WakeSignal)
+→ Host.consume_wake(...) (admission & lineage validation against real authorities)
+→ Host.begin_proactive_turn(...) (Body entry -> HostTurnStatus.PROCESSING)
+→ DecisionContext handed to external Body
+→ external Body runs provider generation (no provider inside ticker or MR)
+→ Host.guard_proactive_prose(...) (ExpressionGuard -> HostTurnStatus.PROCESSING)
+→ external transport sends message
+→ Host.commit_proactive_turn(...) (Intent ALLOWED -> COMPLETED, HostTurnStatus.COMMITTED)
 ```
 
 Key causal rules verified:
-1. `provider_call_count == 0` prior to Host wake admission.
-2. In the intended production-style composition the ticker is built without an expression preparer, so provider calls remain zero before Host admission. The class still retains a legacy injectable expression path; remove it before treating this as a structural invariant.
-3. Host rejects invalid wake without invoking provider.
-4. Host exactly-once idempotency: duplicate wake returns `ALREADY_PROCESSED` with 0 additional provider calls; conflicting payload fails closed.
-5. Guard rejection prevents external delivery without creating fake Evidence or uncommitted affect mutation.
+1. `provider_call_count == 0` prior to Host wake admission. `CognitiveTicker` has no provider execution capability.
+2. Host rejects invalid wake without invoking provider; admission fails closed if lifecycle or policy authorities are unavailable.
+3. Host exactly-once idempotency: duplicate wake returns `ALREADY_PROCESSED` with 0 additional provider calls; conflicting payload fails closed.
+4. Process-restart context loss fails closed as unsupported V1 recovery (`missing_authoritative_wake_context`); no synthetic context is reconstructed.
+5. Guard acceptance alone returns `HostTurnStatus.PROCESSING`; delivery commitment is explicit via `commit_proactive_turn`, which transitions Intent to `COMPLETED` and clears pending in-memory context.
+6. Guard rejection aborts the turn via `abort_proactive_turn`, which transitions Intent to `SUPERSEDED` and clears pending context.
 
 ## 5. Required test shape for future consumers
 
@@ -111,7 +113,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 
 | Fast state | Function | Next implementation work |
 |---|---|---|
-| `longing` | proactive contact | **Needs one hardening pass**: remove the ticker's legacy provider seam, wire the proactive expression preparer into real production composition, make wake admission fail closed without lifecycle authority, remove synthetic restart reconstruction, and avoid reporting expression acceptance as delivery commit. Calibration remains provisional. |
+| `longing` | proactive contact | **Production hardened & architecture closed**: ticker provider capability removed; fail-closed admission against real authorities; no synthetic context reconstruction; explicit `commit_proactive_turn` transitions Intent to `COMPLETED`; real production composition wired. Certified manifest config gap noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). Calibration remains provisional. |
 | `sharing_urge` | proactive share | Define one share Intent/action consumer after longing wake boundary is closed. |
 | `curiosity` | inquiry/exploration | Bind to question/retrieval Intent without turning retrieval into authority. |
 | `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |
@@ -148,6 +150,7 @@ A passing causal harness is not enough to claim production wiring. Before a cons
 - no legacy optional injection can bypass the intended authority boundary;
 - missing authority fails closed rather than skipping validation;
 - restart/recovery either uses durable authoritative artifacts or explicitly fails closed;
-- accepted expression is not labeled as committed delivery unless the delivery authority actually committed it.
+- accepted expression is not labeled as committed delivery unless the delivery authority actually committed it;
+- configuration gaps in frozen certification inputs are explicitly recorded rather than mocked.
 
-The Longing V1 candidate currently passes causal ordering in its explicit test composition but still fails this production-closure checklist.
+All criteria of this checklist were satisfied during `MR-LONGING-PROACTIVE-PRODUCTION-HARDENING-V1-01`.

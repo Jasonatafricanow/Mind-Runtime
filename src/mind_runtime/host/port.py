@@ -79,6 +79,22 @@ class MindRuntimeHostPort(Protocol):
         """HI-1: Smallest typed consumer of proactive wake signals at the Host boundary."""
         ...
 
+    def begin_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """HI-1: Admit wake and prepare bounded execution context for external Body."""
+        ...
+
+    def guard_proactive_prose(self, wake_id: str, prose: str) -> HostProactiveTurnResult:
+        """HI-1: Guard Body-generated prose against ExpressionGuard before delivery."""
+        ...
+
+    def commit_proactive_turn(self, wake_id: str) -> HostProactiveTurnResult:
+        """HI-1: Complete proactive turn lifecycle following successful external delivery."""
+        ...
+
+    def abort_proactive_turn(self, wake_id: str, reason: str = "") -> HostProactiveTurnResult:
+        """HI-1: Abort proactive turn lifecycle on delivery failure."""
+        ...
+
     def run_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
         """HI-1: Execute a proactive Body turn following wake admission."""
         ...

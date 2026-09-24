@@ -38,7 +38,7 @@ Consumer closure is tracked separately:
 
 | State | Functional contract | Current consumer implementation |
 |---|---|---|
-| `agent.affect.longing` | `PROACTIVE_CONTACT` | **Core causal seam implemented, production composition not yet closed**: the explicit test composition proves Dynamics → Surface → Intent → ActionPolicy → `WakeSignal` → Host admission → proactive Body execution. The default production Xiyue composition does not yet wire the proactive ticker/expression-preparer path end-to-end. |
+| `agent.affect.longing` | `PROACTIVE_CONTACT` | **Production hardened & architecture closed**: explicit test composition proves Dynamics → Surface → Intent → ActionPolicy → `WakeSignal` → Host admission → Body proactive turn → external provider generation → ExpressionGuard → explicit delivery commit. Ticker provider capability is removed; host admission fails closed against real lifecycle/policy authorities; restart context loss fails closed with `missing_authoritative_wake_context`; replay is process-local; Guard accept returns `PROCESSING` and explicit `commit_proactive_turn` transitions Intent to `COMPLETED` and marks `COMMITTED`. Production runtime config gap is explicitly noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). |
 | `agent.affect.sharing_urge` | `PROACTIVE_SHARE` | Contract locked; dedicated consumer binding not yet certified. |
 | `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | Contract locked; dedicated consumer binding not yet certified. |
 | `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | Existing Surface/Intent/expression roots exist; no new V1 consumer certification is implied by this registry. |
@@ -53,54 +53,45 @@ Post-freeze baseline:
 
 `LONGING_PROACTIVE_WAKE_V1_SHA = e48ce1ecacfbc7758359b6721dcfe84dd563e832`
 
-Core causal seam at `57515c89bf3893d7a7fe3e15c444039bab9abfe3`:
+Hardened production closure at `MR-LONGING-PROACTIVE-PRODUCTION-HARDENING-V1-01`:
 
 ```text
 longing
 → Surface.contact_seeking
-→ proactive Intent
-→ ActionPolicy
-→ WakeSignal
-→ Host consumes and validates wake lineage (consume_wake)
-→ Body starts proactive turn (run_proactive_turn)
-→ DecisionContext (prepare_context)
-→ provider generation (realize_after_wake)
-→ ExpressionGuard
-→ existing C7 / delivery boundary
+→ proactive Intent (IntentEngine)
+→ ActionPolicy (DeterministicActionPolicy)
+→ WakeSignal (CognitiveTicker stops strictly at WakeSignal)
+→ Host validates wake lineage & authority (consume_wake)
+→ Body begins proactive turn (begin_proactive_turn -> HostTurnStatus.PROCESSING)
+→ DecisionContext handed to external Body
+→ external Body runs provider generation (no provider inside ticker or MR begin_proactive_turn)
+→ ExpressionGuard validates external prose (guard_proactive_prose -> HostTurnStatus.PROCESSING)
+→ Hermes/external transport sends message
+→ Host commits delivery (commit_proactive_turn -> HostTurnStatus.COMMITTED, Intent ALLOWED -> COMPLETED)
 ```
 
-Verified in the explicit proactive test composition:
-1. **Provider call count before admission == 0** when the production-style ticker is composed without its legacy `expression` injection and Host execution is explicitly given the proactive expression preparer. The `CognitiveTicker` class still retains a legacy optional `expression` seam that can call provider realization if injected; this must be removed before a source-level "ticker can never invoke provider" invariant is claimed.
-2. **Lineage preservation**: HostWakeNotification retains `wake_id`, `runtime_id`, `scope`, `intent_id`, `intent_version`, `action_type`, `interaction_id`, `policy_decision_ref`, `occurred_at`, `reason`, and `eligible`.
-3. **Replay & conflict**: Process-local exactly-once admission; same wake is idempotent, conflicting payload on same `wake_id` fails closed.
-4. **Guard enforcement**: Guard rejection aborts the turn without external delivery or uncommitted affect state modification.
-5. **Causal trace ordering**:
+Verified invariants:
+1. **Ticker provider capability removed**: `CognitiveTicker` has no `expression` parameter or `_prepare_expression`; provider call count prior to Host wake admission is strictly 0.
+2. **Wake admission fails closed**: `consume_wake(...)` verifies against real authorities (`IntentLifecycleService`, `DeterministicActionPolicy`); missing authorities or mismatches result in `rejected:*`.
+3. **No synthetic context reconstruction**: Fallback synthesis of `Situation` or `ActionPolicyResult` was deleted; missing in-memory execution context fails closed with `missing_authoritative_wake_context`.
+4. **Process-local replay**: Exactly-once idempotency is process-local (`WAKE_REPLAY_SCOPE=PROCESS_LOCAL`).
+5. **Guard accept vs delivery commit**: Guard ACCEPT returns `HostTurnStatus.PROCESSING` (not `COMMITTED`). Intent transitions to `COMPLETED` and status becomes `COMMITTED` only upon explicit `commit_proactive_turn(wake_id)`. Guard REJECT or `abort_proactive_turn` transitions intent to `SUPERSEDED` and marks `ABORTED`.
+6. **Causal trace ordering**:
    `policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < provider_realization < expression_guard <= proactive_expression`.
+7. **Production composition & config gap**: `default_adapter` and `XiyueMRAdapter` wire real `intent_rules`, `action_policy_config`, `policy_resources`, `delivery_db`, and `expression_guard`. The certified manifest (`certification/d11s/inputs/runtime-config.json`) does not yet include proactive contact rules or SURFACE_V1 persona publication (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`), but the runtime machinery is verified and hardened.
 
-
-
-### Post-push source review boundary
-
-Direct source review of `57515c89bf3893d7a7fe3e15c444039bab9abfe3` found remaining integration gaps that are not visible from the 35 longing tests alone:
-
-- `CognitiveTicker` still has an optional `expression` constructor seam and still contains `_prepare_expression(...)`; if injected, `tick()` can still invoke provider realization before wake creation. Current production-style composition passes no expression preparer, but the class-level authority boundary is not structurally closed.
-- `build_cognitive_components(...)` does not install an `expression_preparer`; `default_adapter(...)` does not wire proactive intent rules/ticker execution or expose proactive wake handling through `XiyueMRAdapter`. The passing end-to-end tests manually attach `orchestrator.cognitive_tick_components["expression_preparer"]`.
-- `consume_wake(...)` validates the Intent lifecycle only **if** a lifecycle is available. Without one, the method can admit a wake after only the runtime check. Admission must fail closed when authoritative lifecycle/policy metadata is unavailable.
-- `_resolve_tick_context(...)` contains a fallback that reconstructs a fresh `Situation` and synthesizes an `ActionPolicyResult(ALLOW)` from wake fields. This is not an authoritative restart reconstruction and must not substitute for the original admitted policy/context.
-- Wake replay/result state and pending wake context are process-local. That limitation is acceptable only if explicitly documented; no restart-stable exactly-once claim is made.
-- `HostProactiveTurnResult` currently reports `HostTurnStatus.COMMITTED` on Guard acceptance even though no proactive C7/external delivery commit occurs in this path. Accepted expression must not be mislabeled as committed delivery.
-
-Therefore the current source status is:
+Final status:
 
 ```text
 FAST_STATE_CONTRACT_STATUS=ACTIVE
 CORE_CAUSAL_TEST_COMPOSITION=PASS
-PRODUCTION_COMPOSITION_STATUS=GAP
-TICKER_PROVIDER_CAPABILITY=FOUND
-WAKE_ADMISSION_FAIL_CLOSED=FAIL
-RESTART_CONTEXT_AUTHORITY=UNSAFE_FALLBACK
-PROACTIVE_DELIVERY_COMMIT=NOT_IMPLEMENTED
+PRODUCTION_COMPOSITION_STATUS=WIRED
+TICKER_PROVIDER_CAPABILITY=REMOVED
+WAKE_ADMISSION_FAIL_CLOSED=PASS
+RESTART_CONTEXT_AUTHORITY=FAIL_CLOSED_PROCESS_LOCAL
+WAKE_REPLAY_SCOPE=PROCESS_LOCAL
+POLICY_DECISION_REF_VALIDATION=UNRESOLVED_BY_CURRENT_STORE
+PROACTIVE_DELIVERY_COMMIT=IMPLEMENTED
+PROACTIVE_RUNTIME_CONFIG_GAP=FOUND
 CALIBRATION_STATUS=PROVISIONAL
 ```
-
-Do not freeze `57515c89...` as the final production closure. It is a valid causal-seam candidate that still needs one bounded hardening pass.

@@ -61,6 +61,7 @@ from mind_runtime.expression import (
 )
 from mind_runtime.expression.history import NullPreviousExpressionPort
 from mind_runtime.facts.persistence import SqliteFactBackend
+from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.facts.service import FactIngestService
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
 from mind_runtime.intents.lifecycle import IntentLifecycleService
@@ -243,24 +244,32 @@ def make_stack(
             config=ProactiveExpressionConfig(proactive_action_types=("proactive_message",)),
             runtime_id=runtime_id,
         )
+    policy = DeterministicActionPolicy(
+        ActionPolicyConfig(
+            rules=policy_rules,
+            proactive_cooldown=timedelta(minutes=30),
+        ),
+        runtime_id,
+    )
+    lifecycle = IntentLifecycleService(intent_backend)
     ticker = build_cognitive_ticker(
         orchestrator=orchestrator,
         persona=persona,
         intent_engine=DeterministicIntentEngine(engine_rules, runtime_id),
-        action_policy=DeterministicActionPolicy(
-            ActionPolicyConfig(
-                rules=policy_rules,
-                proactive_cooldown=timedelta(minutes=30),
-            ),
-            runtime_id,
-        ),
+        action_policy=policy,
         policy_resources=PolicyResources(("proactive_message", "send_photo", "respond")),
-        intent_lifecycle=IntentLifecycleService(intent_backend),
+        intent_lifecycle=lifecycle,
         runtime_id=runtime_id,
         fact_reader=observation_fact_reader(orchestrator),
-        expression=expression,
         config=CognitiveTickConfig(photo_cadence_threshold=photo_cadence_threshold),
     )
+    orchestrator.cognitive_tick_components = {
+        "ticker": ticker,
+        "lifecycle": lifecycle,
+        "policy": policy,
+        "expression_preparer": expression,
+    }
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator)
     return {
         "orchestrator": orchestrator,
         "ticker": ticker,
@@ -269,6 +278,8 @@ def make_stack(
         "intent_backend": intent_backend,
         "state_backend": state_backend,
         "scope": scope,
+        "preparer": expression,
+        "adapter": adapter,
     }
 
 
@@ -431,8 +442,10 @@ def test_lr5_eligibility_reaches_generation_context(tmp_path: Path) -> None:
     seed_affect(stack)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is ExpressionDisposition.ACCEPT
     assert "media.photo_frequency_eligible: true" in stack["agent"].calls[0].text
@@ -448,8 +461,10 @@ def test_lr6_raw_counters_do_not_leak_to_provider(tmp_path: Path) -> None:
     seed_affect(stack)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     text = stack["agent"].calls[0].text
     assert artifact.disposition is ExpressionDisposition.ACCEPT
@@ -522,8 +537,10 @@ def test_lr8_expression_guard_behavior_unchanged(tmp_path: Path) -> None:
     seed_affect(stack)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     # First draft collided with the prior opening -> REWRITE -> ACCEPT.
     assert artifact.disposition is ExpressionDisposition.ACCEPT

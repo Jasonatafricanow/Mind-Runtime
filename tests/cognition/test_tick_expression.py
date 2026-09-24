@@ -31,6 +31,7 @@ from mind_runtime.contracts import (
     DeliveryStatus,
     Evidence,
     ExpressionDisposition,
+    HostTurnStatus,
     IntentStatus,
     PolicyResources,
     PreviousExpression,
@@ -56,6 +57,7 @@ from mind_runtime.expression import (
 from mind_runtime.expression.history import NullPreviousExpressionPort
 from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
+from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
 from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.persistence import SqliteIntentBackend
@@ -85,6 +87,8 @@ class _Stack(TypedDict):
     state_backend: SqliteStateBackend
     scope: Scope
     persona: PersonaProfile
+    adapter: MindRuntimeHostAdapter
+    preparer: object
 
 
 def _dimension(name: str, *, baseline: float, recovery: float) -> AffectiveDimensionProfile:
@@ -242,19 +246,27 @@ def make_stack(
             config=ProactiveExpressionConfig(proactive_action_types=proactive_action_types),
             runtime_id=runtime_id,
         )
+    policy = DeterministicActionPolicy(
+        make_policy_config(action_type=action_type), runtime_id
+    )
+    lifecycle = IntentLifecycleService(intent_backend)
     ticker = build_cognitive_ticker(
         orchestrator=orchestrator,
         persona=persona,
         intent_engine=DeterministicIntentEngine(make_rules(), runtime_id),
-        action_policy=DeterministicActionPolicy(
-            make_policy_config(action_type=action_type), runtime_id
-        ),
+        action_policy=policy,
         policy_resources=PolicyResources(("proactive_message", "respond")),
-        intent_lifecycle=IntentLifecycleService(intent_backend),
+        intent_lifecycle=lifecycle,
         runtime_id=runtime_id,
         fact_reader=observation_fact_reader(orchestrator),
-        expression=expression,
     )
+    orchestrator.cognitive_tick_components = {
+        "ticker": ticker,
+        "lifecycle": lifecycle,
+        "policy": policy,
+        "expression_preparer": expression,
+    }
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator)
     return {
         "orchestrator": orchestrator,
         "ticker": ticker,
@@ -264,6 +276,8 @@ def make_stack(
         "state_backend": state_backend,
         "scope": scope,
         "persona": persona,
+        "adapter": adapter,
+        "preparer": expression,
     }
 
 
@@ -348,7 +362,13 @@ def test_ce1_allowed_intent_prepares_would_send(tmp_path: Path) -> None:
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
 
     assert report.policy_allowed == 1
-    artifact = report.proactive_expression
+    assert report.wake_signal is not None
+    assert report.proactive_expression is None
+    assert stack["agent"].call_count == 0
+
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    assert turn_result.status is HostTurnStatus.PROCESSING
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is ExpressionDisposition.ACCEPT
     assert artifact.would_send == WILL_SEND
@@ -364,8 +384,14 @@ def test_ce1_allowed_intent_prepares_would_send(tmp_path: Path) -> None:
     assert stack["orchestrator"].action_receipt is None
     # Proactive expression trace is recorded on the tick interaction.
     stages = {entry.stage for entry in stack["orchestrator"].trace.trace(report.interaction_id)}
-    assert "proactive_expression_context" in stages
-    assert "proactive_expression" in stages
+    assert "proactive_body_entry" in stages
+    assert "provider_realization" in stages
+    assert "expression_guard" in stages
+
+    commit_res = stack["adapter"].commit_proactive_turn(report.wake_signal.wake_id)
+    assert commit_res.status is HostTurnStatus.COMMITTED
+    current_after = stack["intent_backend"].current(stack["scope"])
+    assert current_after[0].status is IntentStatus.COMPLETED
 
 
 def test_ce1b_provider_view_is_bounded_and_counter_free(tmp_path: Path) -> None:
@@ -373,8 +399,10 @@ def test_ce1b_provider_view_is_bounded_and_counter_free(tmp_path: Path) -> None:
     seed_affect(stack, value=0.75, at=BASE)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    artifact = turn_result.proactive_expression
     assert artifact is not None and artifact.would_send is not None
     calls = stack["agent"].calls
     assert len(calls) == 1
@@ -397,8 +425,11 @@ def test_ce2_prefix_duplicate_rejects_and_intent_survives(tmp_path: Path) -> Non
     seed_affect(stack, value=0.75, at=BASE)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    assert turn_result.status is HostTurnStatus.ABORTED
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is ExpressionDisposition.REJECT
     assert artifact.would_send is None
@@ -437,8 +468,11 @@ def test_ce3_prefix_rewrite_succeeds(tmp_path: Path) -> None:
     seed_affect(stack, value=0.75, at=BASE)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    assert turn_result.status is HostTurnStatus.PROCESSING
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is ExpressionDisposition.ACCEPT
     assert artifact.would_send == "下午想把一首短诗读给你听"
@@ -454,8 +488,11 @@ def test_ce3b_temporal_conflict_rewrites_for_night(tmp_path: Path) -> None:
     seed_affect(stack, value=0.75, at=NIGHT - timedelta(hours=2))
 
     report = stack["ticker"].tick(scope=stack["scope"], now=NIGHT)
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
 
-    artifact = report.proactive_expression
+    assert turn_result.status is HostTurnStatus.PROCESSING
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is ExpressionDisposition.ACCEPT
     assert artifact.would_send == "晚上好，想和你分享一首诗"
@@ -495,10 +532,12 @@ def test_ce4_counter_facts_never_mutated_by_preparation(tmp_path: Path) -> None:
 
     before = snapshot()
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
     after = snapshot()
 
-    assert report.proactive_expression is not None
-    assert report.proactive_expression.disposition is ExpressionDisposition.ACCEPT
+    assert turn_result.proactive_expression is not None
+    assert turn_result.proactive_expression.disposition is ExpressionDisposition.ACCEPT
     # Preparation produced no Evidence and mutated no admitted fact.
     assert after == before
     assert len(after) == 2
@@ -514,6 +553,7 @@ def test_ce5_non_proactive_allow_skips_preparation(tmp_path: Path) -> None:
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
 
     assert report.policy_allowed == 1
+    assert report.wake_signal is None
     assert report.proactive_expression is None
     assert stack["agent"].call_count == 0
 
@@ -529,11 +569,15 @@ def test_ce6_elapsed_zero_pass_skips_preparation(tmp_path: Path) -> None:
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE)
 
     assert report.policy_allowed == 1
-    artifact = report.proactive_expression
+    assert report.proactive_expression is None
+    assert stack["agent"].call_count == 0
+    assert report.wake_signal is not None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is None
     assert artifact.skip_reason == "no_transition"
-    assert artifact.would_send is None
+    assert artifact.would_send == None
     assert stack["agent"].call_count == 0
 
 
@@ -547,7 +591,12 @@ def test_ce7_agent_failure_never_breaks_the_tick(tmp_path: Path) -> None:
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
 
     assert report.policy_allowed == 1
-    artifact = report.proactive_expression
+    assert report.wake_signal is not None
+    assert report.proactive_expression is None
+    turn_result = stack["adapter"].run_proactive_turn(report.wake_signal)
+    assert turn_result.status is HostTurnStatus.ABORTED
+
+    artifact = turn_result.proactive_expression
     assert artifact is not None
     assert artifact.disposition is None
     assert artifact.skip_reason == "agent_failure"
@@ -556,11 +605,6 @@ def test_ce7_agent_failure_never_breaks_the_tick(tmp_path: Path) -> None:
     current = stack["intent_backend"].current(stack["scope"])
     assert current[0].status is IntentStatus.ALLOWED
     assert current[0].sync.version == 2
-    stages = {
-        (entry.stage, entry.outcome)
-        for entry in stack["orchestrator"].trace.trace(report.interaction_id)
-    }
-    assert ("proactive_expression", "agent_failure") in stages
 
 
 # ── CE8: expression seam unwired -> byte-for-byte C5B behavior ───────────────
@@ -573,6 +617,7 @@ def test_ce8_unwired_expression_keeps_c5b_behavior(tmp_path: Path) -> None:
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
 
     assert report.policy_allowed == 1
+    assert report.wake_signal is not None
     assert report.proactive_expression is None
     assert stack["agent"].call_count == 0
     current = stack["intent_backend"].current(stack["scope"])
@@ -634,9 +679,9 @@ def test_preparer_construction_fails_closed(tmp_path: Path) -> None:
 
 
 def test_ticker_rejects_wrong_expression_type(tmp_path: Path) -> None:
-    """The ticker's own constructor refuses a non-preparer expression seam."""
+    """The ticker's own constructor refuses an expression seam (TypeError)."""
     stack = make_stack(tmp_path, with_expression=False)
-    with pytest.raises(ValueError, match="ProactiveExpressionPreparer"):
+    with pytest.raises(TypeError, match="unexpected keyword argument 'expression'"):
         build_cognitive_ticker(
             orchestrator=stack["orchestrator"],
             persona=stack["persona"],
@@ -647,7 +692,7 @@ def test_ticker_rejects_wrong_expression_type(tmp_path: Path) -> None:
                 SqliteIntentBackend(tmp_path / "i.sqlite")
             ),
             runtime_id="runtime-1",
-            expression=object(),  # type: ignore[arg-type]
+            expression=object(),  # type: ignore[call-arg]
         )
 
 

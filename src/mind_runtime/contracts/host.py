@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.expression import ExpressionDisposition
@@ -398,6 +398,11 @@ class HostWakeNotification:
         require_non_empty(self.intent_id, "intent_id")
         require_non_empty(self.action_type, "action_type")
         require_aware_utc(self.occurred_at, "occurred_at")
+        if self.intent_version < 1:
+            raise ValueError("intent_version must be >= 1")
+        if self.eligible:
+            require_non_empty(self.interaction_id, "interaction_id")
+            require_non_empty(self.policy_decision_ref, "policy_decision_ref")
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -422,7 +427,7 @@ class HostWakeNotification:
 
 @dataclass(frozen=True, slots=True)
 class HostProactiveTurnResult:
-    """PUBLIC. What a Host gets back from run_proactive_turn.
+    """PUBLIC. What a Host gets back from begin_proactive_turn / run_proactive_turn.
 
     Deliberately does NOT include raw affect, AppraisalResult,
     ProjectedMindState, AssessmentTrace, or any other MR internal object.
@@ -435,6 +440,7 @@ class HostProactiveTurnResult:
     decision_context_ref: str | None
     expression_ref: str | None
     debug_ref: str
+    bounded_context: dict[str, Any] | None = None
     disposition: ExpressionDisposition | None = None
     would_send: str | None = None
     proactive_expression: ProactiveExpressionArtifact | None = None
@@ -460,6 +466,7 @@ class HostProactiveTurnResult:
             "decision_context_ref": self.decision_context_ref,
             "expression_ref": self.expression_ref,
             "debug_ref": self.debug_ref,
+            "bounded_context": self.bounded_context,
             "disposition": self.disposition.value if self.disposition is not None else None,
             "would_send": self.would_send,
             "proactive_expression": (
