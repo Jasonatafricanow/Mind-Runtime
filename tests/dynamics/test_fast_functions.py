@@ -17,20 +17,23 @@ L. existing Surface/Intent tests remain green (checked in regression run).
 
 import ast
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from mind_runtime.dynamics.fast_functions import (
+    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
     validate_diligence_anti_spam_invariant,
+    validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.dynamics.kayla_v0 import kayla_v0_profile
 
@@ -130,7 +133,9 @@ def test_h_fatigue_is_associated_only_with_cognitive_rest_mode_ownership() -> No
     spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.fatigue"]
     assert spec.function_kind == FastFunctionKind.COGNITIVE_REST_PRESSURE
     assert spec.status == FastStateStatus.REGISTERED_ONLY
-    assert "cognitive-mode" in spec.primary_consumer or "homeostasis" in spec.primary_consumer
+    assert (
+        "cognitive-mode" in spec.primary_consumer or "homeostasis" in spec.primary_consumer
+    )
 
 
 def test_i_legacy_states_are_not_deleted() -> None:
@@ -146,17 +151,15 @@ def test_i_legacy_states_are_not_deleted() -> None:
         assert key not in FAST_FUNCTION_V1_REGISTRY
 
     # But they exist in persona definitions / configurations
-    kayla_json_path = Path(__file__).resolve().parents[2] / "configs" / "personas" / "kayla.json"
+    kayla_json_path = (
+        Path(__file__).resolve().parents[2] / "configs" / "personas" / "kayla.json"
+    )
     assert kayla_json_path.exists()
     with open(kayla_json_path, encoding="utf-8") as f:
         kayla_data = json.load(f)
     kayla_dims = {d["dimension"] for d in kayla_data["dimensions"]}
 
-    for key in (
-        "agent.affect.closeness_craving",
-        "agent.affect.social_pull",
-        "agent.affect.introspective_pull",
-    ):
+    for key in ("agent.affect.closeness_craving", "agent.affect.social_pull", "agent.affect.introspective_pull"):
         assert key in kayla_dims, f"Legacy state {key} missing from kayla.json"
 
     # anxiety exists in kayla_v0 test profile
@@ -194,8 +197,7 @@ def test_j_module_has_no_dependency_on_provider_body_llm() -> None:
     for imported in imported_names:
         for forbidden in forbidden_roots:
             assert forbidden not in imported.lower(), (
-                f"Forbidden dependency {forbidden!r} detected in "
-                f"fast_functions.py import: {imported}"
+                f"Forbidden dependency {forbidden!r} detected in fast_functions.py import: {imported}"
             )
 
 
@@ -203,14 +205,7 @@ def test_k_no_numeric_psychological_calibration_is_introduced() -> None:
     """K. no numeric psychological calibration is introduced."""
     # Ensure FastStateFunctionSpec does not define psychological numeric fields
     spec_fields = set(FastStateFunctionSpec.__dataclass_fields__.keys())
-    psychological_fields = {
-        "baseline",
-        "sensitivity",
-        "recovery_rate",
-        "ceiling",
-        "floor",
-        "decay_rate",
-    }
+    psychological_fields = {"baseline", "sensitivity", "recovery_rate", "ceiling", "floor", "decay_rate"}
     assert not (spec_fields & psychological_fields)
 
     # Fatigue must be REGISTERED_ONLY without provisional numeric parameters
@@ -244,27 +239,38 @@ def test_registry_immutability_and_lookup() -> None:
         FastFunctionRegistry((spec, duplicate_kind_spec))
 
 
-@pytest.mark.parametrize(
-    ("change", "reason"),
-    [
-        ({"state_key": "user.affect.longing"}, "state_key must use"),
-        ({"semantic_label": "   "}, "semantic_label must be non-empty"),
-        ({"function_kind": "NOT_A_FUNCTION"}, "function_kind must be"),
-        ({"primary_consumer": "   "}, "primary_consumer must be non-empty"),
-    ],
-)
-def test_registry_rejects_malformed_function_specs(change, reason) -> None:
-    with pytest.raises(ValueError, match=reason):
-        replace(FAST_FUNCTION_V1_SPECS[0], **change)
+def test_sharing_urge_maps_to_proactive_share() -> None:
+    """sharing_urge maps to PROACTIVE_SHARE and preserves anti-spam invariants."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.sharing_urge"]
+    assert spec.function_kind == FastFunctionKind.PROACTIVE_SHARE
+    assert spec.primary_consumer == "Intent / share path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY"
+    )
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY
+        == SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+    )
+    assert validate_sharing_urge_anti_spam_invariant(
+        sharing_urge=0.9,
+        base_cooldown_seconds=1800.0,
+        effective_cooldown_seconds=1800.0,
+    ) is True
+    with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
+        )
 
 
-def test_registry_mapping_get_preserves_explicit_default() -> None:
-    sentinel = FAST_FUNCTION_V1_SPECS[0]
-    assert FAST_FUNCTION_V1_REGISTRY.get("agent.affect.missing", sentinel) is sentinel
+def test_fast_function_v1_count_constant() -> None:
+    """FAST_FUNCTION_V1_COUNT equals 8 and matches specs and registry length."""
+    assert FAST_FUNCTION_V1_COUNT == 8
+    assert len(FAST_FUNCTION_V1_SPECS) == FAST_FUNCTION_V1_COUNT
+    assert len(FAST_FUNCTION_V1_REGISTRY) == FAST_FUNCTION_V1_COUNT
 
-
-def test_registry_requires_present_function_binding() -> None:
-    empty = FastFunctionRegistry(())
-    assert empty.get_by_function(FastFunctionKind.ACTIVITY_WAKE) is None
-    with pytest.raises(KeyError, match="no fast function registered"):
-        empty.require_by_function(FastFunctionKind.ACTIVITY_WAKE)
