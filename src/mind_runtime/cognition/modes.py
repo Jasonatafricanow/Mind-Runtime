@@ -50,9 +50,15 @@ COGNITIVE_MODE_AUTHORITY_INVARIANTS: tuple[str, ...] = (
     "5. Daydream output is not canonical memory.",
     "6. Introspection output is not canonical identity.",
     "7. Sleep does not automatically mutate Slow state.",
-    (\n        "8. LCE remains a future consumer/provider of derived cognition, not the authority "\n        "for runtime mode switching."\n    ),
+    (
+        "8. LCE remains a future consumer/provider of derived cognition, not the authority "
+        "for runtime mode switching."
+    ),
     "9. CognitiveMode is runtime orchestration state, not a personality dimension.",
-    (\n        "10. No raw mode metadata must be exposed to provider unless a future bounded "\n        "consumer explicitly requires it."\n    ),
+    (
+        "10. No raw mode metadata must be exposed to provider unless a future bounded "
+        "consumer explicitly requires it."
+    ),
 )
 
 
@@ -203,7 +209,8 @@ COGNITIVE_MODE_V0_REGISTRY: MappingProxyType[CognitiveMode, CognitiveModeSpec] =
             mode=CognitiveMode.SLEEP,
             purpose=(
                 "Deep offline cognitive-rest mode suppressing ordinary proactive activity to "
-                "provide future processing windows for affect consolidation, slow-state "\n                "maintenance, "
+                "provide future processing windows for affect consolidation, slow-state "
+                "maintenance, "
                 "memory consolidation, LCE consolidation, and trajectory cleanup."
             ),
             interactive=False,
@@ -223,7 +230,8 @@ COGNITIVE_MODE_V0_REGISTRY: MappingProxyType[CognitiveMode, CognitiveModeSpec] =
         CognitiveMode.DREAM: CognitiveModeSpec(
             mode=CognitiveMode.DREAM,
             purpose=(
-                "Sleep-associated loose-association processing mode for cross-memory/"\n                "cross-semantic "
+                "Sleep-associated loose-association processing mode for cross-memory/"
+                "cross-semantic "
                 "candidate generation and future LCE/cognition discovery."
             ),
             interactive=False,
