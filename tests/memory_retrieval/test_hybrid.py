@@ -8,6 +8,7 @@ from mind_runtime.memory.providers.bm25 import BM25RetrievalProvider, lexical_to
 from mind_runtime.memory.providers.hybrid import (
     HybridRRFProvider,
     HyDEAugmentedProvider,
+    HyDEFallbackProvider,
     PromptHyDEExpander,
     RetrievalArm,
 )
@@ -234,6 +235,79 @@ class StaticExpander:
         if self.error is not None:
             raise self.error
         return self.value
+
+
+def test_hyde_fallback_skips_llm_when_primary_recall_is_sufficient():
+    base = RecordingProvider({"original": (hit("m1"), hit("m2"), hit("m3"))})
+    expander = StaticExpander("expanded")
+    provider = HyDEFallbackProvider(base, expander, min_results=3)
+
+    result = provider.search(MemoryRetrievalQuery(memory().scope, "original", limit=5))
+
+    assert [item.memory_id for item in result] == ["m1", "m2", "m3"]
+    assert expander.queries == []
+    assert [query.text for query in base.queries] == ["original"]
+
+
+def test_hyde_fallback_escalates_only_when_primary_recall_is_sparse():
+    base = RecordingProvider(
+        {
+            "original": (hit("m1"),),
+            "expanded": (hit("m2"), hit("m1"), hit("m3")),
+        }
+    )
+    expander = StaticExpander("expanded")
+    provider = HyDEFallbackProvider(
+        base,
+        expander,
+        min_results=3,
+        candidate_multiplier=2,
+    )
+
+    result = provider.search(MemoryRetrievalQuery(memory().scope, "original", limit=3))
+
+    assert [item.memory_id for item in result] == ["m1", "m2", "m3"]
+    assert result[0].provider == "hyde-fallback+rrf"
+    assert expander.queries == ["original"]
+    assert [query.text for query in base.queries] == ["original", "expanded"]
+    assert base.queries[0].limit == 3
+    assert base.queries[1].limit == 6
+
+
+def test_hyde_fallback_keeps_primary_results_when_optional_escalation_fails():
+    base = RecordingProvider({"original": (hit("m1"),)})
+    provider = HyDEFallbackProvider(
+        base,
+        StaticExpander(error=TimeoutError("llm down")),
+        min_results=3,
+    )
+    result = provider.search(MemoryRetrievalQuery(memory().scope, "original", limit=3))
+    assert [item.memory_id for item in result] == ["m1"]
+
+    base_same = RecordingProvider({"same": (hit("m1"),)})
+    same = HyDEFallbackProvider(base_same, StaticExpander("same"), min_results=3)
+    assert [item.memory_id for item in same.search(
+        MemoryRetrievalQuery(memory().scope, "same", limit=3)
+    )] == ["m1"]
+    assert len(base_same.queries) == 1
+
+
+def test_hyde_fallback_primary_failure_and_configuration_are_explicit():
+    down = RecordingProvider({}, error=TimeoutError("down"))
+    provider = HyDEFallbackProvider(down, StaticExpander("expanded"))
+    with pytest.raises(RetrievalProviderUnavailable, match="primary"):
+        provider.search(MemoryRetrievalQuery(memory().scope, "q", limit=3))
+    assert provider.search(MemoryRetrievalQuery(memory().scope, "q", limit=0)) == ()
+
+    for kwargs in (
+        {"min_results": 0},
+        {"min_results": 101},
+        {"rrf_k": 0},
+        {"candidate_multiplier": 0},
+        {"candidate_multiplier": 21},
+    ):
+        with pytest.raises(ValueError):
+            HyDEFallbackProvider(RecordingProvider({}), StaticExpander("x"), **kwargs)
 
 
 def test_hyde_fuses_original_and_hypothetical_query():
