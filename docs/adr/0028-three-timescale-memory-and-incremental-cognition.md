@@ -141,9 +141,10 @@ classification, and an aborted/replayed turn does not create a second update.
 
 When LCE composition is enabled, the same post-commit projection path compiles
 mature Threads through Path A. LCE acceptance returns the Baseline identity;
-MR then marks the Thread projection COMPILED so it leaves the active working
-set. If LCE is disabled or compilation fails, the Thread remains available and
-canonical Memory is unaffected.
+MR then deletes the temporary Thread projection. The accepted Baseline region
+and its supporting canonical Memory IDs retain lineage. If LCE is disabled or
+compilation fails, the Thread remains available and canonical Memory is
+affected by neither outcome.
 
 The production latent-discovery seam now keeps MR as the sole factual source:
 LCE receives canonical Memory views plus a bounded MR-owned temporal context.
