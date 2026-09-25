@@ -225,6 +225,10 @@ class MemoryProductStore:
                 """
             )
 
+    @property
+    def canonical_reader(self) -> CanonicalMemoryReader:
+        return self._canonical
+
     def close(self) -> None:
         self._conn.close()
 
