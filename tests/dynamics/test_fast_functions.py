@@ -26,6 +26,8 @@ from mind_runtime.dynamics.fast_functions import (
     CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
@@ -322,6 +324,28 @@ def test_anger_maps_to_boundary_confrontation() -> None:
     assert "confrontation is Intent-eligible" in spec.notes
     assert "concrete boundary Intent branch is deferred" in spec.notes
     assert "no authoritative boundary-event-to-Intent binding exists" in spec.notes
+
+
+def test_sadness_maps_to_initiative_suppression() -> None:
+    """sadness maps to INITIATIVE_SUPPRESSION and records truthful consumer gap notes."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.sadness"]
+    assert spec.function_kind == FastFunctionKind.INITIATIVE_SUPPRESSION
+    assert spec.primary_consumer == "Surface initiative / expression warmth path"
+    assert spec.external_action_capable is False
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
+        == "SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION"
+    )
+    assert (
+        SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION
+        == SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
+    )
+    assert "Surface projection exists" in spec.notes
+    assert "warmth expression branch exists" in spec.notes
+    assert "effective initiative consumer remains unbound" in spec.notes
+    assert "SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP=FOUND" in spec.notes
 
 
 def test_fast_function_v1_count_constant() -> None:
