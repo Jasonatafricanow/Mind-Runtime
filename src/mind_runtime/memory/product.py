@@ -372,6 +372,12 @@ class MemoryProductStore:
             raise ValueError("thread support must exactly match thread Scope")
         next_summary = thread.working_summary if working_summary is None else working_summary
         next_mature = thread.mature if mature is None else mature
+        if (
+            thread.current_support_ids == supporting_memory_ids
+            and thread.working_summary == next_summary
+            and thread.mature == next_mature
+        ):
+            return thread
         updated = replace(
             thread,
             updated_at=at,
@@ -380,8 +386,6 @@ class MemoryProductStore:
             working_summary=next_summary,
             mature=next_mature,
         )
-        if updated == thread:
-            return thread
         self._put_thread(updated)
         return updated
 
