@@ -94,8 +94,9 @@ also derived and never becomes authority.
 The post-commit Thread updater reuses semantic work already performed for the
 turn. A Thread is a temporary cache for an online line that may still develop,
 not a second history. When LCE is enabled and a mature Thread is successfully
-compiled into an accepted Baseline, MR marks the Thread `COMPILED` and removes
-it from the active working set instead of maintaining the same logic twice.
+compiled into an accepted Baseline, MR deletes that temporary Thread
+projection instead of maintaining the same logic twice. The Baseline lineage
+and canonical Memory support retain the durable trace.
 Failed or disabled compilation leaves the Thread intact and never rolls back
 canonical Memory.
 
