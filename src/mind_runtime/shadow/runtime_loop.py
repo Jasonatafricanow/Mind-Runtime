@@ -329,10 +329,18 @@ def build_runtime_stack(
         ):
             raise ValueError("Memory binding must match the factual/state runtime namespace")
         fact_service = build_bound_fact_service(memory_binding, clock=clock, enabled=True)
+        thread_projection_compiler = None
+        if lce_enabled:
+            from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+
+            thread_projection_compiler = LceThreadProjectionCompiler(
+                binding=memory_binding,
+                enabled=True,
+            )
         thread_updates = build_bound_thread_updates(
             memory_binding,
             enabled=True,
-            lce_enabled=lce_enabled,
+            projection_compiler=thread_projection_compiler,
         )
     else:
         fact_service = FactIngestService(clock=clock, backend=SqliteFactBackend(facts_db))
