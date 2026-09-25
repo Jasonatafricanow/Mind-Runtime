@@ -41,7 +41,7 @@ Consumer closure is tracked separately:
 | `agent.affect.longing` | `PROACTIVE_CONTACT` | **Production hardened & architecture closed**: explicit test composition proves Dynamics → Surface → Intent → ActionPolicy → `WakeSignal` → Host admission → Body proactive turn → external provider generation → ExpressionGuard → explicit delivery commit. Ticker provider capability is removed; host admission fails closed against real lifecycle/policy authorities; restart context loss fails closed with `missing_authoritative_wake_context`; replay is process-local; Guard accept returns `PROCESSING` and explicit `commit_proactive_turn` transitions Intent to `COMPLETED` and marks `COMMITTED`. Production runtime config gap is explicitly noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). |
 | `agent.affect.sharing_urge` | `PROACTIVE_SHARE` | **Verified & architecture closed under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Dedicated consumer binding verified via `agent.affect.sharing_urge` → `IntentRule(kind="spontaneous_share", dimension_weights=(("agent.affect.sharing_urge", 1.0),), surface_control_weights=())` → `ActionPolicy(action_type="proactive_share", proactive=True)` → `WakeSignal` → Host lifecycle & guard pipeline. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Direct dimension binding preserves frozen candidate recipe digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`). Production activation is blocked by config (`SHARING_URGE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`). Calibration is provisional (`PROVISIONAL`). |
 | `agent.affect.curiosity` | `INQUIRY_EXPLORATION` | **Verified & architecture closed under MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01**: Question branch closed via dedicated Intent (`proactive_inquiry`, `surface_control_weights=()`) and proactive ActionPolicy (`proactive_question`, `proactive=True`) → `WakeSignal` → Host lifecycle & guard pipeline. Autonomous retrieval branch remains explicitly deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`). Anti-spam invariant verified: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Direct dimension binding preserves Candidate Recipe v2 digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`). Production activation is blocked by config (`CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`). Calibration is provisional (`PROVISIONAL`). |
-| `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | Existing Surface/Intent/expression roots exist; no new V1 consumer certification is implied by this registry. |
+| `agent.affect.anger` | `BOUNDARY_CONFRONTATION` | **Audited & closed under MR-ANGER-BOUNDARY-CONFRONTATION-AUDIT-V1-01**: Expression branch closed via `agent.affect.anger` → `Surface.confrontation` → Candidate Expression Map v2 (`directness` ∈ `low` \| `moderate` \| `high`) → `DecisionContextCompiler` (SURFACE_V1) → `DeterministicContextRenderer`. Directness is rendered with zero raw anger/float/trait leak. Proactive/autonomous boundary intent branch remains explicitly deferred (`ANGER_INTENT_BRANCH=DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY`, `BOUNDARY_EVENT_AUTHORITY=NONE`). Core authority invariant verified: `ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION`. Final verdict: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`. |
 | `agent.affect.sadness` | `INITIATIVE_SUPPRESSION` | Existing initiative/expression roots exist; no new V1 consumer certification is implied by this registry. |
 | `agent.affect.restlessness` | `ACTIVITY_WAKE` | Contract locked; dedicated activity-wake consumer not yet certified. |
 | `agent.affect.diligence_pressure` | `FOLLOW_UP_PERSISTENCE` | Contract locked; dedicated unresolved-item persistence consumer not yet certified. |
@@ -189,6 +189,48 @@ External Body then performs provider generation. When prose returns to MR, `Expr
    When `reach_out`, `spontaneous_share`, and `proactive_inquiry` compete, exactly one `WakeSignal` is emitted per tick. Candidate scoring is strictly governed by rule weights and dimension values; no hardcoded emotional priority exists.
 9. **Production Activation Blocked by Config**:
    Runtime machinery is fully wired and verified. Production activation is blocked by configuration pending parameter calibration (`CURIOSITY_CALIBRATION_STATUS=PROVISIONAL`, `CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
+### Anger V1 closure boundary
+
+Closed at task `MR-ANGER-BOUNDARY-CONFRONTATION-AUDIT-V1-01` (Base SHA: `a83922cc5cadf123abc113d6103552d8d5214adb`).
+
+#### 1. Causal Pipeline (Expression Branch - Closed)
+```text
+agent.affect.anger
+→ Surface.confrontation (= 0.70 * anger + 0.40 * confrontation_readiness - 0.30 * expressive_restraint)
+→ Candidate Expression Map v2 (source_control="confrontation" -> guidance_dimension="directness")
+→ Qualitative band partition (low: [0.0, 0.33), moderate: [0.33, 0.66), high: [0.66, 1.0])
+→ DecisionContextCompiler (SURFACE_V1: items of kind surface_guidance with key="directness")
+→ DeterministicContextRenderer (renders [SURFACE_GUIDANCE] - directness: <band>)
+→ External Body / Provider realization (contains zero raw anger floats, names, or persona traits)
+```
+
+Secondary surface dampening effects:
+- `contact_seeking`: includes term `-0.20 * anger`
+- `expressive_warmth`: includes term `-0.25 * anger`
+
+#### 2. Autonomous Intent Branch Deferral (Intent Branch - Deferred)
+- `BOUNDARY_EVENT_AUTHORITY = "NONE"`: No authoritative boundary event trigger exists distinguishing "anger exists" from "boundary assertion warranted".
+- `BOUNDARY_INTENT_RULE = "NONE"`: Certified manifest (`certification/d11s/inputs/runtime-config.json`) contains zero confrontation-driven Intent rules.
+- `BOUNDARY_ACTION_POLICY_RULE = "NONE"`: Certified manifest contains zero boundary action policy rules.
+- `ANGER_INTENT_BRANCH = "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"`.
+- No new proactive boundary action type is invented merely for symmetry.
+
+#### 3. Key Verified Invariants
+1. **Authority Separation (`ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION`)**:
+   `validate_anger_boundary_pressure_invariant` verifies that elevated anger / confrontation creates qualitative directness pressure, but has zero authority to grant ActionPolicy permission without independent policy rule authorization. ActionPolicy exclusively owns action permission.
+2. **Recipe Digest Preservation**:
+   Candidate Recipe v2 digest (`4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`) and the 5 surface controls (`contact_seeking`, `initiative`, `confrontation`, `expressive_warmth`, `expressive_restraint`) are preserved unchanged.
+3. **Expression Map Digest Preservation**:
+   Candidate Expression Map v2 digest (`bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3`) maps `confrontation` to `directness` across frozen monotonic partitions.
+4. **Zero Raw Affect / Trait Leakage**:
+   `DeterministicContextRenderer.verify_provider_information_isolation` verifies that raw affect names (`agent.affect.anger`), raw numeric floats, and persona traits (`confrontation_readiness`, `expressive_restraint`) are strictly absent from the rendered provider context.
+5. **No Synthetic Boundary Evidence or Facts**:
+   `SYNTHETIC_EVIDENCE_PATH = NONE`. Elevated anger never fabricates synthetic user/world evidence or injects synthetic boundary violation facts into `Situation`.
+6. **Root Overlap Protection**:
+   `validate_intent_rule_surface_overlap` strictly rejects any Intent rule attempting to combine `contact_seeking` and `confrontation` (`ROOT_OVERLAP`) because both share `agent.affect.anger` and `persona.behavioral_disposition.expressive_restraint`.
+7. **Final Verdict**:
+   `FINAL_VERDICT = ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`.
 
 
 

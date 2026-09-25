@@ -81,6 +81,13 @@ CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY: Final[str] = (
     CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
 )
 
+ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT: Final[str] = (
+    "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
+)
+ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION: Final[str] = (
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+)
+
 
 def validate_diligence_anti_spam_invariant(
     *,
@@ -158,6 +165,25 @@ def validate_curiosity_anti_spam_invariant(
     return True
 
 
+def validate_anger_boundary_pressure_invariant(
+    *,
+    confrontation_score: float,
+    action_permission: bool,
+    policy_authorized: bool,
+) -> bool:
+    """Explicit executable invariant: ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION.
+
+    Higher anger / confrontation pressure increases qualitative directness and expression guidance,
+    but MUST NOT grant ActionPolicy permission without independent policy rule authorization.
+    """
+    if action_permission and not policy_authorized:
+        raise ValueError(
+            f"Anger boundary pressure invariant violation: action_permission granted without "
+            f"independent policy authorization under confrontation_score={confrontation_score}"
+        )
+    return True
+
+
 FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
     FastStateFunctionSpec(
         state_key="agent.affect.longing",
@@ -208,7 +234,12 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="existing Surface / Intent / expression path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes="Signals boundary violation or tension; governs confrontation expression within ActionPolicy limits.",
+        notes=(
+            "Invariant: ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION. "
+            "Anger drives boundary confrontation pressure via Surface (confrontation -> qualitative directness), "
+            "dampens expressive warmth and contact seeking, but has zero authority to grant ActionPolicy permission, "
+            "initiate autonomous confrontation, or fabricate boundary violation evidence."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.sadness",

@@ -116,7 +116,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 | `longing` | proactive contact | **Production hardened & architecture closed**: ticker provider capability removed; fail-closed admission against real authorities; no synthetic context reconstruction; explicit `commit_proactive_turn` transitions Intent to `COMPLETED`; real production composition wired. Certified manifest config gap noted (`PROACTIVE_RUNTIME_CONFIG_GAP=FOUND`). Calibration remains provisional. |
 | `sharing_urge` | proactive share | **Architecture closed & verified under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Bound directly via `dimension_weights=(("agent.affect.sharing_urge", 1.0),)` with `surface_control_weights=()`. `Surface.initiative` was rejected because it is a composite control ($0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$), inducing cross-talk from curiosity and sadness. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
 | `curiosity` | inquiry/exploration | **Architecture closed & verified under MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01**: Question branch closed via direct binding `dimension_weights=(("agent.affect.curiosity", 1.0),)` and `surface_control_weights=()`. Autonomous retrieval branch remains explicitly deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`). Anti-spam invariant verified: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
-| `anger` | boundary/confrontation | Audit existing Surface/Intent/expression coverage before adding anything. |
+| `anger` | boundary/confrontation | **Audited & closed under MR-ANGER-BOUNDARY-CONFRONTATION-AUDIT-V1-01**: Expression branch closed via `agent.affect.anger` → `Surface.confrontation` → Candidate Expression Map v2 (`directness`) → provider envelope. Proactive/autonomous boundary intent branch remains explicitly deferred (`ANGER_INTENT_BRANCH=DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY`, `BOUNDARY_EVENT_AUTHORITY=NONE`). Core authority invariant: `ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION`. Final verdict: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`. |
 | `sadness` | initiative suppression | Audit existing initiative/expression coverage; prefer suppression over new action types. |
 | `restlessness` | activity wake | Define activity/wake consumer separately from proactive contact. |
 | `diligence_pressure` | follow-up persistence | Preserve unresolved-item relevance; never shorten reminder cooldown. |
@@ -219,5 +219,41 @@ Task: `MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01`
 - **Evidence & Isolation Bounds**: `SYNTHETIC_EVIDENCE_PATH=NONE` (MR does not invent fake user/world Evidence items); `RAW_CURIOSITY_PROVIDER_LEAK=NONE` (MR does not expose raw `curiosity` state to provider-visible context).
 - **Multi-Urge Competition**: When `reach_out`, `spontaneous_share`, and `proactive_inquiry` compete, exactly one `WakeSignal` is emitted per tick. Candidate scoring is strictly governed by rule weights and dimension values; no hardcoded emotional priority exists.
 - **Config-Gated Production Activation**: While runtime code is wired and verified, production activation is blocked by the certified manifest until calibration is completed (`CURIOSITY_CALIBRATION_STATUS=PROVISIONAL`, `CURIOSITY_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG`).
+
+## 11. Anger Implementation and Boundary Choices
+
+Task: `MR-ANGER-BOUNDARY-CONFRONTATION-AUDIT-V1-01`  
+Base SHA: `a83922cc5cadf123abc113d6103552d8d5214adb`  
+Verdict: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`
+
+### 11.1 Causal Architecture (Expression Branch Closed)
+1. **Dynamics to Surface**:
+   $$\text{confrontation} = 0.70 \times \text{anger} + 0.40 \times \text{confrontation\_readiness} - 0.30 \times \text{expressive\_restraint}$$
+   Secondary dampening effects:
+   - $\text{contact\_seeking}$ includes $-0.20 \times \text{anger}$
+   - $\text{expressive\_warmth}$ includes $-0.25 \times \text{anger}$
+2. **Surface to Qualitative Guidance**:
+   `confrontation` maps to qualitative guidance `directness` via Candidate Expression Map v2:
+   - `low`: $[0.0, 0.33)$
+   - `moderate`: $[0.33, 0.66)$
+   - `high`: $[0.66, 1.0]$
+3. **Provider Envelope and Isolation**:
+   `DecisionContextCompiler` (in `SURFACE_V1` mode) emits items of kind `surface_guidance` with `key="directness"`. `DeterministicContextRenderer` renders `[SURFACE_GUIDANCE] - directness: <band>` and strips all raw anger dimension keys, raw floats, and persona traits. `verify_provider_information_isolation` strictly passes.
+
+### 11.2 Intent Branch Deferral (`ANGER_INTENT_BRANCH = DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY`)
+1. **No Authoritative Boundary Event Trigger**:
+   Boundary assertion requires an authoritative event distinguishing "anger exists" from "boundary violation occurred". The codebase currently defines zero boundary violation event authorities (`BOUNDARY_EVENT_AUTHORITY = "NONE"`).
+2. **Certified Manifest Boundaries**:
+   `certification/d11s/inputs/runtime-config.json` defines only `respond` and `scheduled_follow_up` Intent rules, and only `text_message` ActionPolicy rules. There is no configured boundary assertion intent or action rule.
+3. **No Fourth Proactive Consumer for Symmetry**:
+   Mind Runtime does not invent autonomous proactive boundary assertion actions merely to mirror longing, sharing urge, or curiosity. Anger remains behavioral pressure, not action authorization.
+4. **Authority Separation Invariant**:
+   `ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION`. Anger controls directness and boundary pressure, but `ActionPolicy` exclusively owns action permission.
+
+### 11.3 Overlap Protection
+- `Surface.confrontation` is an eligible surface control under Candidate Recipe v2 (`ELIGIBLE_INTENT_SURFACE_CONTROLS`).
+- However, `confrontation` shares transitive roots with other controls:
+  - Shares `agent.affect.anger` and `persona.behavioral_disposition.expressive_restraint` with `contact_seeking`.
+- `validate_intent_rule_surface_overlap` strictly rejects any Intent rule attempting to combine `contact_seeking` and `confrontation` (`ROOT_OVERLAP`).
 
 
