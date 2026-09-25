@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 
 from mind_runtime.contracts import Scope
 from mind_runtime.memory.contracts import MemoryLifecycle
-from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.product import MemoryThread, ThreadStatus
+from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
 from mind_runtime.runtime_binding import (
     BindingManifestMismatchError,
