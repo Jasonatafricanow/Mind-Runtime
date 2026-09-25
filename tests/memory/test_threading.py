@@ -175,7 +175,7 @@ def test_mature_thread_is_compiled_and_removed_from_active_set(tmp_path):
     )[0]
     assert first.status is ThreadStatus.OPEN
 
-    second = service.apply(
+    service.apply(
         scope=memory().scope,
         accepted_events=(
             event(
@@ -187,11 +187,10 @@ def test_mature_thread_is_compiled_and_removed_from_active_set(tmp_path):
             ),
         ),
         at=NOW,
-    )[0]
+    )
     assert len(compiler.calls) == 1
     assert compiler.calls[0].mature
-    assert second.status is ThreadStatus.COMPILED
-    assert second.compiled_baseline_id == "baseline-1"
+    assert product.get_thread(first.thread_id) is None
     assert product.list_threads(memory().scope, status=ThreadStatus.OPEN) == ()
     service.close()
 
@@ -235,7 +234,6 @@ def test_failed_or_disabled_projection_keeps_mature_thread_active(tmp_path):
     active = product.list_threads(memory().scope, status=ThreadStatus.OPEN)
     assert len(active) == 1
     assert active[0].mature
-    assert active[0].compiled_baseline_id is None
     service.close()
 
 
