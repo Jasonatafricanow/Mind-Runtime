@@ -37,7 +37,7 @@ Retrieval is read-only and is not reinforcement.
 
 An explicit open structure/Thread is a bounded product object over canonical Memory support. It is not a second history store and it is not the longitudinal interpretation engine.
 
-The target Thread model is therefore minimal: stable identity, open question, status, origin/current bounded support and update time. Full longitudinal history remains in canonical Memory.
+The target Thread model is therefore bounded: stable identity, open question, status, origin/current bounded support, optional already-reasoned working summary, explicit maturity, and update time. Full longitudinal history remains in canonical Memory.
 
 ## LCE boundary
 
@@ -49,7 +49,12 @@ LCE has two legitimate input paths:
 
 When an explicit medium-term structure has already been reasoned online, that reusable structure should be supplied to LCE without waiting for a sleep/idle rediscovery pass.
 
-The direct handoff does not bypass provenance or promotion rules. It avoids duplicate semantic inference while preserving canonical Memory support.
+The direct handoff does not bypass provenance or canonical-support validation. A
+mature Thread has already completed the explicit online working-structure stage,
+so the handoff must not create a second Worktree merely to rediscover the same
+relation. MR supplies the already-reasoned summary and stable Memory support;
+LCE revalidates support and advances the Baseline lineage only when its
+equivalence/revision rules permit it.
 
 ### Discovery path
 
@@ -59,16 +64,23 @@ Sleep/idle is therefore a discovery opportunity, not a mandatory full-history re
 
 ## Worktree / Baseline semantics
 
-LCE's Worktree/Baseline lineage is the durable cognition mechanism.
+LCE Baseline lineage is the durable accepted-cognition mechanism. Worktree is
+the draft/confirmation mechanism for relations discovered inside LCE. A mature
+MR Thread is already the bounded draft structure for the explicit online path.
 
 Conceptually:
 
 ```text
-canonical Memory history
--> candidate understanding in CognitionWorktree
+latent/unstructured history
+-> candidate understanding in LCE Worktree
 -> accepted Baseline revision
--> current Baseline HEAD
--> future cognition continues from that HEAD plus new evidence
+
+already-reasoned mature Thread
+-> canonical support revalidation
+-> accepted Baseline revision
+
+Baseline HEAD + new evidence
+-> future cognition
 ```
 
 A later branch starts from the current accepted understanding. Settled history does not need to be semantically rebuilt on every turn.
@@ -102,18 +114,18 @@ Thread does not require a parallel MR-to-LCE transport ontology. Stable canonica
 
 ## Current implementation note
 
-The architecture is frozen ahead of full wiring.
+The architecture is frozen and the explicit online loop is now wired:
 
-At the time of this ADR:
+- canonical MR Memory, hybrid retrieval, vector projection and optional LCE binding exist;
+- Thread is bounded and no longer carries PROGRESS/REVERSAL or append-only trajectory history;
+- mature Thread -> LCE Baseline handoff is implemented without a second semantic-model pass;
+- accepted LCE Baselines can be preferred in MR HistoricalContext, with raw Memory filling the remaining bounded budget;
+- LCE standalone V1 still owns Semantic Blocks, local structure discovery, Worktrees, invalidation and accepted reads for its latent-discovery path.
 
-- canonical MR Memory, retrieval, vector projection and optional LCE binding exist;
-- LCE implements Semantic Blocks, CognitionWorktree, Baseline lineage, invalidation and accepted reads;
-- MR has initial MemoryAttention and Thread primitives;
-- direct explicit-structure -> LCE handoff is not yet implemented;
-- MR Thread currently carries a richer appendable event model than the frozen target and should converge toward a bounded open-structure representation;
-- compiled LCE Baseline is not yet the primary historical-context path in MR.
-
-These are implementation gaps, not open architecture questions.
+Two runtime tasks remain intentionally separate: automatic Thread
+formation/maturity policy, and a full latent-discovery adapter that keeps MR as
+the sole factual source instead of copying canonical Memory into LCE's
+standalone ReferenceMemoryStore.
 
 ## Consequence
 
