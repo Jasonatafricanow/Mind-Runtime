@@ -56,6 +56,7 @@ from mind_runtime.emotional_transition.appraisal import (
     SemanticAppraisalProducer,
 )
 from mind_runtime.emotional_transition.effects import EffectMapper, EventEffectRule
+from mind_runtime.emotional_transition.projection_journal import ProjectionJournal
 from mind_runtime.emotional_transition.semantic import SemanticRouter
 from mind_runtime.homeostasis.contracts import HomeostasisDisposition
 from mind_runtime.homeostasis.policy import (
@@ -69,6 +70,17 @@ from mind_runtime.state.persistence import SqliteStateBackend
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 USER_SCOPE = Scope(domain=ScopeDomain.USER, user_id="alice")
 AGENT_SCOPE = Scope(domain=ScopeDomain.AGENT, agent_id="kayla", persona_id="kayla")
+
+
+def _projection_definitions() -> StateDefinitionRegistry:
+    return StateDefinitionRegistry(
+        (
+            StateDefinition("agent.affect.anxiety", StateDomain.AGENT,
+                            StateValueType.SCALAR, "deterministic_affect", None, (0.0, 1.0)),
+            StateDefinition("agent.longitudinal.relationship_security", StateDomain.AGENT,
+                            StateValueType.SCALAR, "accumulator", "indefinite", (0.0, 1.0)),
+        )
+    )
 
 
 def _affect(dim: str) -> AffectiveDimensionProfile:
@@ -441,6 +453,8 @@ def test_e2e_production_appraisal_to_slow_persistence(tmp_path: Path) -> None:
         semantic_router=SemanticRouter(),
         homeostasis_gate=gate,
         appraisal_producer=producer,
+        projection_journal=ProjectionJournal(tmp_path / "projection.sqlite"),
+        state_definitions=_projection_definitions(),
     )
 
     writer = SlowPlasticityWriter(
@@ -550,6 +564,8 @@ def test_e2e_appraisal_failure_vetoes_slow_accept(tmp_path: Path) -> None:
         semantic_router=SemanticRouter(),
         homeostasis_gate=gate,
         appraisal_producer=producer,
+        projection_journal=ProjectionJournal(tmp_path / "projection.sqlite"),
+        state_definitions=_projection_definitions(),
     )
 
     candidate = _candidate(candidate_id="cand-fail-1")

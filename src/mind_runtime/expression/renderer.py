@@ -14,6 +14,7 @@ from mind_runtime.expression.context import DecisionContextConfig
 SECTION_ORDER = {
     ExpressionContextKind.ACTION: 0,
     ExpressionContextKind.FACT: 1,
+    ExpressionContextKind.COGNITIVE_MEANING: 2,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
     ExpressionContextKind.PERSONA_STYLE: 4,
@@ -25,6 +26,7 @@ SECTION_ORDER = {
 _SECTION_LABEL = {
     ExpressionContextKind.ACTION: "ACTION",
     ExpressionContextKind.FACT: "FACT",
+    ExpressionContextKind.COGNITIVE_MEANING: "COGNITIVE_MEANING",
     ExpressionContextKind.INTERNAL_STATE: "INTERNAL_STATE",
     ExpressionContextKind.POLICY_CONSTRAINT: "POLICY_CONSTRAINT",
     ExpressionContextKind.PERSONA_STYLE: "PERSONA_STYLE",
@@ -46,6 +48,7 @@ _DATA_KINDS = {
 }
 
 _UNTRUSTED_KINDS = {
+    ExpressionContextKind.COGNITIVE_MEANING,
     ExpressionContextKind.HISTORY,
     ExpressionContextKind.PRIOR_EXPRESSION,
 }
@@ -86,6 +89,17 @@ class DeterministicContextRenderer:
             included_item_ids=tuple(item.item_id for item in included),
             omitted_item_ids=tuple(item.item_id for item in omitted),
         )
+
+    def render_cognitive_meaning(self, context: DecisionContext) -> str | None:
+        """Return only meanings admitted into the same provider envelope."""
+        rendered = self.render(context)
+        admitted = set(rendered.included_item_ids)
+        meanings = [
+            item for item in context.expression_context
+            if item.kind is ExpressionContextKind.COGNITIVE_MEANING
+            and item.item_id in admitted
+        ]
+        return _render_text(sorted(meanings, key=_item_sort_key)) if meanings else None
 
     def render_diagnostic(self, context: DecisionContext) -> DiagnosticExpressionContext:
         if not isinstance(context, DecisionContext):
@@ -131,7 +145,13 @@ def _render_text(items: list[ExpressionContextItem]) -> str:
             lines.append(f"[{_SECTION_LABEL[item.kind]}]")
         value = _escape_data(item.value)
         if item.kind in _UNTRUSTED_KINDS:
-            lines.append(f"- [UNTRUSTED_DATA] {item.key}: {value}")
+            if item.kind is ExpressionContextKind.COGNITIVE_MEANING:
+                import json
+
+                quoted = json.dumps(item.value, ensure_ascii=False)
+                lines.append(f"- [APPRAISAL_DATA] {item.key}: {quoted}")
+            else:
+                lines.append(f"- [UNTRUSTED_DATA] {item.key}: {value}")
         elif item.kind in _DATA_KINDS:
             lines.append(f"- [DATA] {item.key}: {value}")
         else:

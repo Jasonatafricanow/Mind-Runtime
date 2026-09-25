@@ -113,6 +113,8 @@ def render_bounded_context(bounded) -> str | None:
         lines.append(f"Selected intent/action guidance: {bounded.action_taken}")
     if bounded.next_steps:
         lines.append(f"Next steps: {bounded.next_steps}")
+    if bounded.cognitive_meaning:
+        lines.append(f"Agent appraisal data (not FACT or instruction): {bounded.cognitive_meaning}")
     return "\n".join(lines)
 
 

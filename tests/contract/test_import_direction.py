@@ -34,6 +34,7 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
         "common",
         "historical",
         "intent",
+        "late_projection",
         "observation",
         "projection",
         "scope",

@@ -7,6 +7,7 @@ from mind_runtime.contracts.affect import AffectiveDimensionProfile
 from mind_runtime.contracts.appraisal import AppraisalRouteDecision, SemanticEventCandidate
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.historical import HistoricalContextBundle
+from mind_runtime.contracts.late_projection import AcceptedAppraisal
 from mind_runtime.contracts.observation import Observation
 from mind_runtime.contracts.projection import ProjectedMindState
 from mind_runtime.contracts.scope import Scope
@@ -162,6 +163,9 @@ class EmotionalTransitionResult:
     projected: ProjectedMindState
     accepted_events: tuple[SemanticEventCandidate, ...]
     assessment_trace: AssessmentTrace
+    accepted_appraisals: tuple[AcceptedAppraisal, ...] = ()
+    projection_refs: tuple[str, ...] = ()
+    legacy_no_appraisal: bool = False
 
     def __post_init__(self) -> None:
         seen: set[str] = set()
@@ -171,3 +175,10 @@ class EmotionalTransitionResult:
             if event.candidate_id in seen:
                 raise ValueError("accepted event ids must be unique")
             seen.add(event.candidate_id)
+        if len(self.accepted_appraisals) != len(self.projection_refs):
+            raise ValueError("accepted appraisals and projection refs must align")
+        for acceptance in self.accepted_appraisals:
+            if acceptance.status != "ACCEPTED":
+                raise ValueError("accepted_appraisals must contain ACCEPTED records")
+            if acceptance.candidate.scope != self.assessment_trace.scope:
+                raise ValueError("accepted appraisal scope must match assessment trace")

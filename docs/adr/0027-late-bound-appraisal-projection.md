@@ -1,7 +1,9 @@
 # ADR-0027: Open appraisal and late-bound runtime projection
 
 - Date: 2026-09-09
-- Status: PROPOSED; requires user acceptance before contracts or implementation.
+- Status: ACCEPTED
+- Accepted: 2026-09-09
+- User authorization: approved for implementation under MR-LATE-PROJECTION-01.
 - Assignment: MR-LATE-PROJECTION-01, P1 Architecture Closure.
 - Audited base: a7c347dcfe2bcc0867d9851275bbe5ea1e2c96f8 (local main).
 
