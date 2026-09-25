@@ -6,7 +6,7 @@ from mind_runtime.memory.admission import MemoryAdmissionService
 from mind_runtime.memory.extraction import MemoryExtractor
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
-from mind_runtime.memory.threading import ThreadAutoUpdateService
+from mind_runtime.memory.threading import ThreadAutoUpdateService, ThreadProjectionCompiler
 from mind_runtime.providers.clock import Clock
 from mind_runtime.runtime_binding import RuntimeBinding, bind_storage
 
@@ -39,32 +39,27 @@ def build_bound_thread_updates(
     binding: RuntimeBinding,
     *,
     enabled: bool = False,
-    lce_enabled: bool = False,
+    projection_compiler: ThreadProjectionCompiler | None = None,
 ) -> ThreadAutoUpdateService | None:
-    """Compose Thread projection maintenance over the bound Memory authority.
+    """Compose Thread maintenance without importing a higher projection engine.
 
-    Thread remains useful without LCE. When LCE is enabled, a mature Thread is
-    compiled through the optional adapter and leaves the active Thread set only
-    after LCE returns an accepted Baseline identity.
+    The Memory core owns the temporary projection lifecycle. A higher
+    composition root may inject an optional compiler port (for example LCE)
+    without making Memory depend on that implementation.
     """
     if type(enabled) is not bool:
         raise ValueError("enabled must be bool")
-    if type(lce_enabled) is not bool:
-        raise ValueError("lce_enabled must be bool")
+    if projection_compiler is not None and not isinstance(
+        projection_compiler, ThreadProjectionCompiler
+    ):
+        raise ValueError("projection_compiler must implement ThreadProjectionCompiler")
     if not enabled:
         return None
     paths = bind_storage(binding)
     canonical = CanonicalMemoryStore(paths.memory_db)
     product = MemoryProductStore(paths.memory_db, canonical)
-    compiler = None
-    if lce_enabled:
-        # Late import keeps the Memory core usable without the optional LCE
-        # plugin while preserving one composition owner for projection upgrade.
-        from mind_runtime.integrations.lce import LceThreadProjectionCompiler
-
-        compiler = LceThreadProjectionCompiler(binding=binding, enabled=True)
     return ThreadAutoUpdateService(
         canonical=canonical,
         product=product,
-        projection_compiler=compiler,
+        projection_compiler=projection_compiler,
     )
