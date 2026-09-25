@@ -9,6 +9,7 @@ from mind_runtime.contracts import Observation, Scope, Situation
 from mind_runtime.contracts.historical import HistoricalContextBundle
 from mind_runtime.emotional_transition.history import NullHistoricalContext
 from mind_runtime.memory.history import MemoryHistoricalContextAdapter
+from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.retrieval import (
     DEFAULT_SURFACE_BUDGET,
     MemoryRetrievalService,
@@ -53,10 +54,12 @@ class _BoundMemoryHistory:
         ):
             raise BindingManifestMismatchError("retrieval binding manifest mismatch")
         store = CanonicalMemoryStore(self.paths.memory_db, read_only=True)
+        product = MemoryProductStore(self.paths.memory_db, store, read_only=True)
         try:
             return MemoryHistoricalContextAdapter(
                 MemoryRetrievalService(store=store, provider=self.provider),
                 budget=self.budget,
+                product=product,
             ).read(
                 interaction_id=interaction_id,
                 context=context,
@@ -65,6 +68,7 @@ class _BoundMemoryHistory:
                 clock=clock,
             )
         finally:
+            product.close()
             store.close()
 
 
