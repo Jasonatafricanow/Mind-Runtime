@@ -2,7 +2,6 @@
 
 from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
-from mind_runtime.integrations.lce import LceThreadProjectionCompiler
 from mind_runtime.memory.admission import MemoryAdmissionService
 from mind_runtime.memory.extraction import MemoryExtractor
 from mind_runtime.memory.product import MemoryProductStore
@@ -57,11 +56,13 @@ def build_bound_thread_updates(
     paths = bind_storage(binding)
     canonical = CanonicalMemoryStore(paths.memory_db)
     product = MemoryProductStore(paths.memory_db, canonical)
-    compiler = (
-        LceThreadProjectionCompiler(binding=binding, enabled=True)
-        if lce_enabled
-        else None
-    )
+    compiler = None
+    if lce_enabled:
+        # Late import keeps the Memory core usable without the optional LCE
+        # plugin while preserving one composition owner for projection upgrade.
+        from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+
+        compiler = LceThreadProjectionCompiler(binding=binding, enabled=True)
     return ThreadAutoUpdateService(
         canonical=canonical,
         product=product,
