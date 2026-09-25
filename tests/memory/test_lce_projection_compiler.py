@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,6 @@ from mind_runtime.integrations.lce import LceThreadProjectionCompiler
 from mind_runtime.memory.product import MemoryThread, ThreadStatus
 from mind_runtime.runtime_binding import production_binding
 from tests.facts.test_admission import make_scope
-from datetime import UTC, datetime
 
 
 def thread_fixture():
