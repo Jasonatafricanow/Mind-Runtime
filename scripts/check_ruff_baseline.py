@@ -86,6 +86,7 @@ def main() -> int:
                     f"    {key} @ {location}: {item.get('message', '')}",
                     file=sys.stderr,
                 )
+                print(f"      fix={item.get('fix')!r}", file=sys.stderr)
 
     if forbidden or regressions:
         return 1
