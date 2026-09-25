@@ -56,7 +56,7 @@ class ThreadUpdateQueue:
         rows = self.__conn.execute(
             "SELECT memory_id,status,attempts,thread_ref,last_error "
             "FROM thread_update_intents WHERE status != 'succeeded' "
-            "ORDER BY registered_at,memory_id LIMIT ?",
+            "ORDER BY registered_at,rowid LIMIT ?",
             (limit,),
         ).fetchall()
         return tuple(ThreadUpdateIntent(*row) for row in rows)
