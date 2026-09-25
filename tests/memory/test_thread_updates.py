@@ -175,7 +175,7 @@ def test_retry_after_post_mutation_crash_is_idempotent(tmp_path, monkeypatch):
     canonical, product, worker = plane(tmp_path)
     item = memory("m1", "I am considering replacing my computer.")
     canonical._commit((item,))
-    queue = canonical.thread_update_queue()
+    queue = worker._queue
     original_succeed = queue.succeed
 
     def crash(memory_id, thread_ref):
