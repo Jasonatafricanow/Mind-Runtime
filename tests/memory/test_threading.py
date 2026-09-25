@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
+
+import pytest
 
 from mind_runtime.contracts import SemanticEventCandidate
 from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
 from mind_runtime.memory.store import CanonicalMemoryStore
-from mind_runtime.memory.threading import ThreadAutoUpdateService
+from mind_runtime.memory.threading import (
+    ThreadAutoUpdateService,
+    ThreadSignal,
+    ThreadSignalAction,
+)
 from tests.memory.test_contracts import memory
 
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
@@ -222,12 +229,95 @@ def test_no_thread_signal_or_unresolved_support_is_ignored(tmp_path):
         question="Will this exist?",
         summary="No canonical support exists.",
     )
+    invalid_action = replace(
+        missing,
+        candidate_id="invalid-action",
+        evidence_refs=("e1",),
+        attributes=(("thread_action", "bogus"),),
+    )
+    none_action = replace(
+        missing,
+        candidate_id="none-action",
+        evidence_refs=("e1",),
+        attributes=(("thread_action", "none"),),
+    )
+    track_without_question = replace(
+        missing,
+        candidate_id="track-no-question",
+        evidence_refs=("e1",),
+        attributes=(("thread_action", "track"),),
+    )
+    resolve_without_context = replace(
+        missing,
+        candidate_id="resolve-no-context",
+        evidence_refs=("e1",),
+        attributes=(("thread_action", "resolve"),),
+    )
+    empty_refs = event(
+        candidate_id="empty-refs",
+        refs=(),
+        action="track",
+        question="Will empty support work?",
+        summary="It must not.",
+    )
+    other_scope = replace(
+        event(
+            candidate_id="other-scope",
+            refs=("e1",),
+            action="track",
+            question="Will cross-scope support work?",
+            summary="It must not.",
+        ),
+        scope=replace(memory().scope, user_id="other"),
+    )
+    unmatched_resolve = event(
+        candidate_id="unmatched-resolve",
+        refs=("e1",),
+        action="resolve",
+        question="Does an absent line resolve?",
+        summary="Nothing was opened.",
+    )
     assert service.apply(
         scope=memory().scope,
-        accepted_events=(plain, missing),
+        accepted_events=(
+            plain,
+            missing,
+            invalid_action,
+            none_action,
+            track_without_question,
+            resolve_without_context,
+            empty_refs,
+            other_scope,
+            unmatched_resolve,
+        ),
         at=NOW,
     ) == ()
     assert product.list_threads(memory().scope) == ()
+
+    for bad in (True, -0.1, 1.1):
+        with pytest.raises(ValueError, match="minimum_match"):
+            ThreadAutoUpdateService(
+                canonical=canonical,
+                product=product,
+                minimum_match=bad,
+            )
+    with pytest.raises(ValueError, match="action"):
+        ThreadSignal(cast(ThreadSignalAction, "track"), "Question?", "Summary")
+    with pytest.raises(ValueError, match="open_question"):
+        ThreadSignal(ThreadSignalAction.TRACK, "", "Summary")
+    with pytest.raises(ValueError, match="2048"):
+        ThreadSignal(ThreadSignalAction.TRACK, "q" * 2049, "Summary")
+    with pytest.raises(ValueError, match="summary"):
+        ThreadSignal(ThreadSignalAction.TRACK, "Question?", "")
+    with pytest.raises(ValueError, match="4096"):
+        ThreadSignal(ThreadSignalAction.TRACK, "Question?", "s" * 4097)
+    with pytest.raises(ValueError, match="mature"):
+        ThreadSignal(
+            ThreadSignalAction.TRACK,
+            "Question?",
+            "Summary",
+            mature=cast(bool, 1),
+        )
     service.close()
 
 
@@ -261,4 +351,20 @@ def test_semantically_similar_question_matches_existing_thread(tmp_path):
     )[0]
     assert second.thread_id == first.thread_id
     assert len(product.list_threads(memory().scope)) == 1
+
+    unrelated = service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c3",
+                refs=("e3",),
+                action="track",
+                question="Weather?",
+                summary="?",
+            ),
+        ),
+        at=NOW,
+    )[0]
+    assert unrelated.thread_id != first.thread_id
+    assert len(product.list_threads(memory().scope)) == 2
     service.close()
