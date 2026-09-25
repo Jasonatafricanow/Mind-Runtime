@@ -35,6 +35,7 @@ def test_thread_projection_composition_keeps_compiler_behind_port():
     from mind_runtime.runtime_binding import production_binding
 
     binding = production_binding("p")
+    assert build_bound_thread_updates(binding) is None
     with pytest.raises(ValueError, match="enabled"):
         build_bound_thread_updates(binding, enabled=1)
     with pytest.raises(ValueError, match="projection_compiler"):
