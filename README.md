@@ -75,6 +75,14 @@ turn context
 
 The default implementation works without a vector database. Qdrant/FastEmbed adapters are optional and live behind provider interfaces under `src/mind_runtime/memory/providers/`.
 
+MR now freezes three memory timescales:
+
+- **StateBar** owns short-lived current state and semantic expiry;
+- **MR Memory** owns durable remembered events plus product attention/surfacing and optional unresolved Threads;
+- **LCE** owns latent longitudinal structure and hypotheses over the same canonical Memory substrate.
+
+Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread records reference canonical Memory IDs and cannot create new factual authority. See `docs/adr/0027-three-timescale-memory-product-governance.md`.
+
 ### Turn admission and commit
 
 `runtime_admission.py` and the orchestrator implement process-local admission plus commit/abort behavior for a turn.
@@ -153,7 +161,7 @@ The repository contains code for:
 
 - persistent facts and state;
 - binding/namespace isolation;
-- memory storage and bounded retrieval;
+- memory storage, bounded retrieval, attention/surfacing governance, and unresolved Threads;
 - optional semantic vector retrieval;
 - intent lifecycle and scheduling;
 - expression/context guards;
