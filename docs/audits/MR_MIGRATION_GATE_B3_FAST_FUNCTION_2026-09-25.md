@@ -60,11 +60,13 @@ and Sadness consumer dispositions belong to Gate B4.
 | Fixed-HEAD full suite at `aa42726` | 3602 passed, 7 skipped, 4 deselected, 1 xfailed in 498.85 s |
 | Fixed-HEAD coverage at `aa42726` | 93.5409552803719% exact, displayed 94%; `coverage report --skip-covered` passes fail-under=94 |
 | GitHub Actions on `aa42726` | [PR quality #254](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36124020880) and [push quality #253](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36124014427) both succeeded, including tests, Python static, clean-install, and LCE integration |
-| GitHub Actions on report commit and merged main | Pending |
+| GitHub Actions on report commit | [PR quality #255](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36125719126) and [push quality #256](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36125724114): success |
+| Merged main | PR #17 merged as `389ad3bb28be524cba5eeabc89df8ac10c0c84a3`; parents `664cded5cae036bbc8e6e35f546b70f6e29ac557` and `66d9c28d4064862ba0e195a2f4e78c806be635fa` |
+| GitHub Actions on merged main | [main quality #257](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36126298281): success |
 
 ## Gate disposition
 
-**GATE B3 READY TO MERGE, NOT YET CLOSED.** Fixed-HEAD full suite and coverage
-passed, as did PR/push CI at `aa42726`. Require a successful report-commit
-quality run, merge of PR #17, merged-main quality, and exact target merge SHA.
-Historical refs/worktrees remain preserved for Issue #11's final matrix.
+**GATE B3 CLOSED.** Fixed-HEAD full suite and coverage passed; report-commit
+quality, PR #17 merge, and merged-main quality all succeeded. The exact target
+merge is `389ad3bb28be524cba5eeabc89df8ac10c0c84a3`. Historical
+refs/worktrees remain preserved for Issue #11's final matrix.
