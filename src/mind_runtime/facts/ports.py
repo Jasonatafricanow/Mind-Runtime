@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from mind_runtime.contracts import Evidence, Observation
+from mind_runtime.contracts import (
+    EffectiveWindow,
+    Evidence,
+    Observation,
+    ObservationModality,
+    SemanticTime,
+)
 
 
 class FactAdmissionDisposition(StrEnum):
@@ -68,5 +74,36 @@ class FactIngestPort(Protocol):
         OwnershipError when the writing runtime/Persona does not own the scope, and
         FactAdmissionConflictError for same ``(scope, id)`` with different
         immutable bytes or an impossible partial pair.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class RealityAdmissionRequest:
+    """Explicit typed request for admitting an Evidence-derived Reality Observation."""
+
+    source_evidence: Evidence
+    interaction_id: str
+    writing_runtime: str
+    writing_persona_id: str | None
+    observation_id: str
+    key: str
+    value: object
+    confidence: float
+    modality: ObservationModality = ObservationModality.ASSERTED
+    semantic_time: SemanticTime = SemanticTime()
+    effective_window: EffectiveWindow | None = None
+
+
+@runtime_checkable
+class RealityAdmissionPort(Protocol):
+    """Narrow port for admitting typed Reality proposals into the factual plane."""
+
+    def admit_reality(
+        self,
+        request: RealityAdmissionRequest,
+    ) -> FactAdmissionResult:
+        """Admit a typed Reality proposition after namespace, provenance,
+        and conflict validation.
         """
         ...

@@ -80,6 +80,15 @@ from mind_runtime.contracts.interaction import Interaction, InteractionStatus
 from mind_runtime.contracts.observation import Observation
 from mind_runtime.contracts.pattern import PatternMatchSummary, PatternQuery
 from mind_runtime.contracts.projection import ProjectedMindState, TurnProjection
+from mind_runtime.contracts.reality import (
+    EffectiveWindow,
+    EffectiveWindowKind,
+    ObservationModality,
+    SemanticDaypart,
+    SemanticPrecision,
+    SemanticRelation,
+    SemanticTime,
+)
 from mind_runtime.contracts.replication import ReplicationEnvelope, ReplicationPort
 from mind_runtime.contracts.scope import (
     Authority,
@@ -116,6 +125,8 @@ __all__ = [
     "DeliveryReceipt",
     "DeliveryStatus",
     "DynamicsPolicy",
+    "EffectiveWindow",
+    "EffectiveWindowKind",
     "EmotionalTransitionInput",
     "EmotionalTransitionResult",
     "Evidence",
@@ -143,6 +154,7 @@ __all__ = [
     "IntentTransition",
     "IntentWake",
     "Observation",
+    "ObservationModality",
     "Ownership",
     "PatternMatchSummary",
     "PatternQuery",
@@ -159,8 +171,12 @@ __all__ = [
     "Scope",
     "ScopeDomain",
     "SemanticAppraisal",
+    "SemanticDaypart",
     "SemanticEventCandidate",
+    "SemanticPrecision",
+    "SemanticRelation",
     "SemanticRoutingResult",
+    "SemanticTime",
     "Situation",
     "StateDefinition",
     "StateDomain",

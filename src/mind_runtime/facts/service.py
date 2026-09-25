@@ -34,6 +34,7 @@ from mind_runtime.facts.ports import (
     FactAdmissionDisposition,
     FactAdmissionObserver,
     FactAdmissionResult,
+    RealityAdmissionRequest,
 )
 from mind_runtime.facts.provenance import ProvenanceRecorder
 from mind_runtime.facts.store import EvidenceStore, ObservationStore
@@ -210,6 +211,51 @@ class OperationalFactAdmission:
         if not isinstance(action_type, str) or not action_type:
             return False
         return action_type in {"proactive_message", "send_photo"}
+
+
+ALLOWED_REALITY_PREFIXES: tuple[str, ...] = (
+    "user.health.",
+    "user.activity.",
+    "user.plan.",
+)
+ALLOWED_REALITY_SUFFIXES: frozenset[str] = frozenset(
+    {"observed", "cancelled", "completed", "resolved"}
+)
+
+
+def validate_reality_namespace(key: str) -> None:
+    """Validate that key conforms to allowed reality observation namespaces.
+
+    Allowed:
+      - user.sleep.phase (and with allowed suffix)
+      - user.health.<name> (and with allowed suffix)
+      - user.activity.<name> (and with allowed suffix)
+      - user.plan.<name> (and with allowed suffix)
+    Explicitly forbidden:
+      - user.persona.*, memory.*, relationship.*, affect.*, intent.*, decision.*,
+        or unreviewed user.*
+    """
+    if not isinstance(key, str) or not key.strip():
+        raise AuthorityError(f"Reality namespace {key!r} is invalid")
+
+    base = key
+    parts = key.split(".")
+    if len(parts) >= 2 and parts[-1] in ALLOWED_REALITY_SUFFIXES:
+        base = ".".join(parts[:-1])
+
+    is_allowed = False
+    if base == "user.sleep.phase":
+        is_allowed = True
+    else:
+        for prefix in ALLOWED_REALITY_PREFIXES:
+            if base.startswith(prefix) and len(base) > len(prefix):
+                is_allowed = True
+                break
+
+    if not is_allowed:
+        raise AuthorityError(
+            f"Reality namespace {key!r} is not permitted for reality admission"
+        )
 
 
 class FactAdmissionConflictError(RuntimeError):
@@ -408,6 +454,146 @@ class FactIngestService:
                 f"idem-obs-{evidence.id}",
             ),
         )
+
+    def admit_reality(
+        self,
+        request: RealityAdmissionRequest,
+    ) -> FactAdmissionResult:
+        """Admit one bounded reality interpretation of existing user evidence.
+
+        The interpretation is not a new authority source. The original
+        user-message Evidence remains the sole authority and is referenced by
+        the typed Observation. Replay preserves original causal provenance
+        and rejects immutable conflicts.
+        """
+        source_evidence = request.source_evidence
+        if source_evidence.source_type != "user_message":
+            raise AuthorityError("typed reality requires user_message evidence")
+        validate_reality_namespace(request.key)
+        self._authority.require_user_fact(source_evidence)
+        self._ownership.require_owner(
+            source_evidence,
+            writing_runtime=request.writing_runtime,
+            writing_persona_id=request.writing_persona_id,
+        )
+        stored_evidence = self._evidence.get(source_evidence.scope, source_evidence.id)
+        if stored_evidence is None and self._backend is not None:
+            stored_pair = self._backend.find_evidence(source_evidence.scope, source_evidence.id)
+            stored_evidence = stored_pair[0] if stored_pair is not None else None
+        if stored_evidence != source_evidence:
+            raise FactAdmissionConflictError(
+                f"typed reality source evidence {source_evidence.id} was not admitted"
+            )
+
+        # Causal interaction identity is the original Evidence admission interaction,
+        # never the retry / crash turn interaction ID (ADR-0009 §2, MR-REALITY §11.1).
+        original_interaction_id = next(
+            (
+                entry.interaction_id
+                for entry in self._provenance.all()
+                if entry.scope == source_evidence.scope and entry.evidence_id == source_evidence.id
+            ),
+            None,
+        )
+        if self._backend is not None:
+            stored_pair = self._backend.find_evidence(source_evidence.scope, source_evidence.id)
+            if stored_pair is not None:
+                original_interaction_id = stored_pair[1]
+        causal_interaction_id = original_interaction_id or request.interaction_id
+
+        existing = self._observations.get(source_evidence.scope, request.observation_id)
+        if existing is None and self._backend is not None:
+            existing = self._backend.find_observation(source_evidence.scope, request.observation_id)
+        if existing is not None:
+            if (
+                existing.key != request.key
+                or existing.value != request.value
+                or existing.confidence != request.confidence
+                or existing.modality != request.modality
+                or existing.semantic_time != request.semantic_time
+                or existing.effective_window != request.effective_window
+                or existing.evidence_refs != (source_evidence.id,)
+                or existing.observed_at != source_evidence.received_at
+                or existing.interaction_id != causal_interaction_id
+            ):
+                raise FactAdmissionConflictError(
+                    f"reality observation {request.observation_id} conflicts with stored bytes"
+                )
+            return FactAdmissionResult(existing, FactAdmissionDisposition.REPLAY)
+
+        observation = Observation(
+            id=request.observation_id,
+            interaction_id=causal_interaction_id,
+            scope=source_evidence.scope,
+            origin_runtime_id=source_evidence.origin_runtime_id,
+            type="factual",
+            key=request.key,
+            value=request.value,
+            confidence=request.confidence,
+            observed_at=source_evidence.received_at,
+            evidence_refs=(source_evidence.id,),
+            modality=request.modality,
+            semantic_time=request.semantic_time,
+            effective_window=request.effective_window,
+            sync=SyncFields(
+                source_evidence.scope,
+                source_evidence.origin_runtime_id,
+                request.observation_id,
+                1,
+                f"idem-{request.observation_id}",
+            ),
+        )
+        if self._backend is not None and not self._backend.save_observation(observation):
+            winner = self._backend.find_observation(source_evidence.scope, request.observation_id)
+            if winner is None:
+                raise FactAdmissionConflictError(
+                    f"reality observation {request.observation_id} lost durable arbitration"
+                )
+            if (
+                winner.key != observation.key
+                or winner.value != observation.value
+                or winner.confidence != observation.confidence
+                or winner.modality != observation.modality
+                or winner.semantic_time != observation.semantic_time
+                or winner.effective_window != observation.effective_window
+                or winner.evidence_refs != observation.evidence_refs
+                or winner.observed_at != observation.observed_at
+                or winner.interaction_id != observation.interaction_id
+            ):
+                raise FactAdmissionConflictError(
+                    f"reality observation {request.observation_id} conflicts after arbitration"
+                )
+            self._observations.append(winner)
+            return FactAdmissionResult(winner, FactAdmissionDisposition.REPLAY)
+        self._observations.append(observation)
+        return FactAdmissionResult(observation, FactAdmissionDisposition.NEW)
+
+    def admit_typed_reality(
+        self,
+        *,
+        source_evidence: Evidence,
+        interaction_id: str,
+        writing_runtime: str,
+        writing_persona_id: str | None,
+        observation_id: str,
+        key: str,
+        value: object,
+        confidence: float,
+    ) -> FactAdmissionResult:
+        """Admit one bounded reality interpretation of existing user evidence
+        (deprecated; use admit_reality).
+        """
+        req = RealityAdmissionRequest(
+            source_evidence=source_evidence,
+            interaction_id=interaction_id,
+            writing_runtime=writing_runtime,
+            writing_persona_id=writing_persona_id,
+            observation_id=observation_id,
+            key=key,
+            value=value,
+            confidence=confidence,
+        )
+        return self.admit_reality(req)
 
     def admit_operational_fact(
         self,
