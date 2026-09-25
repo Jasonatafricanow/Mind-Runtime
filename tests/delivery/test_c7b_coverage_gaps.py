@@ -52,6 +52,30 @@ def _request(*, request_id: str, body: bytes = b"hello") -> DeliveryRequest:
     )
 
 
+def _receipt(
+    request: DeliveryRequest,
+    *,
+    receipt_id: str = "recpt-1",
+    status: DeliveryStatus = DeliveryStatus.SENT,
+    delivered_at: datetime | None = NOW,
+) -> DeliveryReceipt:
+    return DeliveryReceipt(
+        receipt_id=receipt_id,
+        scope=request.scope,
+        origin_runtime_id=request.origin_runtime_id,
+        message_id=request.message_id,
+        delivery_status=status,
+        delivered_at=delivered_at,
+        sync=SyncFields(
+            request.scope,
+            request.origin_runtime_id,
+            receipt_id,
+            1,
+            f"idem-{receipt_id}",
+        ),
+    )
+
+
 class _RaisingPort:
     def deliver(self, request: DeliveryRequest) -> DeliveryReceipt:
         raise RuntimeError("port implosion")
@@ -274,18 +298,7 @@ def test_persistence_record_receipt_different_bytes_raises(
 
     db_path = tmp_path / "c7b_receipt_collision.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request)
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
@@ -419,18 +432,7 @@ def test_persistence_record_receipt_validation(
 
     db_path = tmp_path / "c7b_recval.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request)
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
@@ -813,18 +815,7 @@ def test_daemon_unsent_receipt_yields_rejected(
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.UNSENT,
-        delivered_at=None,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request, status=DeliveryStatus.UNSENT, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
         now=datetime.now(tz=UTC), attempt=1,
@@ -852,18 +843,7 @@ def test_daemon_sent_receipt_with_collision(
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request)
     # Persist once, then call _apply_receipt — the second call
     # inside _apply_receipt raises ValueError, which is caught
     # and the row stays ACCEPTED.
@@ -900,18 +880,7 @@ def test_daemon_collision_when_receipt_persisted_with_different_attempt(
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -989,18 +958,7 @@ def test_persistence_reopen_fails_when_receipt_status_corrupt(
 
     db_path = tmp_path / "c7b_bad_status.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-bad",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-bad", 1, "idem-recpt-bad",
-        ),
-    )
+    receipt = _receipt(request, receipt_id="recpt-bad")
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
@@ -1132,18 +1090,7 @@ def test_persistence_receipt_reopen_corrupt_sync(
 
     db_path = tmp_path / "c7b_corrupt_rec_sync.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-bad-sync",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-bad-sync", 1, "idem-recpt-bad-sync",
-        ),
-    )
+    receipt = _receipt(request, receipt_id="recpt-bad-sync")
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
@@ -1441,18 +1388,7 @@ def test_persistence_record_receipt_returns_false_on_idempotent(
 
     db_path = tmp_path / "c7b_rec_false.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request)
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
@@ -1575,18 +1511,7 @@ def test_daemon_apply_receipt_sent_no_delivered_at(
     backend.record_request(
         request, lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=None,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    receipt = _receipt(request, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
         now=datetime.now(tz=UTC), attempt=1,
