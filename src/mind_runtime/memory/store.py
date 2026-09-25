@@ -73,6 +73,12 @@ class CanonicalMemoryStore:
                 status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
                 provider_ref TEXT, last_error TEXT,
                 UNIQUE(memory_id, target));
+            CREATE TABLE IF NOT EXISTS thread_update_intents (
+                memory_id TEXT PRIMARY KEY REFERENCES canonical_memory(memory_id),
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                thread_ref TEXT,
+                last_error TEXT);
         """)
 
     @contextmanager
@@ -113,6 +119,10 @@ class CanonicalMemoryStore:
             "INSERT INTO canonical_memory VALUES (?, ?)", (memory.memory_id, payload)
         )
         self.projection_queue()._enqueue(memory.memory_id, "unassigned")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO thread_update_intents(memory_id) VALUES(?)",
+            (memory.memory_id,),
+        )
 
     def _commit(self, memories: tuple[CommittedMemory, ...]) -> None:
         with self._transaction():
@@ -160,6 +170,12 @@ class CanonicalMemoryStore:
             for memory in job[1]:
                 self._insert(memory)
             self._conn.execute("UPDATE admission_jobs SET done=1 WHERE source_key=?", (source_key,))
+
+    def thread_update_queue(self):
+        """Derived Thread maintenance queue; owns no canonical write authority."""
+        from mind_runtime.memory.thread_updates import ThreadUpdateQueue
+
+        return ThreadUpdateQueue(self._conn)
 
     def projection_queue(self) -> "ProjectionQueue":
         """A capability exposing only canonical reads and derived projection writes."""
