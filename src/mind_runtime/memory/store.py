@@ -14,6 +14,7 @@ from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle, Memo
 
 if TYPE_CHECKING:
     from mind_runtime.memory.projection import ProjectionQueue
+    from mind_runtime.memory.thread_updates import ThreadUpdateQueue
 
 
 class MemoryConflict(ValueError):
@@ -171,7 +172,7 @@ class CanonicalMemoryStore:
                 self._insert(memory)
             self._conn.execute("UPDATE admission_jobs SET done=1 WHERE source_key=?", (source_key,))
 
-    def thread_update_queue(self):
+    def thread_update_queue(self) -> "ThreadUpdateQueue":
         """Derived Thread maintenance queue; owns no canonical write authority."""
         from mind_runtime.memory.thread_updates import ThreadUpdateQueue
 
