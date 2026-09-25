@@ -1339,3 +1339,337 @@ class TestSection12ConfigDecoding:
         bad_kind_dict["minimum_initiative"] = 0.4
         with pytest.raises(ValueError):
             _intent_rule(bad_kind_dict, "test.rule")
+
+
+# ==============================================================================
+# SECTION 31: CONTRACT HARDENING AND CONSISTENCY (A through J)
+# ==============================================================================
+
+class TestSection31ContractHardeningAndConsistency:
+    """Dedicated contract tests for MR-INITIATIVE-ADMISSION-GATE-V1-02-CLEANUP."""
+
+    def test_31_a_passed_with_observed_less_than_minimum_raises(self):
+        """A. passed with observed < minimum -> ValueError."""
+        with pytest.raises(ValueError, match="observed .* must be >= minimum"):
+            InitiativeAdmissionTrace(
+                minimum=0.50,
+                observed=0.49,
+                outcome="passed",
+                admission_validation_ref="initiative-gate-valid:dummy",
+            )
+
+    def test_31_b_below_minimum_with_observed_gte_minimum_raises(self):
+        """B. below_minimum with observed >= minimum -> ValueError."""
+        with pytest.raises(ValueError, match="observed .* must be < minimum"):
+            InitiativeAdmissionTrace(
+                minimum=0.50,
+                observed=0.50,
+                outcome="below_minimum",
+                admission_validation_ref="initiative-gate-valid:dummy",
+            )
+
+    def test_31_c_failure_outcome_with_observed_not_none_raises(self):
+        """C. failure outcome with observed != None -> ValueError."""
+        for outcome in ("surface_unavailable", "surface_stale_or_mismatch", "surface_invalid"):
+            with pytest.raises(ValueError, match="observed must be None"):
+                InitiativeAdmissionTrace(
+                    minimum=0.50,
+                    observed=0.50,
+                    outcome=outcome,
+                    admission_validation_ref="initiative-gate-valid:dummy",
+                )
+
+    def test_31_d_score_trace_admitted_true_with_below_minimum_raises(self):
+        """D. IntentScoreTrace admitted=True + below_minimum -> ValueError."""
+        scope = _make_scope()
+        adm = InitiativeAdmissionTrace(
+            minimum=0.50,
+            observed=0.30,
+            outcome="below_minimum",
+            admission_validation_ref="initiative-gate-valid:dummy",
+        )
+        with pytest.raises(ValueError, match="admitted must be False"):
+            IntentScoreTrace(
+                trace_id="tr-test-d",
+                scope=scope,
+                rule_id="rule-test",
+                intent_id="intent-test",
+                contributions=(),
+                unclamped_score=0.3,
+                final_strength=0.3,
+                admitted=True,
+                reason_codes=("threshold_met",),
+                created_at=datetime.now(UTC),
+                surface_admission=adm,
+            )
+
+    def test_31_e_score_trace_admitted_false_with_passed_raises(self):
+        """E. IntentScoreTrace admitted=False + passed -> ValueError."""
+        scope = _make_scope()
+        adm = InitiativeAdmissionTrace(
+            minimum=0.50,
+            observed=0.70,
+            outcome="passed",
+            admission_validation_ref="initiative-gate-valid:dummy",
+        )
+        with pytest.raises(ValueError, match="admitted must be True"):
+            IntentScoreTrace(
+                trace_id="tr-test-e",
+                scope=scope,
+                rule_id="rule-test",
+                intent_id="intent-test",
+                contributions=(),
+                unclamped_score=0.7,
+                final_strength=0.7,
+                admitted=False,
+                reason_codes=("threshold_not_met",),
+                created_at=datetime.now(UTC),
+                surface_admission=adm,
+            )
+
+    def test_31_f_outcome_reason_code_mismatch_raises(self):
+        """F. outcome/reason-code mismatch -> ValueError."""
+        scope = _make_scope()
+        # Case 1: below_minimum with mismatched reason_codes
+        adm_below = InitiativeAdmissionTrace(
+            minimum=0.50,
+            observed=0.30,
+            outcome="below_minimum",
+            admission_validation_ref="initiative-gate-valid:dummy",
+        )
+        with pytest.raises(ValueError, match="initiative_below_minimum"):
+            IntentScoreTrace(
+                trace_id="tr-test-f1",
+                scope=scope,
+                rule_id="rule-test",
+                intent_id="intent-test",
+                contributions=(),
+                unclamped_score=0.3,
+                final_strength=0.3,
+                admitted=False,
+                reason_codes=("some_other_code",),
+                created_at=datetime.now(UTC),
+                surface_admission=adm_below,
+            )
+
+        # Case 2: passed without threshold_met
+        adm_passed = InitiativeAdmissionTrace(
+            minimum=0.50,
+            observed=0.70,
+            outcome="passed",
+            admission_validation_ref="initiative-gate-valid:dummy",
+        )
+        with pytest.raises(ValueError, match="reason_codes must reflect successful threshold admission"):
+            IntentScoreTrace(
+                trace_id="tr-test-f2",
+                scope=scope,
+                rule_id="rule-test",
+                intent_id="intent-test",
+                contributions=(),
+                unclamped_score=0.7,
+                final_strength=0.7,
+                admitted=True,
+                reason_codes=("arbitrary_code",),
+                created_at=datetime.now(UTC),
+                surface_admission=adm_passed,
+            )
+
+        # Case 3: surface_unavailable with mismatched reason_codes
+        adm_unavail = InitiativeAdmissionTrace(
+            minimum=0.50,
+            observed=None,
+            outcome="surface_unavailable",
+            admission_validation_ref="initiative-gate-valid:dummy",
+        )
+        with pytest.raises(ValueError, match="surface_unavailable"):
+            IntentScoreTrace(
+                trace_id="tr-test-f3",
+                scope=scope,
+                rule_id="rule-test",
+                intent_id="intent-test",
+                contributions=(),
+                unclamped_score=0.3,
+                final_strength=0.3,
+                admitted=False,
+                reason_codes=("threshold_not_met",),
+                created_at=datetime.now(UTC),
+                surface_admission=adm_unavail,
+            )
+
+    def test_31_g_same_rule_gate_root_different_weight_yields_different_ref(self):
+        """G. same rule/gate/root but different direct-root weight -> different admission_validation_ref."""
+        rule_a = IntentRule(
+            rule_id="rule-share-test",
+            kind="spontaneous_share",
+            base_strength=0.0,
+            dimension_weights=(("agent.affect.sharing_urge", 0.8),),
+            event_kind=None,
+            event_bonus=0.0,
+            minimum_strength=0.3,
+            due_at_attribute=None,
+            expires_after=timedelta(minutes=30),
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            minimum_initiative=0.50,
+        )
+        rule_b = IntentRule(
+            rule_id="rule-share-test",
+            kind="spontaneous_share",
+            base_strength=0.0,
+            dimension_weights=(("agent.affect.sharing_urge", 1.0),),
+            event_kind=None,
+            event_bonus=0.0,
+            minimum_strength=0.3,
+            due_at_attribute=None,
+            expires_after=timedelta(minutes=30),
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            minimum_initiative=0.50,
+        )
+        ref_a = admission_validation_reference(rule_a)
+        ref_b = admission_validation_reference(rule_b)
+        assert ref_a != ref_b
+
+    def test_31_h_same_rule_declaration_deterministic_identical_ref(self):
+        """H. same rule declaration -> deterministic identical admission_validation_ref."""
+        rule = IntentRule(
+            rule_id="rule-share-test",
+            kind="spontaneous_share",
+            base_strength=0.0,
+            dimension_weights=(("agent.affect.sharing_urge", 0.8),),
+            event_kind=None,
+            event_bonus=0.0,
+            minimum_strength=0.3,
+            due_at_attribute=None,
+            expires_after=timedelta(minutes=30),
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            minimum_initiative=0.50,
+        )
+        ref1 = admission_validation_reference(rule)
+        ref2 = admission_validation_reference(rule)
+        assert ref1 == ref2
+
+    def test_31_i_valid_engine_generated_gate_traces_pass_all_contracts(self):
+        """I. valid engine-generated gate traces still pass all contracts."""
+        scope = _make_scope()
+        now = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
+        situation = _make_situation(now, scope)
+        rule = IntentRule(
+            rule_id="rule-share-gate",
+            kind="spontaneous_share",
+            base_strength=0.0,
+            dimension_weights=(("agent.affect.sharing_urge", 1.0),),
+            event_kind=None,
+            event_bonus=0.0,
+            minimum_strength=0.3,
+            due_at_attribute=None,
+            expires_after=timedelta(minutes=30),
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            minimum_initiative=0.4,
+        )
+        engine = DeterministicIntentEngine(runtime_id=FIXTURE_RUNTIME_ID, rules=(rule,))
+
+        # Pass condition: sharing_urge=0.8, curiosity=0.2, sadness=0.0 -> initiative high
+        projected_pass, surface_pass = _build_projected_and_surface(
+            sharing_urge=0.8, curiosity=0.2, sadness=0.0
+        )
+        inp_pass = _make_engine_input(
+            scope=scope,
+            situation=situation,
+            projected=projected_pass,
+            surface=surface_pass,
+            clock=now,
+        )
+        res_pass = engine.evaluate(inp_pass)
+        assert len(res_pass.candidates) == 1
+        trace_pass = res_pass.traces[0]
+        assert trace_pass.admitted is True
+        assert trace_pass.surface_admission is not None
+        assert trace_pass.surface_admission.outcome == "passed"
+        assert trace_pass.surface_admission.observed is not None
+        assert trace_pass.surface_admission.observed >= trace_pass.surface_admission.minimum
+        assert "threshold_met" in trace_pass.reason_codes
+
+        # Fail condition: sharing_urge=0.5 (meets minimum_strength 0.3), curiosity=0.0, sadness=0.8 -> initiative 0.10 < 0.4
+        projected_fail, surface_fail = _build_projected_and_surface(
+            sharing_urge=0.5, curiosity=0.0, sadness=0.8
+        )
+        inp_fail = _make_engine_input(
+            scope=scope,
+            situation=situation,
+            projected=projected_fail,
+            surface=surface_fail,
+            clock=now,
+        )
+        res_fail = engine.evaluate(inp_fail)
+        assert len(res_fail.candidates) == 0
+        trace_fail = res_fail.traces[0]
+        assert trace_fail.admitted is False
+        assert trace_fail.surface_admission is not None
+        assert trace_fail.surface_admission.outcome == "below_minimum"
+        assert trace_fail.surface_admission.observed is not None
+        assert trace_fail.surface_admission.observed < trace_fail.surface_admission.minimum
+        assert trace_fail.reason_codes == ("initiative_below_minimum",)
+
+    def test_31_j_persistence_rejects_contradictory_tampered_admission_evidence(self):
+        """J. persistence rejects contradictory/tampered admission evidence on reload."""
+        scope = _make_scope()
+        now = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
+        backend = SqliteIntentBackend(":memory:")
+
+        intent = Intent(
+            intent_id="intent-persist-tamper",
+            scope=scope,
+            origin_runtime_id=FIXTURE_RUNTIME_ID,
+            kind="spontaneous_share",
+            strength=0.8,
+            earliest_at=None,
+            due_at=None,
+            expires_at=now + timedelta(hours=1),
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            cause_refs=(),
+            state_refs=(),
+            status=IntentStatus.CANDIDATE,
+            sync=SyncFields(scope, FIXTURE_RUNTIME_ID, "intent-persist-tamper", 1, "idem-tamper"),
+        )
+        backend.append_initial(intent)
+
+        # Forge contradictory surface_use JSON where outcome is "passed" but observed < minimum
+        contradictory_data = {
+            "trace_id": "tr-tampered",
+            "rule_id": "rule-share",
+            "intent_id": "intent-persist-tamper",
+            "contributions": [["agent.affect.sharing_urge", 0.8, 0.8]],
+            "unclamped_score": 0.8,
+            "final_strength": 0.8,
+            "admitted": True,
+            "reason_codes": ["threshold_met"],
+            "created_at": now.isoformat(),
+            "surface_controls_ref": None,
+            "surface_dependency_digest": None,
+            "overlap_validation_ref": None,
+            "surface_weights": [],
+            "surface_recipe_ref": None,
+            "ruleset_ref": None,
+            "surface_admission": {
+                "control": "initiative",
+                "comparator": "gte",
+                "minimum": 0.50,
+                "observed": 0.40,  # Contradiction: passed but observed < minimum
+                "outcome": "passed",
+                "admission_validation_ref": "initiative-gate-valid:dummy",
+            },
+        }
+        contradictory_json = json.dumps(contradictory_data)
+
+        # 1. Direct deserialization helper rejects it
+        with pytest.raises(ValueError, match="invalid durable Intent Surface-use evidence"):
+            _surface_use_from_json(contradictory_json, scope)
+
+        # 2. Sqlite update + backend reload rejects it
+        with backend._conn as conn:
+            conn.execute(
+                "UPDATE intents SET surface_use = ? WHERE intent_id = ?",
+                (contradictory_json, "intent-persist-tamper"),
+            )
+        with pytest.raises(ValueError, match="invalid durable Intent Surface-use evidence"):
+            backend.history(scope, "intent-persist-tamper")
+

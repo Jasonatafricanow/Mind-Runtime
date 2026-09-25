@@ -147,12 +147,15 @@ def admission_validation_reference(rule: Any) -> str:
         else getattr(rule, "dimension_weights", ())
     )
     dw_items = list(dw.items()) if isinstance(dw, Mapping) else list(dw)
-    direct_roots = sorted(name for name, _ in dw_items)
+    direct_scoring_roots = sorted(
+        [[str(name), float(weight)] for name, weight in dw_items],
+        key=lambda item: item[0],
+    )
 
     payload = {
         "rule_id": rule_id,
         "kind": kind,
-        "direct_roots": direct_roots,
+        "direct_scoring_roots": direct_scoring_roots,
         "control": "initiative",
         "comparator": "gte",
         "minimum_initiative": float(min_init),

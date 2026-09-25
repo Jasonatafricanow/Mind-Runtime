@@ -308,7 +308,7 @@ domain-specific Dynamics root
    - SQLite JSON `surface_use` byte-identical to legacy serialization when `surface_admission is None`.
 7. **Downstream Isolation**:
    Gate rejection suppresses candidate emission (`candidates=()`), lifecycle admission, policy evaluation, and WakeSignal generation.
-   ActionPolicy, Ticker, Surface recipe, expression map, and certified manifest remain untouched.
+   ActionPolicy, Surface recipe, expression map, and certified manifest remain untouched. CognitiveTicker and orchestrator behavioral semantics remain unchanged; the existing observer/audit seam was extended to retain current IntentEngine traces.
 8. **Audit & Activation Status**:
    - `ROOT_OVERLAP_POLICY = "CONDITIONAL"`
    - `REJECTED_TRACE_AUDIT_SEAM = "REUSED"`

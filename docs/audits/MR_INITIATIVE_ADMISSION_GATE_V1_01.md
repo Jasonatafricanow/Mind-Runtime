@@ -22,7 +22,7 @@ The implementation respects all non-negotiable architectural boundaries:
 - **Fail-Closed Lineage Validation**: Rejects unadmitted motives upon missing surface (`surface_unavailable`), malformed/tampered surface controls (`surface_invalid`), or stale/mismatched execution lineage (`surface_stale_or_mismatch`).
 - **Conditional Overlap Policy (`ROOT_OVERLAP_POLICY=CONDITIONAL`)**: Independent admission threshold inspection is permitted on gated rules (`minimum_initiative`), while direct score contributions (`surface_control_weights`) remain strictly rejected.
 - **100% Backward Compatibility**: Wire ruleset reference calculation and SQLite JSON persistence remain byte-identical when `minimum_initiative` / `surface_admission` is `None`.
-- **Zero Perturbation of Excluded Components**: Candidate Recipe v2, Expression Map v2, ActionPolicy, CognitiveTicker, Host, and the certified production manifest (`certification/d11s/inputs/runtime-config.json`) remain untouched.
+- **Zero Perturbation of Excluded Components**: Candidate Recipe v2, Expression Map v2, ActionPolicy, Host, and the certified production manifest (`certification/d11s/inputs/runtime-config.json`) remain untouched. CognitiveTicker and orchestrator behavioral semantics remain unchanged; the existing observer/audit seam was extended to retain current IntentEngine traces.
 
 ---
 

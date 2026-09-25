@@ -324,7 +324,7 @@ domain-specific Dynamics root
    - Stale/mismatched runtime, interaction, persona, projection, or state version → `surface_stale_or_mismatch`
 4. **Downstream Isolation**:
    - Gate rejection results in `candidates=()`, suppressing downstream ActionPolicy, lifecycle admission, and WakeSignal emission.
-   - ActionPolicy, Ticker, Surface recipe, expression map, and certified manifest remain untouched.
+   - ActionPolicy, Surface recipe, expression map, and certified manifest remain untouched. CognitiveTicker and orchestrator behavioral semantics remain unchanged; the existing observer/audit seam was extended to retain current IntentEngine traces.
 5. **Persistence Compatibility**:
    - Legacy `ruleset_ref` byte-identical when `minimum_initiative is None`.
    - Legacy SQLite JSON `surface_use` byte-identical when `surface_admission is None`.
