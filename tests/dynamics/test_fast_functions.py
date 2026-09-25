@@ -36,7 +36,6 @@ from mind_runtime.dynamics.fast_functions import (
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
-    validate_anger_boundary_pressure_invariant,
     validate_curiosity_anti_spam_invariant,
     validate_diligence_anti_spam_invariant,
     validate_sharing_urge_anti_spam_invariant,
@@ -307,7 +306,7 @@ def test_anger_maps_to_boundary_confrontation() -> None:
     """anger maps to BOUNDARY_CONFRONTATION and preserves pressure != permission invariant."""
     spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.anger"]
     assert spec.function_kind == FastFunctionKind.BOUNDARY_CONFRONTATION
-    assert spec.primary_consumer == "existing Surface / Intent / expression path"
+    assert spec.primary_consumer == "Surface confrontation / expression directness path"
     assert spec.external_action_capable is True
     assert spec.status == FastStateStatus.ACTIVE
 
@@ -319,22 +318,10 @@ def test_anger_maps_to_boundary_confrontation() -> None:
         ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION
         == ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
     )
-    assert validate_anger_boundary_pressure_invariant(
-        confrontation_score=0.9,
-        action_permission=False,
-        policy_authorized=False,
-    ) is True
-    assert validate_anger_boundary_pressure_invariant(
-        confrontation_score=0.9,
-        action_permission=True,
-        policy_authorized=True,
-    ) is True
-    with pytest.raises(ValueError, match="Anger boundary pressure invariant violation"):
-        validate_anger_boundary_pressure_invariant(
-            confrontation_score=0.9,
-            action_permission=True,
-            policy_authorized=False,
-        )
+    assert "Surface/expression branch closed" in spec.notes
+    assert "confrontation is Intent-eligible" in spec.notes
+    assert "concrete boundary Intent branch is deferred" in spec.notes
+    assert "no authoritative boundary-event-to-Intent binding exists" in spec.notes
 
 
 def test_fast_function_v1_count_constant() -> None:

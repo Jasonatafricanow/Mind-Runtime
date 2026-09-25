@@ -165,25 +165,6 @@ def validate_curiosity_anti_spam_invariant(
     return True
 
 
-def validate_anger_boundary_pressure_invariant(
-    *,
-    confrontation_score: float,
-    action_permission: bool,
-    policy_authorized: bool,
-) -> bool:
-    """Explicit executable invariant: ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION.
-
-    Higher anger / confrontation pressure increases qualitative directness and expression guidance,
-    but MUST NOT grant ActionPolicy permission without independent policy rule authorization.
-    """
-    if action_permission and not policy_authorized:
-        raise ValueError(
-            f"Anger boundary pressure invariant violation: action_permission granted without "
-            f"independent policy authorization under confrontation_score={confrontation_score}"
-        )
-    return True
-
-
 FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
     FastStateFunctionSpec(
         state_key="agent.affect.longing",
@@ -231,14 +212,15 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         state_key="agent.affect.anger",
         semantic_label="anger / boundary pressure",
         function_kind=FastFunctionKind.BOUNDARY_CONFRONTATION,
-        primary_consumer="existing Surface / Intent / expression path",
+        primary_consumer="Surface confrontation / expression directness path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
         notes=(
             "Invariant: ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION. "
-            "Anger drives boundary confrontation pressure via Surface (confrontation -> qualitative directness), "
-            "dampens expressive warmth and contact seeking, but has zero authority to grant ActionPolicy permission, "
-            "initiate autonomous confrontation, or fabricate boundary violation evidence."
+            "Surface/expression branch closed via confrontation -> qualitative directness mapping "
+            "and expressive warmth/contact dampening. Intent capability exists structurally because "
+            "confrontation is Intent-eligible, but concrete boundary Intent branch is deferred "
+            "because no authoritative boundary-event-to-Intent binding exists."
         ),
     ),
     FastStateFunctionSpec(
