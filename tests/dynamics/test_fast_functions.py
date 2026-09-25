@@ -17,6 +17,7 @@ L. existing Surface/Intent tests remain green (checked in regression run).
 
 import ast
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -241,3 +242,29 @@ def test_registry_immutability_and_lookup() -> None:
     )
     with pytest.raises(ValueError, match="duplicate function kind"):
         FastFunctionRegistry((spec, duplicate_kind_spec))
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"state_key": "user.affect.longing"}, "state_key must use"),
+        ({"semantic_label": "   "}, "semantic_label must be non-empty"),
+        ({"function_kind": "NOT_A_FUNCTION"}, "function_kind must be"),
+        ({"primary_consumer": "   "}, "primary_consumer must be non-empty"),
+    ],
+)
+def test_registry_rejects_malformed_function_specs(change, reason) -> None:
+    with pytest.raises(ValueError, match=reason):
+        replace(FAST_FUNCTION_V1_SPECS[0], **change)
+
+
+def test_registry_mapping_get_preserves_explicit_default() -> None:
+    sentinel = FAST_FUNCTION_V1_SPECS[0]
+    assert FAST_FUNCTION_V1_REGISTRY.get("agent.affect.missing", sentinel) is sentinel
+
+
+def test_registry_requires_present_function_binding() -> None:
+    empty = FastFunctionRegistry(())
+    assert empty.get_by_function(FastFunctionKind.ACTIVITY_WAKE) is None
+    with pytest.raises(KeyError, match="no fast function registered"):
+        empty.require_by_function(FastFunctionKind.ACTIVITY_WAKE)
