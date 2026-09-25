@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -26,7 +27,12 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
-    from lce.contracts.consolidation import ConsolidationResult, SemanticConsolidatorPort
+    from lce.contracts.baseline import Baseline
+    from lce.contracts.consolidation import (
+        CandidateBaseline,
+        ConsolidationResult,
+        SemanticConsolidatorPort,
+    )
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
     from lce.store.sqlite_store import SqliteBaselineStore
@@ -128,10 +134,16 @@ class LceAcceptedUnderstanding:
 class _PrecomputedThreadConsolidator:
     """Return an already-reasoned Thread product without invoking a model."""
 
-    def __init__(self, candidate: object) -> None:
+    def __init__(self, candidate: CandidateBaseline) -> None:
         self._candidate = candidate
 
-    def consolidate(self, *, memories, previous_baseline, context=None):
+    def consolidate(
+        self,
+        *,
+        memories: tuple[MemoryItemView, ...],
+        previous_baseline: Baseline | None,
+        context: Mapping[str, object] | None = None,
+    ) -> CandidateBaseline:
         del memories, previous_baseline, context
         return self._candidate
 
@@ -211,7 +223,7 @@ class LceBindingSession:
 
     @property
     def db_path(self) -> Path:
-        return self._store.db_path
+        return Path(self._store.db_path)
 
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4
@@ -239,7 +251,7 @@ class LceThreadHandoffSession:
 
     @property
     def db_path(self) -> Path:
-        return self._store.db_path
+        return Path(self._store.db_path)
 
     def handoff_thread(self, thread: MemoryThread) -> ConsolidationResult:
         if not isinstance(thread, MemoryThread):
