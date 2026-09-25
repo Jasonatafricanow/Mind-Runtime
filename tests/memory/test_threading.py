@@ -9,7 +9,6 @@ from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.memory.threading import ThreadAutoUpdateService
 from tests.memory.test_contracts import memory
 
-
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
 
