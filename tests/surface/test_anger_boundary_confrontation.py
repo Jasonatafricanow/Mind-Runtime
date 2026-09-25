@@ -18,7 +18,7 @@ Covers Sections 15 through 18:
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +27,11 @@ import pytest
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPermission,
+    ActionPolicyInput,
     ActionPolicyResult,
     Intent,
     IntentStatus,
+    PolicyResources,
     ProjectedMindState,
     ReconsiderationPolicy,
     RuntimeState,
@@ -46,7 +48,6 @@ from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_SPECS,
     FastFunctionKind,
     FastStateStatus,
-    validate_anger_boundary_pressure_invariant,
 )
 from mind_runtime.expression.context import (
     DecisionContextCompiler,
@@ -67,6 +68,7 @@ from mind_runtime.expression.expression_map import (
     map_surface_to_qualitative_guidance,
 )
 from mind_runtime.expression.renderer import DeterministicContextRenderer
+from mind_runtime.intents.policy import ActionPolicyConfig, DeterministicActionPolicy
 from mind_runtime.intents.surface_validator import (
     ELIGIBLE_INTENT_SURFACE_CONTROLS,
     get_control_transitive_roots,
@@ -77,8 +79,8 @@ from mind_runtime.surface.recipe import MANIFEST
 from tests.surface.spec_support import sample_candidate, state, trait
 
 # Authoritative audit status constants
-BOUNDARY_EVENT_AUTHORITY: str = "NONE"
-ANGER_INTENT_BRANCH: str = "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"
+BOUNDARY_EVENT_TO_INTENT_AUTHORITY: str = "NONE"
+ANGER_INTENT_BRANCH: str = "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
 ANGER_EXPRESSION_BRANCH: str = "CLOSED"
 FINAL_VERDICT: str = "ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED"
 
@@ -251,8 +253,11 @@ def test_b_anger_maps_to_boundary_confrontation_active() -> None:
     assert spec.function_kind == FastFunctionKind.BOUNDARY_CONFRONTATION
     assert spec.status == FastStateStatus.ACTIVE
     assert spec.external_action_capable is True
-    assert "Surface" in spec.primary_consumer
-    assert "expression" in spec.primary_consumer
+    assert spec.primary_consumer == "Surface confrontation / expression directness path"
+    assert "Surface/expression branch closed" in spec.notes
+    assert "confrontation is Intent-eligible" in spec.notes
+    assert "concrete boundary Intent branch is deferred" in spec.notes
+    assert "no authoritative boundary-event-to-Intent binding exists" in spec.notes
 
     # Frozen invariant constant
     assert (
@@ -534,40 +539,90 @@ def test_p_renderer_isolation_and_zero_anger_leak() -> None:
 
 def test_q_high_confrontation_alone_cannot_produce_action_permission() -> None:
     """Q. Elevated anger / confrontation pressure alone CANNOT produce ActionPermission.ALLOW."""
-    # Anti-spam executable invariant check
-    assert validate_anger_boundary_pressure_invariant(
-        confrontation_score=0.95,
-        action_permission=False,
-        policy_authorized=False,
-    ) is True
-
-    # Attempting to grant permission without policy authorization MUST raise
-    with pytest.raises(ValueError, match="Anger boundary pressure invariant violation"):
-        validate_anger_boundary_pressure_invariant(
-            confrontation_score=0.95,
-            action_permission=True,
-            policy_authorized=False,
-        )
+    assert (
+        ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+        == "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
+    )
+    # ActionPolicy alone owns action permissions; Surface/confrontation has zero permission authority.
+    now = datetime(2026, 9, 25, 10, 0, 0, tzinfo=UTC)
+    scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-a")
+    policy = DeterministicActionPolicy(
+        ActionPolicyConfig(
+            rules=(),  # No rule authorizes confrontation actions
+            proactive_cooldown=timedelta(seconds=1800),
+        ),
+        "rt-1",
+    )
+    # Even if an intent carried high confrontation strength, ActionPolicy DENIES with no matching rule
+    intent = Intent(
+        intent_id="intent-confrontation-1",
+        scope=scope,
+        origin_runtime_id="rt-1",
+        kind="assert_boundary",
+        strength=0.99,
+        earliest_at=None,
+        due_at=None,
+        expires_at=None,
+        reconsideration_policy=ReconsiderationPolicy.ON_CONTEXT_CHANGE,
+        cause_refs=(),
+        state_refs=(),
+        status=IntentStatus.ALLOWED,
+        sync=SyncFields(scope, "rt-1", "intent-confrontation-1", 1, "idem-1"),
+    )
+    policy_input = ActionPolicyInput(
+        intent=intent,
+        context=Situation(
+            situation_id="sit-1",
+            scope=scope,
+            origin_runtime_id="rt-1",
+            derived_facts=(),
+            effective_state_ref="ref-1",
+            observed_at=now,
+            historical_context=None,
+            persona_id=scope.persona_id,
+            relationship_ids=(),
+            evidence_refs=(),
+        ),
+        scope=scope,
+        clock=now,
+        resources=PolicyResources(available_actions=frozenset({"text_message"})),
+    )
+    result = policy.policy(policy_input)
+    assert result.decision == ActionDecision.DENY
+    assert result.permission.allowed is False
 
 
 def test_r_directness_guidance_cannot_construct_action_allow() -> None:
-    """R. Qualitative directness guidance cannot construct ActionPolicyResult(ALLOW)."""
-    # map_surface_to_qualitative_guidance returns str band, not ActionPolicyResult
+    """R. Qualitative directness mapping produces qualitative text guidance only, no action permission."""
+    from mind_runtime.expression import expression_map
+
+    # 1. Structural evidence: expression_map defines only qualitative bands and bundles
+    assert not hasattr(expression_map, "ActionPolicy")
+    assert not hasattr(expression_map, "ActionPermission")
+    assert not hasattr(expression_map, "ActionDecision")
+
+    # 2. directness mapping returns qualitative string values only ("low" | "moderate" | "high")
     guidance = map_surface_to_qualitative_guidance(
-        {"status": "AVAILABLE", "controls": {
-            "recipe_id": CANDIDATE_RECIPE_ID,
-            "recipe_version": CANDIDATE_RECIPE_VERSION,
-            "recipe_digest": CANDIDATE_RECIPE_DIGEST,
-            "values": {
-                "confrontation": 0.85,
-                "expressive_warmth": 0.2,
-                "expressive_restraint": 0.3,
+        {
+            "status": "AVAILABLE",
+            "controls": {
+                "recipe_id": CANDIDATE_RECIPE_ID,
+                "recipe_version": CANDIDATE_RECIPE_VERSION,
+                "recipe_digest": CANDIDATE_RECIPE_DIGEST,
+                "values": {
+                    "confrontation": 0.85,
+                    "expressive_warmth": 0.2,
+                    "expressive_restraint": 0.3,
+                },
             },
-        }}
+        }
     )
     assert guidance["directness"] == "high"
-    assert not hasattr(guidance, "decision")
-    assert not hasattr(guidance, "permission")
+    assert isinstance(guidance["directness"], str)
+    assert guidance["directness"] in {"low", "moderate", "high"}
+
+    # 3. Directness guidance is purely string data for provider realization, incapable of granting action permission
+    assert not isinstance(guidance["directness"], ActionPermission)
 
 
 def test_s_directness_guidance_cannot_emit_wake_signal() -> None:
@@ -679,14 +734,62 @@ def test_x_certified_manifest_has_no_boundary_action_policy_rule() -> None:
     assert "boundary_assertion" not in action_types
 
 
-def test_y_no_boundary_event_authority_in_codebase() -> None:
-    """Y. No boundary violation event authority exists in the codebase."""
-    assert BOUNDARY_EVENT_AUTHORITY == "NONE"
+def test_y_no_certified_boundary_event_to_intent_authority() -> None:
+    """Y. Certified manifest and source configuration contain zero boundary-event-to-Intent bindings."""
+    manifest_path = Path("certification/d11s/inputs/runtime-config.json")
+    assert manifest_path.exists(), f"Missing manifest: {manifest_path}"
+    with open(manifest_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+    # A. Decode certified runtime manifest components
+    intent_comp = next(
+        c for c in config.get("components", []) if c.get("component_id") == "intent_engine"
+    )
+    action_comp = next(
+        c for c in config.get("components", []) if c.get("component_id") == "action_policy"
+    )
+    intent_rules = intent_comp.get("payload", {}).get("rules", [])
+    action_rules = action_comp.get("payload", {}).get("rules", [])
+
+    # B. Verify no IntentRule has a boundary/confrontation event_kind
+    for r in intent_rules:
+        event_kind = r.get("event_kind")
+        if event_kind is not None:
+            assert "boundary" not in event_kind.lower()
+            assert "confrontation" not in event_kind.lower()
+            assert "anger" not in event_kind.lower()
+
+    # C. Verify no IntentRule consumes Surface.confrontation
+    for r in intent_rules:
+        surface_weights = dict(r.get("surface_control_weights", []))
+        assert "confrontation" not in surface_weights
+
+    # D. Verify no ActionPolicy rule defines boundary assertion/confrontation action
+    for r in action_rules:
+        action_type = r.get("action_type", "")
+        intent_kind = r.get("intent_kind", "")
+        assert "boundary" not in action_type.lower()
+        assert "confrontation" not in action_type.lower()
+        assert "boundary" not in intent_kind.lower()
+        assert "confrontation" not in intent_kind.lower()
+
+    # E. Verify no certified event->Intent binding for boundary assertion exists
+    boundary_event_bindings = [
+        r for r in intent_rules
+        if r.get("event_kind")
+        and ("boundary" in r["event_kind"].lower() or "confrontation" in r["event_kind"].lower())
+    ]
+    assert len(boundary_event_bindings) == 0
+
+    # Note: Generic SemanticEventCandidate system exists with open kind: str,
+    # but there is currently no certified/configured authoritative mapping:
+    # boundary semantic event -> boundary Intent -> boundary action.
+    assert BOUNDARY_EVENT_TO_INTENT_AUTHORITY == "NONE"
 
 
 def test_z_anger_intent_branch_deferred_constant() -> None:
     """Z. Autonomous boundary confrontation intent branch is recorded as deferred."""
-    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"
+    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
 
 
 def test_aa_confrontation_is_eligible_intent_surface_control() -> None:
@@ -709,5 +812,6 @@ def test_ab_overlap_protection_rejects_cross_talk() -> None:
 def test_ac_anger_consumer_verdict_closed_intent_deferred() -> None:
     """AC. Final audit verdict is ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED."""
     assert ANGER_EXPRESSION_BRANCH == "CLOSED"
-    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"
+    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
+    assert BOUNDARY_EVENT_TO_INTENT_AUTHORITY == "NONE"
     assert FINAL_VERDICT == "ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED"

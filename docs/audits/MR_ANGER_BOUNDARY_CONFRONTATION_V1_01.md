@@ -8,7 +8,7 @@
 **Worktree**: `C:\projects\mind-runtime-main-merge\.worktrees\mr-anger-boundary-confrontation-v1-01`  
 **Code Verdict**: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`  
 **Expression Branch Verdict**: `CLOSED`  
-**Intent Branch Verdict**: `DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY`  
+**Intent Branch Verdict**: `DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY`  
 **Final Verdict**: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`  
 
 ---
@@ -35,10 +35,10 @@ In V1, anger functions strictly as boundary confrontation pressure, expression d
      - $\text{expressive\_warmth}$ includes term $-0.25 \times \text{anger}$
 
 2. **Intent Branch (Deferred)**:
-   - **No Boundary Event Authority**: There is no authoritative external or internal event type distinguishing "anger is elevated" from "a boundary violation has occurred requiring autonomous assertion" (`BOUNDARY_EVENT_AUTHORITY = "NONE"`).
+   - **No Certified Boundary Event-to-Intent Authority**: There is no authoritative mapping from boundary event candidates to Intent rules distinguishing "anger is elevated" from "a boundary assertion is warranted" (`BOUNDARY_EVENT_TO_INTENT_AUTHORITY = "NONE"`). Intent capability exists structurally because confrontation is Intent-eligible, but the concrete boundary Intent branch is deferred because no certified boundary-event-to-Intent binding exists.
    - **No Certified Intent / Action Policy Rules**: The certified manifest (`certification/d11s/inputs/runtime-config.json`) configures only `respond` and `scheduled_follow_up` Intent rules, and only `text_message` ActionPolicy rules. Zero boundary confrontation rules exist (`BOUNDARY_INTENT_RULE = "NONE"`, `BOUNDARY_ACTION_POLICY_RULE = "NONE"`).
    - **No Fourth Proactive Consumer Merely for Symmetry**: Mind Runtime rejects inventing an unanchored proactive message action (`proactive_confrontation` or `assert_boundary`) purely to match longing, sharing urge, or curiosity.
-   - Formal Deferral Record: `ANGER_INTENT_BRANCH = "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"`.
+   - Formal Deferral Record: `ANGER_INTENT_BRANCH = "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"`.
 
 3. **Core Authority Invariant**:
    $$\text{ANGER\_CONTROLS\_BOUNDARY\_PRESSURE} \neq \text{ANGER\_GRANTS\_ACTION\_PERMISSION}$$
@@ -68,8 +68,8 @@ agent.affect.anger (Dynamics)
 
 ### 3.1 Authority Separation Invariant
 - Constant: `ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT = "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"`.
-- Validated via `validate_anger_boundary_pressure_invariant`:
-  Attempting to grant action permission based on anger/confrontation without independent `ActionPolicy` rule authorization immediately raises `ValueError`.
+- Structural and Policy Invariant:
+  Evaluated against real `DeterministicActionPolicy(..., "rt-1")` with unconfigured boundary actions, returning `ActionDecision.DENY` (`permission.allowed is False`). In addition, `expression_map` imports zero ActionPolicy types and exports only qualitative string guidance, proving expression guidance has zero authority to grant action permission.
 
 ### 3.2 Candidate Recipe v2 and Expression Map v2 Integrity
 - `CANDIDATE_RECIPE_ID = "surface-v1-candidate"`, `version = 2`
@@ -130,7 +130,7 @@ All 29 tests passed cleanly:
 22. `test_v_surface_overlap_validator_rejects_overlapping_roots`
 23. `test_w_certified_manifest_has_no_confrontation_intent_rule`
 24. `test_x_certified_manifest_has_no_boundary_action_policy_rule`
-25. `test_y_no_boundary_event_authority_in_codebase`
+25. `test_y_no_certified_boundary_event_to_intent_authority`
 26. `test_z_anger_intent_branch_deferred_constant`
 27. `test_aa_confrontation_is_eligible_intent_surface_control`
 28. `test_ab_overlap_protection_rejects_cross_talk`
@@ -154,11 +154,11 @@ All 16 tests passed cleanly, including:
 
 The Intent branch for `agent.affect.anger` is explicitly recorded as deferred:
 ```text
-ANGER_INTENT_BRANCH = "DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY"
+ANGER_INTENT_BRANCH = "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
 ```
 
 ### Criteria for Reopening Intent Branch in Future (V2+):
-1. **Authoritative Event Definition**: Formal ADR establishing an external boundary violation event schema (e.g. `USER_BOUNDARY_VIOLATION`, `SAFETY_LIMIT_REACHED`) with rigorous verification against synthetic fact injection.
+1. **Authoritative Event-to-Intent Binding Definition**: Formal ADR establishing an external boundary violation event schema (e.g. `USER_BOUNDARY_VIOLATION`, `SAFETY_LIMIT_REACHED`) and its binding to Intent rules, with rigorous verification against synthetic fact injection.
 2. **Intent Engine Rule Calibration**: Empirical calibration of candidate scoring rules and thresholds to prevent boundary assertion hair-triggers.
 3. **ActionPolicy Cooldown and Budget Rules**: Explicit policy rules defining cooldown, interruption norms, and safety permissions for assertive messaging.
 4. **Certified Manifest Update**: Explicit promotion through certification without destabilizing existing companions.
@@ -173,9 +173,10 @@ Until all four criteria are satisfied, anger remains closed on the expression pl
 |---|---|:---:|
 | `FAST_STATE_KEY` | `agent.affect.anger` | Admitted |
 | `FUNCTION_KIND` | `BOUNDARY_CONFRONTATION` | Admitted |
+| `PRIMARY_CONSUMER` | `Surface confrontation / expression directness path` | Verified |
 | `EXPRESSION_BRANCH` | `CLOSED` | Verified |
-| `INTENT_BRANCH` | `DEFERRED_NO_BOUNDARY_EVENT_AUTHORITY` | Verified |
-| `BOUNDARY_EVENT_AUTHORITY` | `NONE` | Verified |
+| `INTENT_BRANCH` | `DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY` | Verified |
+| `BOUNDARY_EVENT_TO_INTENT_AUTHORITY` | `NONE` | Verified |
 | `BOUNDARY_INTENT_RULE` | `NONE` | Verified |
 | `BOUNDARY_ACTION_POLICY_RULE` | `NONE` | Verified |
 | `AUTHORITY_INVARIANT` | `ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION` | Verified |
