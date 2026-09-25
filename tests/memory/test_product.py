@@ -1,7 +1,7 @@
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 import json
 import sqlite3
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
