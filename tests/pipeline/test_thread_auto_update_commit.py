@@ -9,7 +9,6 @@ from tests.golden.fixtures.common import make_evidence
 from tests.pipeline.test_fact_admission_turn import make_interaction, make_orchestrator
 from tests.support.fake_clock import FakeClock
 
-
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
 
