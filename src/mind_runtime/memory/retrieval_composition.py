@@ -254,7 +254,12 @@ def build_memory_history(
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
 ) -> HistoricalContextPort:
-    """Compose raw Memory retrieval and accepted LCE cognition independently."""
+    """Expose the Memory subsystem's single outward historical-context boundary.
+
+    Accepted compiled cognition is preferred; canonical Memory retrieval fills
+    the remaining bounded budget. Thread remains an internal temporary
+    projection and is not dumped wholesale into model context.
+    """
     if type(lce_enabled) is not bool:
         raise TypeError("lce_enabled must be bool")
     if (provider is None or isinstance(provider, NullRetrievalProvider)) and not lce_enabled:
