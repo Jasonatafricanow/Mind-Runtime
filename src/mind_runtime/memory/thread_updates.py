@@ -416,14 +416,14 @@ class DeterministicThreadUpdater:
         assert decision.thread_id is not None
         if decision.action is ThreadUpdateAction.OPEN:
             assert decision.open_question is not None
-            thread = self._product.open_thread(
+            opened = self._product.open_thread(
                 thread_id=decision.thread_id,
                 scope=memory.scope,
                 open_question=decision.open_question,
                 supporting_memory_ids=(memory.memory_id,),
                 at=memory.committed_at,
             )
-            return f"thread-v1:open:{thread.thread_id}"
+            return f"thread-v1:open:{opened.thread_id}"
 
         thread = self._product.get_thread(decision.thread_id)
         if thread is None:
