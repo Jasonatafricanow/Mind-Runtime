@@ -30,15 +30,15 @@ def test_bound_fact_composition_default_off_and_explicit_on(tmp_path, monkeypatc
     store.close()
 
 
-def test_thread_projection_composition_flags_are_typed():
+def test_thread_projection_composition_keeps_compiler_behind_port():
     from mind_runtime.memory.composition import build_bound_thread_updates
     from mind_runtime.runtime_binding import production_binding
 
     binding = production_binding("p")
     with pytest.raises(ValueError, match="enabled"):
         build_bound_thread_updates(binding, enabled=1)
-    with pytest.raises(ValueError, match="lce_enabled"):
-        build_bound_thread_updates(binding, lce_enabled=1)
+    with pytest.raises(ValueError, match="projection_compiler"):
+        build_bound_thread_updates(binding, projection_compiler=object())
 
 
 def test_stack_enabled_requires_matching_binding_paths(tmp_path):
