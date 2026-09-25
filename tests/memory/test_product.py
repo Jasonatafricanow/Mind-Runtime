@@ -236,6 +236,40 @@ def test_compiled_thread_projection_is_deleted_after_baseline_acceptance(tmp_pat
     canonical.close()
 
 
+def test_retire_compiled_thread_rejects_invalid_projection_states(tmp_path):
+    _, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+
+    product.open_thread(
+        thread_id="immature",
+        scope=memory().scope,
+        open_question="Still tentative?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+    )
+    with pytest.raises(ValueError, match="not mature"):
+        product.retire_compiled_thread("immature", baseline_id="baseline-1")
+
+    product.open_thread(
+        thread_id="abandoned",
+        scope=memory().scope,
+        open_question="Abandoned?",
+        supporting_memory_ids=("memory-2",),
+        at=at,
+        working_summary="This line was abandoned before compilation.",
+        mature=True,
+    )
+    product.abandon_thread("abandoned", at=at + timedelta(days=1))
+    with pytest.raises(ValueError, match="abandoned"):
+        product.retire_compiled_thread("abandoned", baseline_id="baseline-2")
+
+    with pytest.raises(ValueError, match="nonempty"):
+        product.retire_compiled_thread("immature", baseline_id="")
+
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
