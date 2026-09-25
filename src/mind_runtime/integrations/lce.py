@@ -13,13 +13,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts import EffectiveWindow, ObservationModality, Scope, SemanticTime
 from mind_runtime.contracts.common import require_aware_utc
 from mind_runtime.facts.persistence import SqliteFactReader
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
-from mind_runtime.memory.product import MemoryThread, ThreadStatus
+from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
 from mind_runtime.runtime_binding import (
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 MAX_SELECTED_MEMORIES = 100
 MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY = 32
 TEMPORAL_CONTEXT_KEY = "mr.temporal_memory_views.v1"
+_THREAD_REGION_PREFIX = "mr-thread:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,11 +372,26 @@ def _accepted_understandings(
     return tuple(candidates[:limit])
 
 
+class _GenericLceCore:
+    """Guard generic LCE writes from claiming the MR Thread namespace."""
+
+    def __init__(self, core: LceCore) -> None:
+        self._core = core
+
+    def consolidate(self, region_id: str, *args: Any, **kwargs: Any) -> Any:
+        if region_id.startswith(_THREAD_REGION_PREFIX):
+            raise ValueError("mr-thread:* regions are reserved for durable Thread handoff")
+        return self._core.consolidate(region_id, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._core, name)
+
+
 @dataclass(frozen=True)
 class LceBindingSession:
     """Generic external-Memory LCE Core session."""
 
-    core: LceCore
+    core: _GenericLceCore
     _store: SqliteBaselineStore
     _adapter: MrMemorySubstrateAdapter
 
@@ -442,6 +458,24 @@ class LceThreadHandoffSession:
     def handoff_thread(self, thread: MemoryThread) -> ConsolidationResult:
         if not isinstance(thread, MemoryThread):
             raise TypeError("thread must be MemoryThread")
+        if thread.scope != self._adapter.scope:
+            raise MemorySelectionError("Thread Scope does not match the bound LCE Scope")
+
+        canonical = CanonicalMemoryStore(self._adapter._paths.memory_db, read_only=True)
+        product = MemoryProductStore(
+            self._adapter._paths.memory_db,
+            canonical,
+            read_only=True,
+        )
+        try:
+            authoritative = product.thread_handoff(thread.thread_id)
+        finally:
+            product.close()
+            canonical.close()
+        if authoritative != thread:
+            raise ValueError("Thread must match durable MR product state")
+        thread = authoritative
+
         if thread.status is ThreadStatus.ABANDONED:
             raise ValueError("abandoned Thread cannot be handed off")
         if not thread.mature or thread.working_summary is None:
@@ -468,7 +502,7 @@ class LceThreadHandoffSession:
             consolidator=_PrecomputedThreadConsolidator(candidate),
         )
         return core.consolidate(
-            f"mr-thread:{thread.thread_id}",
+            f"{_THREAD_REGION_PREFIX}{thread.thread_id}",
             support,
             context={
                 "source": "mr-thread",
@@ -592,7 +626,7 @@ def open_lce_binding(
     store = SqliteBaselineStore(_scope_lce_root(adapter))
     try:
         core = LceCore(memory_substrate=adapter, baseline_store=store, consolidator=consolidator)
-        return LceBindingSession(core, store, adapter)
+        return LceBindingSession(_GenericLceCore(core), store, adapter)
     except BaseException:
         store.close()
         raise
