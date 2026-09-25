@@ -25,7 +25,7 @@ class FastFunctionKind(StrEnum):
 
 
 class FastStateStatus(StrEnum):
-    """Registry status; consumer closure and production activation are separate."""
+    """Lifecycle status of an admitted fast state contract."""
 
     ACTIVE = "ACTIVE"
     REGISTERED_ONLY = "REGISTERED_ONLY"
@@ -57,8 +57,42 @@ class FastStateFunctionSpec:
             object.__setattr__(self, "product_label", self.semantic_label)
 
 
+FAST_FUNCTION_V1_COUNT: Final[int] = 8
+
 FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT: Final[str] = (
     "FOLLOW_UP_PERSISTENCE != FOLLOW_UP_FREQUENCY"
+)
+
+LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
+    "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
+)
+
+SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
+    "SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY"
+)
+SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY: Final[str] = (
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+)
+
+CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT: Final[str] = (
+    "CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY"
+)
+CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY: Final[str] = (
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+)
+
+ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT: Final[str] = (
+    "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
+)
+ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION: Final[str] = (
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+)
+
+SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT: Final[str] = (
+    "SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION"
+)
+SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION: Final[str] = (
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
 )
 
 
@@ -76,8 +110,64 @@ def validate_diligence_anti_spam_invariant(
     if effective_cooldown_seconds < base_cooldown_seconds:
         raise ValueError(
             f"Diligence anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
-            f"is shorter than base cooldown ({base_cooldown_seconds}s) "
-            f"under diligence_pressure={diligence_pressure}"
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under diligence_pressure={diligence_pressure}"
+        )
+    return True
+
+
+def validate_longing_anti_spam_invariant(
+    *,
+    longing: float,
+    base_cooldown_seconds: float,
+    effective_cooldown_seconds: float,
+) -> bool:
+    """Explicit executable invariant: LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY.
+
+    Higher longing drives contact pressure (via contact_seeking in Surface),
+    but MUST NOT shorten outbound cooldown or bypass ActionPolicy gating.
+    """
+    if effective_cooldown_seconds < base_cooldown_seconds:
+        raise ValueError(
+            f"Longing anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under longing={longing}"
+        )
+    return True
+
+
+def validate_sharing_urge_anti_spam_invariant(
+    *,
+    sharing_urge: float,
+    base_cooldown_seconds: float,
+    effective_cooldown_seconds: float,
+) -> bool:
+    """Explicit executable invariant: SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY.
+
+    Higher sharing_urge increases pressure to spontaneously share,
+    but MUST NOT shorten outbound cooldown or bypass ActionPolicy gating.
+    """
+    if effective_cooldown_seconds < base_cooldown_seconds:
+        raise ValueError(
+            f"Sharing urge anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under sharing_urge={sharing_urge}"
+        )
+    return True
+
+
+def validate_curiosity_anti_spam_invariant(
+    *,
+    curiosity: float,
+    base_cooldown_seconds: float,
+    effective_cooldown_seconds: float,
+) -> bool:
+    """Explicit executable invariant: CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY.
+
+    Higher curiosity increases pressure to explore, inquire, or ask follow-up questions,
+    but MUST NOT shorten outbound cooldown or bypass ActionPolicy gating.
+    """
+    if effective_cooldown_seconds < base_cooldown_seconds:
+        raise ValueError(
+            f"Curiosity anti-spam violation: effective cooldown ({effective_cooldown_seconds}s) "
+            f"is shorter than base cooldown ({base_cooldown_seconds}s) under curiosity={curiosity}"
         )
     return True
 
@@ -91,8 +181,9 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
         notes=(
-            "Drives proactive outreach when prolonged separation or relational longing "
-            "exceeds baseline."
+            "Invariant: LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY. "
+            "Longing drives contact_seeking and intent eligibility, but outbound send frequency "
+            "remains strictly governed by ActionPolicy and cooldown."
         ),
     ),
     FastStateFunctionSpec(
@@ -102,7 +193,12 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="Intent / share path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes="Drives spontaneous sharing of observations, thoughts, or content.",
+        notes=(
+            "Invariant: SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY. "
+            "Higher sharing_urge increases pressure to spontaneously share a thought / observation / "
+            "currently available content via dedicated Intent (spontaneous_share) and proactive ActionPolicy "
+            "(proactive_share), while frequency remains strictly governed by ActionPolicy and cooldown."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.curiosity",
@@ -111,30 +207,41 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="Intent / retrieval-or-question path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes="Drives inquiry, knowledge exploration, and follow-up questions.",
+        notes=(
+            "Invariant: CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY. "
+            "Higher curiosity increases pressure to explore / inquire via dedicated Intent (proactive_inquiry) "
+            "and proactive ActionPolicy (proactive_question), while question frequency remains strictly "
+            "governed by ActionPolicy and cooldown. Concrete V1 closes the question branch only; "
+            "autonomous retrieval subsystem remains deferred."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.anger",
         semantic_label="anger / boundary pressure",
         function_kind=FastFunctionKind.BOUNDARY_CONFRONTATION,
-        primary_consumer="existing Surface / Intent / expression path",
+        primary_consumer="Surface confrontation / expression directness path",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
         notes=(
-            "Signals boundary violation or tension; governs confrontation expression "
-            "within ActionPolicy limits."
+            "Invariant: ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION. "
+            "Surface/expression branch closed via confrontation -> qualitative directness mapping "
+            "and expressive warmth/contact dampening. Intent capability exists structurally because "
+            "confrontation is Intent-eligible, but concrete boundary Intent branch is deferred "
+            "because no authoritative boundary-event-to-Intent binding exists."
         ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.sadness",
         semantic_label="sadness / low mood",
         function_kind=FastFunctionKind.INITIATIVE_SUPPRESSION,
-        primary_consumer="existing initiative / expression path",
+        primary_consumer="Surface initiative / expression warmth path",
         external_action_capable=False,
         status=FastStateStatus.ACTIVE,
         notes=(
-            "Suppresses initiative and dampens expressive spontaneity; "
-            "does not initiate outbound action."
+            "Invariant: SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION. "
+            "Surface projection exists (Δinitiative = -0.25 * Δsadness); warmth expression branch "
+            "exists (Δexpressive_warmth = -0.20 * Δsadness -> qualitative warmth); effective "
+            "initiative consumer remains unbound (SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP=FOUND)."
         ),
     ),
     FastStateFunctionSpec(
@@ -145,25 +252,16 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="CognitiveTicker / wake-reconsider path",
         external_action_capable=False,
         status=FastStateStatus.ACTIVE,
-        notes=(
-            "Existing restlessness key stays canonical for compatibility; "
-            "V1 product interpretation broadened to activation/excitation."
-        ),
+        notes="Existing restlessness key stays canonical for compatibility; V1 product interpretation broadened to activation/excitation.",
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.diligence_pressure",
         semantic_label="responsibility pressure",
         function_kind=FastFunctionKind.FOLLOW_UP_PERSISTENCE,
-        primary_consumer=(
-            "unresolved-task/follow-up Intent reconsideration + ActionPolicy anti-repeat controls"
-        ),
+        primary_consumer="unresolved-task/follow-up Intent reconsideration + ActionPolicy anti-repeat controls",
         external_action_capable=True,
         status=FastStateStatus.ACTIVE,
-        notes=(
-            "Invariant: FOLLOW_UP_PERSISTENCE != FOLLOW_UP_FREQUENCY. "
-            "Responsibility pressure preserves relevance; frequency governed by "
-            "ActionPolicy/cooldown."
-        ),
+        notes="Invariant: FOLLOW_UP_PERSISTENCE != FOLLOW_UP_FREQUENCY. Responsibility pressure preserves relevance; frequency governed by ActionPolicy/cooldown.",
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.fatigue",
@@ -172,10 +270,7 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         primary_consumer="future homeostasis / cognitive-mode scheduler",
         external_action_capable=False,
         status=FastStateStatus.REGISTERED_ONLY,
-        notes=(
-            "Registered-only functional contract. Targets future daydream, sleep, "
-            "offline consolidation, and dream modes; has no outbound-action consumer."
-        ),
+        notes="Registered-only functional contract. Targets future daydream, sleep, offline consolidation, and dream modes; has no outbound-action consumer.",
     ),
 )
 
@@ -205,7 +300,6 @@ class FastFunctionRegistry(Mapping[str, FastStateFunctionSpec]):
 
     def __len__(self) -> int:
         return len(self._specs_by_key)
-
     def require(self, key: str) -> FastStateFunctionSpec:
         spec = self._specs_by_key.get(key)
         if spec is None:
@@ -223,3 +317,4 @@ class FastFunctionRegistry(Mapping[str, FastStateFunctionSpec]):
 
 
 FAST_FUNCTION_V1_REGISTRY: Final[FastFunctionRegistry] = FastFunctionRegistry()
+

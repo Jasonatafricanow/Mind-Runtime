@@ -301,8 +301,8 @@ def _build_test_stack(
 # ── FOUNDATIONAL STRUCTURAL TESTS ─────────────────────────────────────────────
 
 
-def test_foundational_w3_final_sha_is_ancestor():
-    """Foundational: Authoritative frozen W3 final SHA 386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e is an ancestor."""
+def test_foundational_w3_final_sha_is_preserved_and_target_base_is_ancestor():
+    """The frozen W3 source SHA remains resolvable after path-scoped forward-port."""
     frozen_sha = "386d3e8d8e49a1f2d8e9d6d4e18641ed2d0c504e"
     show_proc = subprocess.run(
         ["git", "show", "--no-patch", "--oneline", frozen_sha],
@@ -313,14 +313,15 @@ def test_foundational_w3_final_sha_is_ancestor():
     assert show_proc.returncode == 0, f"Frozen W3 SHA {frozen_sha} could not be resolved: {show_proc.stderr}"
     assert "fix(surface): close W3 authority and durability gaps" in show_proc.stdout
 
+    target_base_sha = "45cf36a91760f6eb9e39774edd656c1a2fc08a97"
     ancestry_proc = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", frozen_sha, "HEAD"],
+        ["git", "merge-base", "--is-ancestor", target_base_sha, "HEAD"],
         capture_output=True,
         text=True,
         check=False,
     )
     assert ancestry_proc.returncode == 0, (
-        f"Frozen W3 SHA {frozen_sha} is not an ancestor of current HEAD: {ancestry_proc.stderr}"
+        f"Migration target base {target_base_sha} is not an ancestor of current HEAD: {ancestry_proc.stderr}"
     )
 
 
