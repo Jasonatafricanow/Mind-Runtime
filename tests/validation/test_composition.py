@@ -871,10 +871,12 @@ def test_slow_accept_threshold_boundaries(
             confidence=0.80,
             observed_at=NOW,
         )
-        assert gate.decide(candidate, prior_value=None).decision is HomeostasisDisposition.SLOW_ACCEPT
+        accepted = gate.decide(candidate, prior_value=None)
+        assert accepted.decision is HomeostasisDisposition.SLOW_ACCEPT
 
         rejected = replace(candidate, **{field: below})
-        assert gate.decide(rejected, prior_value=None).decision is not HomeostasisDisposition.SLOW_ACCEPT
+        rejected_decision = gate.decide(rejected, prior_value=None)
+        assert rejected_decision.decision is not HomeostasisDisposition.SLOW_ACCEPT
     finally:
         composition.close()
 
