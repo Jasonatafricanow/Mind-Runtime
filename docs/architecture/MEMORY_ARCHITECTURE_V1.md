@@ -258,8 +258,8 @@ no useful continuation
 
 relation becomes sufficiently explicit
 -> compile to accepted LCE Baseline
--> mark the Thread projection COMPILED
--> remove it from the active working set
+-> delete the temporary Thread projection
+-> keep lineage in the accepted Baseline + canonical support
 ```
 
 The exact wake-up algorithm, active-set capacity and inactivity TTL are deferred
@@ -675,8 +675,8 @@ This section distinguishes architecture from implementation.
   lexical overlap are currently used to choose an existing open Thread. The
   matching policy is replaceable and is not factual authority.
 - when LCE composition is enabled, mature Threads are automatically compiled
-  through Path A. An accepted Baseline ID retires the Thread as `COMPILED`,
-  so the same logical product is not maintained live in both layers. Failed or
+  through Path A. An accepted Baseline deletes the temporary Thread projection,
+  so the same logical product is not maintained in both layers. Failed or
   disabled compilation leaves the Thread intact and never rolls back Memory.
 - LCE standalone V1 still owns its latent Semantic Block -> structure ->
   Worktree -> Baseline research/runtime path.
