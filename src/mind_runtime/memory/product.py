@@ -113,33 +113,19 @@ class ThreadStatus(StrEnum):
     ABANDONED = "abandoned"
 
 
-class ThreadTransition(StrEnum):
-    OPENED = "opened"
-    SUPPORT = "support"
-    PROGRESS = "progress"
-    REVERSAL = "reversal"
-    RESOLVED = "resolved"
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadEvent:
-    memory_id: str
-    transition: ThreadTransition
-    at: datetime
-    note: str = ""
-
-    def __post_init__(self) -> None:
-        require_non_empty(self.memory_id, "memory_id")
-        if not isinstance(self.transition, ThreadTransition):
-            raise ValueError("transition must be ThreadTransition")
-        require_aware_utc(self.at, "at")
-        if not isinstance(self.note, str) or len(self.note) > 2048:
-            raise ValueError("note must be a string up to 2048 characters")
+MAX_THREAD_ORIGIN_SUPPORT = 8
+MAX_THREAD_CURRENT_SUPPORT = 8
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryThread:
-    """Explicit medium/long-horizon unresolved trajectory over canonical Memory."""
+    """Bounded medium-term working structure over canonical Memory.
+
+    A Thread owns only the fact that one explicit line is still being worked,
+    its bounded current support, and any already-reasoned online summary that
+    is ready for longitudinal compilation. It is not a second history store
+    and does not classify trajectory transitions such as progress/reversal.
+    """
 
     thread_id: str
     scope: Scope
@@ -150,7 +136,10 @@ class MemoryThread:
     updated_at: datetime
     touch_count: int
     suppressed: bool
-    events: tuple[ThreadEvent, ...]
+    origin_memory_ids: tuple[str, ...]
+    current_support_ids: tuple[str, ...]
+    working_summary: str | None = None
+    mature: bool = False
 
     def __post_init__(self) -> None:
         require_non_empty(self.thread_id, "thread_id")
@@ -172,8 +161,34 @@ class MemoryThread:
             raise ValueError("touch_count must be a non-negative integer")
         if type(self.suppressed) is not bool:
             raise ValueError("suppressed must be bool")
-        if not self.events:
-            raise ValueError("thread must contain at least one event")
+        if (
+            not self.origin_memory_ids
+            or len(self.origin_memory_ids) > MAX_THREAD_ORIGIN_SUPPORT
+            or len(set(self.origin_memory_ids)) != len(self.origin_memory_ids)
+        ):
+            raise ValueError("origin_memory_ids must contain 1..8 unique items")
+        if (
+            not self.current_support_ids
+            or len(self.current_support_ids) > MAX_THREAD_CURRENT_SUPPORT
+            or len(set(self.current_support_ids)) != len(self.current_support_ids)
+        ):
+            raise ValueError("current_support_ids must contain 1..8 unique items")
+        for memory_id in (*self.origin_memory_ids, *self.current_support_ids):
+            require_non_empty(memory_id, "thread support memory_id")
+        if self.working_summary is not None:
+            if not isinstance(self.working_summary, str) or not self.working_summary.strip():
+                raise ValueError("working_summary must be nonempty when supplied")
+            if len(self.working_summary) > 4096:
+                raise ValueError("working_summary exceeds 4096 characters")
+        if type(self.mature) is not bool:
+            raise ValueError("mature must be bool")
+        if self.mature and self.working_summary is None:
+            raise ValueError("mature Thread requires working_summary")
+
+    @property
+    def handoff_memory_ids(self) -> tuple[str, ...]:
+        """Bounded canonical support carried into longitudinal compilation."""
+        return tuple(dict.fromkeys((*self.origin_memory_ids, *self.current_support_ids)))
 
 
 class MemoryProductConflict(ValueError):
@@ -294,16 +309,15 @@ class MemoryProductStore:
         self._writable()
         require_non_empty(thread_id, "thread_id")
         require_aware_utc(at, "at")
-        if not supporting_memory_ids or len(supporting_memory_ids) > 32:
-            raise ValueError("supporting_memory_ids must contain 1..32 items")
-        if len(set(supporting_memory_ids)) != len(supporting_memory_ids):
-            raise ValueError("supporting_memory_ids must be unique")
+        if (
+            not supporting_memory_ids
+            or len(supporting_memory_ids) > MAX_THREAD_ORIGIN_SUPPORT
+            or len(set(supporting_memory_ids)) != len(supporting_memory_ids)
+        ):
+            raise ValueError("supporting_memory_ids must contain 1..8 unique items")
         memories = tuple(self._memory(mid, active=True) for mid in supporting_memory_ids)
         if any(memory.scope != scope for memory in memories):
             raise ValueError("thread support must exactly match thread Scope")
-        events = tuple(
-            ThreadEvent(mid, ThreadTransition.OPENED, at) for mid in supporting_memory_ids
-        )
         thread = MemoryThread(
             thread_id=thread_id,
             scope=scope,
@@ -314,7 +328,8 @@ class MemoryProductStore:
             updated_at=at,
             touch_count=0,
             suppressed=False,
-            events=events,
+            origin_memory_ids=supporting_memory_ids,
+            current_support_ids=supporting_memory_ids,
         )
         existing = self.get_thread(thread_id)
         if existing is not None:
@@ -333,37 +348,40 @@ class MemoryProductStore:
         ).fetchone()
         return None if row is None else _decode_thread(row[0])
 
-    def touch_thread(
+    def update_thread(
         self,
         thread_id: str,
         *,
-        memory_id: str,
-        transition: ThreadTransition,
+        supporting_memory_ids: tuple[str, ...],
         at: datetime,
-        note: str = "",
+        working_summary: str | None = None,
+        mature: bool | None = None,
     ) -> MemoryThread:
+        """Replace the bounded current working set; do not append history."""
         self._writable()
-        if transition not in (
-            ThreadTransition.SUPPORT,
-            ThreadTransition.PROGRESS,
-            ThreadTransition.REVERSAL,
-        ):
-            raise ValueError("touch transition must be support, progress, or reversal")
+        require_aware_utc(at, "at")
         thread = self._require_open_thread(thread_id)
-        memory = self._memory(memory_id, active=True)
-        if memory.scope != thread.scope:
-            raise ValueError("thread event Memory must exactly match thread Scope")
-        if any(
-            event.memory_id == memory_id and event.transition is transition
-            for event in thread.events
+        if (
+            not supporting_memory_ids
+            or len(supporting_memory_ids) > MAX_THREAD_CURRENT_SUPPORT
+            or len(set(supporting_memory_ids)) != len(supporting_memory_ids)
         ):
-            return thread
+            raise ValueError("supporting_memory_ids must contain 1..8 unique items")
+        memories = tuple(self._memory(mid, active=True) for mid in supporting_memory_ids)
+        if any(memory.scope != thread.scope for memory in memories):
+            raise ValueError("thread support must exactly match thread Scope")
+        next_summary = thread.working_summary if working_summary is None else working_summary
+        next_mature = thread.mature if mature is None else mature
         updated = replace(
             thread,
             updated_at=at,
             touch_count=thread.touch_count + 1,
-            events=thread.events + (ThreadEvent(memory_id, transition, at, note),),
+            current_support_ids=supporting_memory_ids,
+            working_summary=next_summary,
+            mature=next_mature,
         )
+        if updated == thread:
+            return thread
         self._put_thread(updated)
         return updated
 
@@ -373,7 +391,7 @@ class MemoryProductStore:
         *,
         memory_id: str,
         at: datetime,
-        note: str = "",
+        working_summary: str | None = None,
     ) -> MemoryThread:
         self._writable()
         require_aware_utc(at, "at")
@@ -387,16 +405,34 @@ class MemoryProductStore:
         memory = self._memory(memory_id, active=True)
         if memory.scope != thread.scope:
             raise ValueError("resolution Memory must exactly match thread Scope")
+        support = tuple(
+            dict.fromkeys((*thread.current_support_ids, memory_id))
+        )[-MAX_THREAD_CURRENT_SUPPORT:]
+        summary = thread.working_summary if working_summary is None else working_summary
         updated = replace(
             thread,
             status=ThreadStatus.RESOLVED,
             updated_at=at,
             touch_count=thread.touch_count + 1,
-            events=thread.events
-            + (ThreadEvent(memory_id, ThreadTransition.RESOLVED, at, note),),
+            current_support_ids=support,
+            working_summary=summary,
+            mature=thread.mature or summary is not None,
         )
         self._put_thread(updated)
         return updated
+
+    def thread_handoff(self, thread_id: str) -> MemoryThread:
+        """Return one mature bounded Thread after revalidating canonical support."""
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            raise ValueError(f"unknown thread: {thread_id}")
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be handed off")
+        if not thread.mature or thread.working_summary is None:
+            raise ValueError("Thread is not mature for LCE handoff")
+        if not self._thread_support_is_current(thread):
+            raise ValueError("Thread support is not current")
+        return thread
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
         self._writable()
@@ -459,7 +495,7 @@ class MemoryProductStore:
         return tuple(item[3] for item in candidates[:limit])
 
     def _thread_support_is_current(self, thread: MemoryThread) -> bool:
-        for memory_id in {event.memory_id for event in thread.events}:
+        for memory_id in thread.handoff_memory_ids:
             memory = self._canonical.get(memory_id)
             if (
                 memory is None
@@ -506,15 +542,6 @@ def _encode_thread(thread: MemoryThread) -> str:
     data["status"] = thread.status.value
     data["created_at"] = thread.created_at.isoformat()
     data["updated_at"] = thread.updated_at.isoformat()
-    data["events"] = [
-        {
-            "memory_id": event.memory_id,
-            "transition": event.transition.value,
-            "at": event.at.isoformat(),
-            "note": event.note,
-        }
-        for event in thread.events
-    ]
     return json.dumps(data, sort_keys=True, ensure_ascii=False)
 
 
@@ -526,13 +553,24 @@ def _decode_thread(payload: str) -> MemoryThread:
     data["status"] = ThreadStatus(data["status"])
     data["created_at"] = datetime.fromisoformat(data["created_at"])
     data["updated_at"] = datetime.fromisoformat(data["updated_at"])
-    data["events"] = tuple(
-        ThreadEvent(
-            memory_id=event["memory_id"],
-            transition=ThreadTransition(event["transition"]),
-            at=datetime.fromisoformat(event["at"]),
-            note=event["note"],
-        )
-        for event in data["events"]
-    )
+
+    # Legacy migration: earlier product code stored an append-only event log
+    # with PROGRESS/REVERSAL labels. Collapse it into bounded support only;
+    # trajectory interpretation belongs to LCE.
+    legacy_events = data.pop("events", None)
+    if legacy_events is not None:
+        opened = [
+            str(event["memory_id"])
+            for event in legacy_events
+            if event.get("transition") == "opened"
+        ]
+        all_ids = [str(event["memory_id"]) for event in legacy_events if event.get("memory_id")]
+        unique_all = tuple(dict.fromkeys(all_ids))
+        data["origin_memory_ids"] = tuple(dict.fromkeys(opened))[:MAX_THREAD_ORIGIN_SUPPORT] or unique_all[:1]
+        data["current_support_ids"] = unique_all[-MAX_THREAD_CURRENT_SUPPORT:]
+        data["working_summary"] = None
+        data["mature"] = False
+
+    data["origin_memory_ids"] = tuple(data["origin_memory_ids"])
+    data["current_support_ids"] = tuple(data["current_support_ids"])
     return MemoryThread(**data)
