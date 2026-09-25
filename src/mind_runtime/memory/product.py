@@ -111,7 +111,6 @@ class ThreadStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     ABANDONED = "abandoned"
-    COMPILED = "compiled"
 
 
 MAX_THREAD_ORIGIN_SUPPORT = 8
@@ -141,7 +140,6 @@ class MemoryThread:
     current_support_ids: tuple[str, ...]
     working_summary: str | None = None
     mature: bool = False
-    compiled_baseline_id: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.thread_id, "thread_id")
@@ -186,12 +184,6 @@ class MemoryThread:
             raise ValueError("mature must be bool")
         if self.mature and self.working_summary is None:
             raise ValueError("mature Thread requires working_summary")
-        if self.compiled_baseline_id is not None:
-            require_non_empty(self.compiled_baseline_id, "compiled_baseline_id")
-        if self.status is ThreadStatus.COMPILED and self.compiled_baseline_id is None:
-            raise ValueError("COMPILED Thread requires compiled_baseline_id")
-        if self.status is not ThreadStatus.COMPILED and self.compiled_baseline_id is not None:
-            raise ValueError("only COMPILED Thread may carry compiled_baseline_id")
 
     @property
     def handoff_memory_ids(self) -> tuple[str, ...]:
@@ -472,49 +464,44 @@ class MemoryProductStore:
         thread = self.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"unknown thread: {thread_id}")
-        if thread.status in (ThreadStatus.ABANDONED, ThreadStatus.COMPILED):
-            raise ValueError(f"{thread.status.value} Thread cannot be handed off")
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be handed off")
         if not thread.mature or thread.working_summary is None:
             raise ValueError("Thread is not mature for LCE handoff")
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
         return thread
 
-    def compile_thread(
+    def retire_compiled_thread(
         self,
         thread_id: str,
         *,
         baseline_id: str,
-        at: datetime,
-    ) -> MemoryThread:
-        """Retire a mature Thread after an accepted higher-level projection exists."""
+    ) -> bool:
+        """Remove a temporary Thread after LCE accepted its higher projection.
+
+        The accepted Baseline owns durable cognition lineage under the stable
+        mr-thread:<thread_id> region and canonical Memory IDs keep factual
+        provenance. Keeping the Thread row after that point would duplicate the
+        same logical product. Missing rows are an idempotent no-op.
+        """
         self._writable()
         require_non_empty(baseline_id, "baseline_id")
-        require_aware_utc(at, "at")
         thread = self.get_thread(thread_id)
         if thread is None:
-            raise ValueError(f"unknown thread: {thread_id}")
-        if thread.status is ThreadStatus.COMPILED:
-            if thread.compiled_baseline_id != baseline_id:
-                raise MemoryProductConflict(
-                    f"Thread {thread_id} already compiled into "
-                    f"{thread.compiled_baseline_id}"
-                )
-            return thread
+            return False
         if thread.status is ThreadStatus.ABANDONED:
-            raise ValueError("abandoned Thread cannot be compiled")
+            raise ValueError("abandoned Thread cannot be retired as compiled")
         if not thread.mature or thread.working_summary is None:
-            raise ValueError("Thread is not mature for compilation")
+            raise ValueError("Thread is not mature for compilation retirement")
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
-        updated = replace(
-            thread,
-            status=ThreadStatus.COMPILED,
-            updated_at=at,
-            compiled_baseline_id=baseline_id,
-        )
-        self._put_thread(updated)
-        return updated
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM memory_threads WHERE thread_id=?",
+                (thread_id,),
+            )
+        return True
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
         self._writable()
