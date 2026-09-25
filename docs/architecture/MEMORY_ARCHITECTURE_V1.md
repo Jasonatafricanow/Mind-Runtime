@@ -609,9 +609,13 @@ This section distinguishes architecture from implementation.
 
 ### Current implementation gaps relative to this frozen design
 
-1. **Automatic Thread formation and maturity policy are not yet wired into the turn path.**  
-   The runtime has the bounded Thread primitives and handoff seam, but normal
-   turns do not yet automatically decide when to open/update/mature a Thread.
+1. **Automatic Thread formation/update is wired; semantic maturity remains separate.**  
+   New canonical Memory enters a durable derived Thread-maintenance queue.
+   The default no-model policy can conservatively open, update, resolve or
+   abstain, with bounded support and crash-retry ordering. It deliberately
+   does not create `working_summary` or set `mature=True`: those fields mean
+   the online relation was actually reasoned, not merely lexically tracked.
+   See ADR-0030.
 
 2. **MR does not yet run standalone LCE V1 latent discovery directly over canonical Memory.**  
    LCE V1's standalone `ReferenceMemoryStore` combines source-evidence and

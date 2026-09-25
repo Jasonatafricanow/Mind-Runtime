@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,50 @@ def test_bound_fact_composition_default_off_and_explicit_on(tmp_path, monkeypatc
     assert len(store.load_all()) == 1
     assert store.load_all()[0].provenance.evidence_refs == ("new-source",)
     store.close()
+
+
+def test_bound_fact_composition_automatically_updates_thread_product(tmp_path, monkeypatch):
+    from mind_runtime.memory.composition import build_bound_fact_service
+    from mind_runtime.memory.product import MemoryProductStore
+    from mind_runtime.memory.store import CanonicalMemoryStore
+    from mind_runtime.runtime_binding import bind_storage, production_binding
+    from tests.facts.test_admission import make_evidence
+
+    monkeypatch.setenv("MR_FACTS_DB", str(tmp_path / "facts.sqlite"))
+    monkeypatch.setenv("MR_STATE_DB", str(tmp_path / "state.sqlite"))
+    binding = production_binding("p", runtime_id="runtime-1")
+    paths = bind_storage(binding)
+    service = build_bound_fact_service(binding, clock=FakeClock(NOW), enabled=True)
+
+    first = replace(
+        make_evidence(evidence_id="thread-1"),
+        payload={"text": "I am considering replacing my computer because it is old."},
+    )
+    admit(service, first)
+
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    threads = product.surface_threads(first.scope, now=NOW, limit=10, decay_lambda=0.0)
+    assert len(threads) == 1
+    thread_id = threads[0].thread_id
+    product.close()
+    canonical.close()
+
+    second = replace(
+        make_evidence(evidence_id="thread-2"),
+        payload={"text": "The computer is getting slower lately."},
+    )
+    admit(service, second)
+
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    updated = product.get_thread(thread_id)
+    assert updated is not None
+    assert len(updated.current_support_ids) == 2
+    assert updated.working_summary is None
+    assert not updated.mature
+    product.close()
+    canonical.close()
 
 
 def test_stack_enabled_requires_matching_binding_paths(tmp_path):
