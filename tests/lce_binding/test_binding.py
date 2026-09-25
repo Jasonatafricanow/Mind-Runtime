@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -16,7 +17,10 @@ from mind_runtime.integrations.lce import (
     MemorySelectionError,
     MrMemorySubstrateAdapter,
     open_lce_binding,
+    open_lce_read_binding,
+    open_lce_thread_handoff,
 )
+from mind_runtime.memory.product import MemoryThread, ThreadStatus
 from mind_runtime.runtime_binding import (
     BindingManifestMismatchError,
     RuntimeBinding,
@@ -177,6 +181,83 @@ def test_real_core_durable_revision_restart_and_no_reverse_authority(plane):
         assert restarted.core.get_history("opaque-lineage") == history
         assert tuple(v.memory_id for v in adapter(plane).get_by_ids(ids(plane))) == ids(plane)
     assert snapshot(plane[2]) == before
+
+
+def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
+    binding, roots, _, memories = plane
+    support = tuple(item.memory_id for item in memories[:2])
+    thread = MemoryThread(
+        thread_id="computer-replacement",
+        scope=make_scope(),
+        open_question="Will the computer be replaced?",
+        status=ThreadStatus.OPEN,
+        importance=7,
+        created_at=datetime(2026, 9, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
+        touch_count=2,
+        suppressed=False,
+        origin_memory_ids=(support[0],),
+        current_support_ids=support,
+        working_summary="Price delayed replacement; later performance pressure reopened it.",
+        mature=True,
+    )
+
+    session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
+        first = session.handoff_thread(thread)
+        assert first.revised
+        assert first.baseline.region_id == "mr-thread:computer-replacement"
+        assert first.baseline.supporting_memory_ids == support
+        assert first.baseline.content == thread.working_summary
+
+        replay = session.handoff_thread(thread)
+        assert not replay.revised
+        assert replay.baseline.baseline_id == first.baseline.baseline_id
+
+        views = session.accepted_understandings("performance replacement", limit=3)
+        assert len(views) == 1
+        assert views[0].baseline_id == first.baseline.baseline_id
+        assert views[0].supporting_memory_ids == support
+        assert views[0].source_refs
+
+    reader = open_lce_read_binding(binding, make_scope(), enabled=True, **roots)
+    assert reader is not None
+    with reader:
+        views = reader.accepted_understandings("performance", limit=3)
+        assert len(views) == 1
+        assert views[0].region_id == "mr-thread:computer-replacement"
+
+
+def test_thread_handoff_requires_mature_non_abandoned_structure(plane):
+    binding, roots, _, memories = plane
+    memory_id = memories[0].memory_id
+    base = MemoryThread(
+        thread_id="t",
+        scope=make_scope(),
+        open_question="open?",
+        status=ThreadStatus.OPEN,
+        importance=5,
+        created_at=datetime(2026, 9, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
+        touch_count=0,
+        suppressed=False,
+        origin_memory_ids=(memory_id,),
+        current_support_ids=(memory_id,),
+    )
+    session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
+        with pytest.raises(ValueError, match="not mature"):
+            session.handoff_thread(base)
+        abandoned = replace(
+            base,
+            status=ThreadStatus.ABANDONED,
+            working_summary="A mature-looking but abandoned line.",
+            mature=True,
+        )
+        with pytest.raises(ValueError, match="abandoned"):
+            session.handoff_thread(abandoned)
 
 
 def test_baselines_physically_separated_by_scope_and_runtime(plane):
