@@ -220,11 +220,12 @@ class ThreadAutoUpdateService:
         all_support = tuple(
             dict.fromkeys((*existing.origin_memory_ids, *merged_support))
         )
-        # A Thread becomes mature only after the line has received support
-        # beyond its origin and there is an explicit already-reasoned summary.
+        # A Thread becomes mature only after support spans at least two
+        # independently admitted interactions. Multiple Memory rows derived
+        # from one turn are still one supporting event.
         mature = existing.mature or (
             next_summary is not None
-            and len(all_support) >= 2
+            and self._product._has_independent_support(all_support)
             and (signal.mature or merged_support != existing.current_support_ids)
         )
         return self._product.update_thread(
@@ -253,6 +254,9 @@ class ThreadAutoUpdateService:
         merged_support = tuple(
             dict.fromkeys((*existing.current_support_ids, *support_ids))
         )[-MAX_THREAD_CURRENT_SUPPORT:]
+        maturity_support = tuple(
+            dict.fromkeys((*existing.origin_memory_ids, *merged_support))
+        )
         current = self._product.update_thread(
             existing.thread_id,
             supporting_memory_ids=merged_support,
@@ -260,8 +264,10 @@ class ThreadAutoUpdateService:
             working_summary=signal.summary or existing.working_summary,
             mature=(
                 existing.mature
-                or signal.summary is not None
-                or signal.mature
+                or (
+                    self._product._has_independent_support(maturity_support)
+                    and (signal.summary is not None or signal.mature)
+                )
             ),
         )
         return self._product.resolve_thread(
