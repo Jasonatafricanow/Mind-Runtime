@@ -111,9 +111,20 @@ It is read-only with respect to MR state: the UI/query layer does not become ano
 
 ### LCE integration
 
-MR has an optional one-way adapter under `src/mind_runtime/integrations/lce.py`.
+MR has an optional LCE integration under `src/mind_runtime/integrations/lce.py`.
+LCE remains a separate repository and is not vendored into MR Core.
 
-LCE is a separate repository. MR can consume its output as external context, but LCE is not vendored into MR Core and does not directly write MR state.
+The integration keeps canonical Memory authority in MR while supporting three
+bounded operations: explicit-ID LCE Core consolidation, no-model handoff of a
+mature Thread's already-reasoned working structure, and readback of accepted
+Baseline cognition into HistoricalContext. Accepted cognition is preferred over
+raw Memory when both compete for the same bounded history budget, so previously
+compiled longitudinal logic does not need to be reconstructed every turn.
+
+The full standalone LCE V1 discovery runtime is not copied into MR because its
+standalone Reference Memory owns source evidence as well as derived cognition.
+Any future latent-discovery binding must keep MR as the sole factual substrate
+and LCE storage derived-only. See ADR-0026.
 
 ## Verified status
 
@@ -124,7 +135,7 @@ The current public repository separates deterministic/local verification from cl
 | Persistent state, bindings, commit/abort, restart recovery | Implemented and regression-tested | `src/mind_runtime/`, `tests/`, restart validation |
 | Deterministic certification | Implemented | `certification/`, validation tests, current CI |
 | Observation Window | Implemented as a read-only inspection surface | `src/observation_window/` |
-| LCE integration | Optional, one-way adapter | `src/mind_runtime/integrations/lce.py`, architecture records |
+| LCE integration | Optional canonical-Memory binding, mature-Thread handoff, accepted-cognition readback | `src/mind_runtime/integrations/lce.py`, architecture records |
 | Live shadow validation | Incomplete / externally blocked | certification and architecture records |
 | General-purpose longitudinal cognition inside MR | Not a product claim | longitudinal research remains separate or bounded |
 
