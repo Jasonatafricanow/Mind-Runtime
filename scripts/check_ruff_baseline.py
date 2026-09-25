@@ -75,18 +75,8 @@ def main() -> int:
 
     if regressions:
         print("Ruff baseline regressions:", file=sys.stderr)
-        regression_keys = {key for key, _, _ in regressions}
         for key, count, limit in regressions:
             print(f"  {key}: current={count}, allowed={limit}", file=sys.stderr)
-        for item in findings:
-            key = _key(item)
-            if key in regression_keys:
-                location = item.get("location", {})
-                print(
-                    f"    {key} @ {location}: {item.get('message', '')}",
-                    file=sys.stderr,
-                )
-                print(f"      fix={item.get('fix')!r}", file=sys.stderr)
 
     if forbidden or regressions:
         return 1
