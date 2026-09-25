@@ -1193,85 +1193,39 @@ def test_kill_switch_unblock_target_no_op_when_not_blocked(
 # ----------------------------------------------------------- more persistence
 
 
-def test_persistence_request_reopen_corrupt_sync_not_dict(
+@pytest.mark.parametrize(
+    ("raw_sync", "message"),
+    (
+        ('["not", "a", "dict"]', "must be a JSON object"),
+        ('{"scope": "user"}', "missing required keys"),
+        (
+            '{"scope": 1, "origin_runtime_id": "x", "object_id": "y",'
+            ' "version": 1, "idempotency_key": "z"}',
+            "sync.scope",
+        ),
+    ),
+)
+def test_persistence_request_reopen_rejects_corrupt_sync(
     tmp_path: Path,
+    raw_sync: str,
+    message: str,
 ) -> None:
-    """A sync field that is valid JSON but not a dict fails closed
-    on reopen.
-    """
-
     db_path = tmp_path / "c7b_corrupt_sync.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
     backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        ('["not", "a", "dict"]', request.request_id),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="must be a JSON object"):
-        SqliteDeliveryBackend(db_path)
 
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
+            (raw_sync, request.request_id),
+        )
 
-def test_persistence_request_reopen_corrupt_sync_missing_keys(
-    tmp_path: Path,
-) -> None:
-    """A sync field that is missing required keys fails closed
-    on reopen.
-    """
-
-    db_path = tmp_path / "c7b_corrupt_sync2.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        ('{"scope": "user"}', request.request_id),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="missing required keys"):
-        SqliteDeliveryBackend(db_path)
-
-
-def test_persistence_request_reopen_corrupt_sync_malformed(
-    tmp_path: Path,
-) -> None:
-    """A sync field with bad value types fails closed on reopen."""
-
-    db_path = tmp_path / "c7b_corrupt_sync3.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    # scope must be a string, but it is an int. SyncFields()
-    # construction will fail.
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        (
-            '{"scope": 1, "origin_runtime_id": "x", "object_id": "y",'
-            ' "version": 1, "idempotency_key": "z"}',
-            request.request_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="sync.scope"):
+    with pytest.raises(ValueError, match=message):
         SqliteDeliveryBackend(db_path)
 
 
