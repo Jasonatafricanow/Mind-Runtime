@@ -6,6 +6,16 @@ from mind_runtime.dynamics.engine import (
     DynamicsResult,
     Impulse,
 )
+from mind_runtime.dynamics.fast_functions import (
+    FAST_FUNCTION_V1_REGISTRY,
+    FAST_FUNCTION_V1_SPECS,
+    FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
+    FastFunctionKind,
+    FastFunctionRegistry,
+    FastStateFunctionSpec,
+    FastStateStatus,
+    validate_diligence_anti_spam_invariant,
+)
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.dynamics.policies import (
     AccumulatorPolicy,
@@ -23,6 +33,14 @@ __all__ = [
     "DynamicsResult",
     "DynamicDimensionRegistry",
     "EventOnlyPolicy",
+    "FAST_FUNCTION_V1_REGISTRY",
+    "FAST_FUNCTION_V1_SPECS",
+    "FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT",
+    "FastFunctionKind",
+    "FastFunctionRegistry",
+    "FastStateFunctionSpec",
+    "FastStateStatus",
     "Impulse",
     "PersonaProfile",
+    "validate_diligence_anti_spam_invariant",
 ]
