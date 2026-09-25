@@ -35,6 +35,9 @@ Sections:
 - Invariants & Typing Tests
 """
 
+# Historical consumer audit keeps long evidence strings readable in source.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import ast
@@ -46,33 +49,23 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from xiyue import mr_seam
 
 from mind_runtime.binding_registry import BindingRegistry
 from mind_runtime.cognition.express import (
-    ProactiveExpressionArtifact,
     ProactiveExpressionConfig,
     ProactiveExpressionPreparer,
 )
 from mind_runtime.cognition.tick import (
-    CognitiveTicker,
-    CognitiveTickReport,
     build_cognitive_ticker,
 )
 from mind_runtime.contracts import (
-    ActionDecision,
-    ActionPermission,
-    ActionPolicyInput,
-    ActionPolicyResult,
     ExpressionDisposition,
     HostDecisionContext,
-    HostProactiveTurnResult,
     HostStatus,
     HostTurnStatus,
-    HostWakeNotification,
-    Intent,
     IntentEngineInput,
     IntentStatus,
-    PolicyResources,
     ProjectedMindState,
     ReconsiderationPolicy,
     RuntimeState,
@@ -82,8 +75,6 @@ from mind_runtime.contracts import (
     SyncFields,
     WakeSignal,
 )
-from mind_runtime.delivery import DeliveryRequest
-from mind_runtime.delivery.persistence import SqliteDeliveryBackend
 from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_REGISTRY,
     LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
@@ -105,10 +96,13 @@ from mind_runtime.host.xiyue_adapter import XiyueMRAdapter, default_adapter
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
 from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.persistence import SqliteIntentBackend
-from mind_runtime.intents.policy import ActionPolicyConfig, DeterministicActionPolicy, IntentPolicyRule
+from mind_runtime.intents.policy import (
+    ActionPolicyConfig,
+    DeterministicActionPolicy,
+    IntentPolicyRule,
+)
 from mind_runtime.intents.surface_validator import (
     get_control_transitive_roots,
-    validate_intent_rule_surface_overlap,
 )
 from mind_runtime.persona_publication import PersonaConfigPublicationRepository
 from mind_runtime.pipeline.fake_agent import FakeAgent
@@ -119,9 +113,14 @@ from mind_runtime.surface.evaluator import D_PREFIX
 from mind_runtime.surface.recipe import MANIFEST
 from tests.support.fake_clock import FakeClock
 from tests.surface.spec_support import sample_candidate
-from xiyue import mr_seam
 
-CERTIFIED_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "certification" / "d11s" / "inputs" / "runtime-config.json"
+CERTIFIED_MANIFEST_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "certification"
+    / "d11s"
+    / "inputs"
+    / "runtime-config.json"
+)
 
 
 # ── Stack Setup Helper ───────────────────────────────────────────────────────
@@ -269,7 +268,9 @@ def _build_test_stack(
             transition_refs=(),
             updated_at=base_time,
             version=1,
-            sync=SyncFields(agent_scope, "fixture-runtime", f"state-{dim_name}", 1, f"idem-{dim_name}-1"),
+            sync=SyncFields(
+                agent_scope, "fixture-runtime", f"state-{dim_name}", 1, f"idem-{dim_name}-1"
+            ),
         )
         orchestrator._state_backend.save_state(st)
 
@@ -310,7 +311,9 @@ def test_foundational_w3_final_sha_is_preserved_and_target_base_is_ancestor():
         text=True,
         check=False,
     )
-    assert show_proc.returncode == 0, f"Frozen W3 SHA {frozen_sha} could not be resolved: {show_proc.stderr}"
+    assert show_proc.returncode == 0, (
+        f"Frozen W3 SHA {frozen_sha} could not be resolved: {show_proc.stderr}"
+    )
     assert "fix(surface): close W3 authority and durability gaps" in show_proc.stdout
 
     target_base_sha = "45cf36a91760f6eb9e39774edd656c1a2fc08a97"
@@ -355,14 +358,9 @@ def test_foundational_intent_path_cannot_read_raw_longing_overlap():
 
 def test_foundational_increasing_longing_monotonic_contact_seeking():
     """Foundational: Increasing longing gives monotonic non-decreasing contact_seeking under Candidate Recipe v2."""
+
     def calc_contact_seeking(longing_val: float) -> float:
-        raw = (
-            0.45 * longing_val
-            + 0.35 * 0.50
-            + 0.30 * 0.50
-            - 0.20 * 0.20
-            - 0.20 * 0.40
-        )
+        raw = 0.45 * longing_val + 0.35 * 0.50 + 0.30 * 0.50 - 0.20 * 0.20 - 0.20 * 0.40
         return max(0.0, min(1.0, raw))
 
     c_low = calc_contact_seeking(0.1)
@@ -379,7 +377,9 @@ def test_foundational_contact_seeking_drives_intent_strength_and_eligibility():
     runtime_id = "fixture-runtime"
     now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=UTC)
     scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-fixture-a")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-fixture-a"
+    )
 
     x = sample_candidate()
     adapter = SurfaceProductionAdapter()
@@ -403,7 +403,9 @@ def test_foundational_contact_seeking_drives_intent_strength_and_eligibility():
             transition_refs=(),
             updated_at=now,
             version=s["version"],
-            sync=SyncFields(agent_scope, runtime_id, s["state_id"], s["version"], f"idem-{s['state_id']}"),
+            sync=SyncFields(
+                agent_scope, runtime_id, s["state_id"], s["version"], f"idem-{s['state_id']}"
+            ),
         )
         for s in x["projected_dynamics"]["states"]
     )
@@ -412,7 +414,9 @@ def test_foundational_contact_seeking_drives_intent_strength_and_eligibility():
         scope=agent_scope,
         origin_runtime_id=runtime_id,
         projected_states=states,
-        sync=SyncFields(agent_scope, runtime_id, x["projected_dynamics"]["source_projection_id"], 1, "idem-proj"),
+        sync=SyncFields(
+            agent_scope, runtime_id, x["projected_dynamics"]["source_projection_id"], 1, "idem-proj"
+        ),
     )
     situation = Situation(
         situation_id="sit-1",
@@ -510,19 +514,27 @@ def test_a_cognitive_ticker_cannot_be_constructed_with_provider_executor():
         )
 
     # 2. AST inspection proves CognitiveTicker.__init__ accepts no expression param
-    tick_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
+    tick_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
+    )
     tree = ast.parse(tick_path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "CognitiveTicker":
             for item in node.body:
                 if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                    param_names = [arg.arg for arg in item.args.args] + [arg.arg for arg in item.args.kwonlyargs]
-                    assert "expression" not in param_names, f"expression found in CognitiveTicker.__init__: {param_names}"
+                    param_names = [arg.arg for arg in item.args.args] + [
+                        arg.arg for arg in item.args.kwonlyargs
+                    ]
+                    assert "expression" not in param_names, (
+                        f"expression found in CognitiveTicker.__init__: {param_names}"
+                    )
 
 
 def test_b_cognitive_ticker_tick_cannot_call_provider_realization(tmp_path: Path):
     """Test B: CognitiveTicker.tick() cannot call provider realization."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -541,7 +553,9 @@ def test_c_cognitive_ticker_source_has_no_call_path_to_expression():
     - realize_after_wake
     - DeterministicExpressionCoordinator.express
     """
-    tick_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
+    tick_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "tick.py"
+    )
     tree = ast.parse(tick_path.read_text(encoding="utf-8"))
 
     forbidden_calls = {"prepare", "realize_after_wake", "express", "_prepare_expression"}
@@ -555,7 +569,10 @@ def test_c_cognitive_ticker_source_has_no_call_path_to_expression():
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and node.func.attr in forbidden_calls:
                 pytest.fail(f"Forbidden call to {node.func.attr} at line {node.lineno} in tick.py")
-            if isinstance(node.func, ast.Name) and node.func.id in forbidden_calls | forbidden_classes:
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id in forbidden_calls | forbidden_classes
+            ):
                 pytest.fail(f"Forbidden call to {node.func.id} at line {node.lineno} in tick.py")
         if isinstance(node, ast.Name) and node.id in forbidden_classes:
             pytest.fail(f"Forbidden reference to class {node.id} at line {node.lineno} in tick.py")
@@ -563,7 +580,9 @@ def test_c_cognitive_ticker_source_has_no_call_path_to_expression():
 
 def test_d_action_policy_allow_creates_wake_signal(tmp_path: Path):
     """Test D: ActionPolicy ALLOW creates WakeSignal."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -662,7 +681,10 @@ def test_h_missing_policy_authority_rejects_wake(tmp_path: Path):
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
     notif = adapter.consume_wake(wake)
     assert notif.eligible is False
-    assert notif.reason in ("rejected:policy_authority_unavailable", "rejected:unsupported_intent_action")
+    assert notif.reason in (
+        "rejected:policy_authority_unavailable",
+        "rejected:unsupported_intent_action",
+    )
 
 
 def test_i_wrong_runtime_id_rejects_wake(tmp_path: Path):
@@ -826,7 +848,9 @@ def test_n_valid_authoritative_wake_admits(tmp_path: Path):
 
 def test_o_valid_pending_wake_context_can_be_used_after_admission(tmp_path: Path):
     """Test O: valid pending wake context can be used after admission."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -849,7 +873,9 @@ def test_o_valid_pending_wake_context_can_be_used_after_admission(tmp_path: Path
 
 def test_p_missing_pending_context_fails_closed(tmp_path: Path):
     """Test P: missing pending context -> fail closed."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -869,31 +895,41 @@ def test_p_missing_pending_context_fails_closed(tmp_path: Path):
 
 def test_q_no_code_reconstructs_action_policy_result_from_wake():
     """Test Q: no code reconstructs ActionPolicyResult(ALLOW) from Wake fields."""
-    adapter_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    adapter_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    )
     source = adapter_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(adapter_path))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "ActionPolicyResult":
-            pytest.fail(f"Forbidden reference to ActionPolicyResult at line {node.lineno} in runtime_adapter.py")
+            pytest.fail(
+                f"Forbidden reference to ActionPolicyResult at line {node.lineno} in runtime_adapter.py"
+            )
 
 
 def test_r_no_code_reconstructs_replacement_situation_from_wake():
     """Test R: no code reconstructs a replacement Situation as authoritative history."""
-    adapter_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    adapter_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    )
     source = adapter_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(adapter_path))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "Situation":
-            pytest.fail(f"Forbidden reference to Situation at line {node.lineno} in runtime_adapter.py")
+            pytest.fail(
+                f"Forbidden reference to Situation at line {node.lineno} in runtime_adapter.py"
+            )
 
 
 def test_s_process_restart_context_loss_reported_as_unsupported(tmp_path: Path):
     """Test S: process restart/context loss is reported as unsupported V1 recovery,
     not silently repaired.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -925,7 +961,9 @@ def test_s_process_restart_context_loss_reported_as_unsupported(tmp_path: Path):
 
 def test_t_successful_proactive_preparation_returns_processing_not_committed(tmp_path: Path):
     """Test T: successful proactive preparation returns PROCESSING, not COMMITTED."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -946,7 +984,9 @@ def test_u_mr_does_not_invoke_production_llm_internally_before_handing_context(t
     """Test U: MR does not invoke production LLM/provider internally before handing
     bounded context to Body.
     """
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -991,7 +1031,9 @@ def test_v_external_prose_must_pass_existing_expression_guard(tmp_path: Path):
 
 def test_w_guard_accept_alone_does_not_mark_delivery_committed(tmp_path: Path):
     """Test W: Guard ACCEPT alone does not mark delivery committed."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1018,7 +1060,9 @@ def test_w_guard_accept_alone_does_not_mark_delivery_committed(tmp_path: Path):
 
 def test_x_successful_explicit_proactive_delivery_commit_transitions_intent(tmp_path: Path):
     """Test X: successful explicit proactive delivery commit transitions the Intent to COMPLETED."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1043,7 +1087,9 @@ def test_x_successful_explicit_proactive_delivery_commit_transitions_intent(tmp_
 
 def test_y_terminal_completion_clears_pending_wake_context(tmp_path: Path):
     """Test Y: terminal completion clears pending wake context."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1066,7 +1112,9 @@ def test_y_terminal_completion_clears_pending_wake_context(tmp_path: Path):
 
 def test_z_duplicate_completion_is_idempotent(tmp_path: Path):
     """Test Z: duplicate completion is idempotent."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1089,7 +1137,9 @@ def test_z_duplicate_completion_is_idempotent(tmp_path: Path):
 
 def test_aa_conflicting_replay_fails_closed(tmp_path: Path):
     """Test AA: conflicting replay fails closed."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1131,7 +1181,9 @@ def _setup_production_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("MR_ENABLED", "true")
 
 
-def test_ab_production_composition_has_durable_intent_lifecycle_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ab_production_composition_has_durable_intent_lifecycle_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Test AB: production composition has durable Intent lifecycle authority."""
     _setup_production_env(tmp_path, monkeypatch)
 
@@ -1186,7 +1238,9 @@ def test_ab_production_composition_has_durable_intent_lifecycle_authority(tmp_pa
     assert isinstance(orch.cognitive_tick_components["backend"], SqliteIntentBackend)
 
 
-def test_ac_production_composition_has_action_policy_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ac_production_composition_has_action_policy_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Test AC: production composition has ActionPolicy authority."""
     _setup_production_env(tmp_path, monkeypatch)
 
@@ -1240,7 +1294,9 @@ def test_ac_production_composition_has_action_policy_authority(tmp_path: Path, m
     assert isinstance(orch.cognitive_tick_components["policy"], DeterministicActionPolicy)
 
 
-def test_ad_generic_proactive_contact_infrastructure_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ad_generic_proactive_contact_infrastructure_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Proves generic proactive machinery only.
     Does NOT prove longing contact chain (requires surface_control_weights
     with contact_seeking mapping).
@@ -1324,7 +1380,9 @@ def test_ad_generic_proactive_contact_infrastructure_verified(tmp_path: Path, mo
     assert report.wake_signal.action_type == "proactive_message"
 
 
-def test_production_composition_wires_context_preparer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_production_composition_wires_context_preparer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Verify production composition wires ProactiveContextPreparer without manual assignment."""
     _setup_production_env(tmp_path, monkeypatch)
 
@@ -1352,7 +1410,9 @@ def test_production_composition_wires_context_preparer(tmp_path: Path, monkeypat
     assert hasattr(preparer, "_coordinator") is False
 
 
-def test_ae_xiyue_adapter_can_receive_and_start_proactive_host_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_ae_xiyue_adapter_can_receive_and_start_proactive_host_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """Test AE: Xiyue adapter can receive/start the proactive Host path."""
     _setup_production_env(tmp_path, monkeypatch)
 
@@ -1379,7 +1439,9 @@ def test_af_bounded_proactive_context_reaches_external_body_seam_without_fake_us
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Test AF: bounded proactive context reaches the external Body seam without a fake inbound user turn."""
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1397,27 +1459,39 @@ def test_af_bounded_proactive_context_reaches_external_body_seam_without_fake_us
     assert turn_res.bounded_context.action_taken == wake.action_type
 
     # No fake inbound user Evidence created in fact store
-    facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    facts = (
+        orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    )
     user_msg_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
     assert len(user_msg_evs) == 0
 
 
 def test_ag_no_internal_default_stub_agent_used_as_production_body(tmp_path: Path):
     """Test AG: no internal default/stub Agent is used to claim production success."""
-    adapter_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    adapter_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    )
     source = adapter_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(adapter_path))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == "_DefaultAgent":
-            pytest.fail(f"Forbidden reference to _DefaultAgent in runtime_adapter.py at line {node.lineno}")
+            pytest.fail(
+                f"Forbidden reference to _DefaultAgent in runtime_adapter.py at line {node.lineno}"
+            )
 
 
 def test_ah_downstream_transport_remains_outside_mr_and_config_gap_verified():
     """Test AH: downstream transport remains outside MR, and runtime-config gap is verified."""
     from mind_runtime.validation import decode_runtime_manifest, load_runtime_config_manifest
 
-    manifest_path = Path(__file__).resolve().parents[2] / "certification" / "d11s" / "inputs" / "runtime-config.json"
+    manifest_path = (
+        Path(__file__).resolve().parents[2]
+        / "certification"
+        / "d11s"
+        / "inputs"
+        / "runtime-config.json"
+    )
     assert manifest_path.exists()
     manifest = decode_runtime_manifest(load_runtime_config_manifest(manifest_path))
 
@@ -1426,7 +1500,9 @@ def test_ah_downstream_transport_remains_outside_mr_and_config_gap_verified():
     assert len(reach_out_rules) == 0
 
     # Inspect manifest.action_policy.rules:
-    proactive_policy_rules = [r for r in manifest.action_policy.rules if getattr(r, "proactive", False)]
+    proactive_policy_rules = [
+        r for r in manifest.action_policy.rules if getattr(r, "proactive", False)
+    ]
     assert len(proactive_policy_rules) == 0
 
     # Inspect surface mode:
@@ -1444,7 +1520,9 @@ def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
     """Trace ordering proves:
     policy_allow < wake_created < host_wake_admitted < proactive_body_entry <= proactive_expression_context < expression_guard < proactive_turn_committed
     """
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1495,7 +1573,9 @@ def test_trace_ordering_proves_causal_sequence(tmp_path: Path):
 
 def test_no_proactive_expression_artifact_before_admitted_wake(tmp_path: Path):
     """No proactive expression artifact exists before admitted wake."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1510,7 +1590,9 @@ def test_no_proactive_expression_artifact_before_admitted_wake(tmp_path: Path):
 
 def test_wake_does_not_create_user_evidence(tmp_path: Path):
     """Wake does not create user Evidence."""
-    orchestrator, clock, _, fake_agent = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, fake_agent = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1519,14 +1601,18 @@ def test_wake_does_not_create_user_evidence(tmp_path: Path):
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
     adapter.begin_proactive_turn(report.wake_signal)
 
-    facts = orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    facts = (
+        orchestrator._fact_backend.all(user_scope) if hasattr(orchestrator, "_fact_backend") else ()
+    )
     user_message_evs = [f for f in facts if getattr(f, "source_type", None) == "user_message"]
     assert len(user_message_evs) == 0
 
 
 def test_wake_does_not_synthesize_host_turn_request(tmp_path: Path):
     """Wake does not synthesize HostTurnRequest."""
-    adapter_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    adapter_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "host" / "runtime_adapter.py"
+    )
     source = adapter_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(adapter_path))
 
@@ -1557,12 +1643,18 @@ def test_longing_anti_spam_invariant_remains_valid():
         LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
         == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
     )
-    assert validate_longing_anti_spam_invariant(
-        longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=1800.0
-    ) is True
-    assert validate_longing_anti_spam_invariant(
-        longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=3600.0
-    ) is True
+    assert (
+        validate_longing_anti_spam_invariant(
+            longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=1800.0
+        )
+        is True
+    )
+    assert (
+        validate_longing_anti_spam_invariant(
+            longing=0.9, base_cooldown_seconds=1800.0, effective_cooldown_seconds=3600.0
+        )
+        is True
+    )
 
     with pytest.raises(ValueError, match="Longing anti-spam violation"):
         validate_longing_anti_spam_invariant(
@@ -1576,13 +1668,15 @@ def test_proactive_surface_parameter_uses_typed_surface_contract():
     surface_param = sig.parameters.get("surface")
     assert surface_param is not None
     annotation = surface_param.annotation
-    assert annotation != object
+    assert annotation is not object
     assert "SurfaceProjectionResult" in str(annotation)
 
 
 def test_no_type_ignore_on_proactive_path():
     """No type-ignore is required on the proactive expression path."""
-    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    express_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    )
     lines = express_path.read_text(encoding="utf-8").splitlines()
     for lineno, line in enumerate(lines, 1):
         if "# type: ignore" in line:
@@ -1591,7 +1685,9 @@ def test_no_type_ignore_on_proactive_path():
 
 def test_proactive_preparation_does_not_read_compiler_config():
     """Proactive preparation does not read _compiler._config directly."""
-    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    express_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    )
     source = express_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(express_path))
 
@@ -1603,7 +1699,9 @@ def test_proactive_preparation_does_not_read_compiler_config():
 
 def test_proactive_preparation_does_not_read_orchestrator_persona():
     """Proactive preparation does not read _orchestrator._persona directly."""
-    express_path = Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    express_path = (
+        Path(__file__).resolve().parents[2] / "src" / "mind_runtime" / "cognition" / "express.py"
+    )
     source = express_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(express_path))
 
@@ -1622,14 +1720,15 @@ def test_public_host_adapter_has_no_run_proactive_turn():
     """
     from mind_runtime.host.port import MindRuntimeHostPort
     from mind_runtime.host.runtime_adapter import MindRuntimeHostAdapter
-    from mind_runtime.host.xiyue_adapter import XiyueMRAdapter
 
     assert not hasattr(MindRuntimeHostPort, "run_proactive_turn")
     assert not hasattr(MindRuntimeHostAdapter, "run_proactive_turn")
     assert not hasattr(XiyueMRAdapter, "run_proactive_turn")
 
 
-def test_production_composition_wires_provider_free_preparer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_production_composition_wires_provider_free_preparer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     """B. Load production composition via mr_seam._load_production_composition().
     Construct default_adapter().
     Verify orchestrator.proactive_context_preparer is an instance of ProactiveContextPreparer.
@@ -1667,7 +1766,9 @@ def test_begin_proactive_turn_renders_provider_envelope(tmp_path: Path):
     Verify result.bounded_context.provider_envelope_text is non-empty string.
     Verify DeterministicContextRenderer.verify_provider_information_isolation(envelope_text) is True.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1683,6 +1784,7 @@ def test_begin_proactive_turn_renders_provider_envelope(tmp_path: Path):
     envelope = turn_res.bounded_context.provider_envelope_text
     assert isinstance(envelope, str) and len(envelope) > 0
     from mind_runtime.expression.renderer import DeterministicContextRenderer
+
     assert DeterministicContextRenderer.verify_provider_information_isolation(envelope) is True
 
 
@@ -1693,7 +1795,9 @@ def test_commit_without_guard_accept_fails_closed(tmp_path: Path):
     Assert "rejected:not_delivery_eligible" in result.reason_codes
     Assert Intent in store is STILL in IntentStatus.ALLOWED, NOT COMPLETED.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1722,7 +1826,9 @@ def test_commit_with_guard_reject_fails_closed(tmp_path: Path):
     Assert commit returns FAILED.
     Assert Intent was already transitioned to SUPERSEDED by guard reject.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1754,7 +1860,9 @@ def test_guard_reject_transitions_intent_to_superseded(tmp_path: Path):
     Assert Intent in store is now IntentStatus.SUPERSEDED.
     Assert pending contexts are cleared.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1789,7 +1897,9 @@ def test_successful_proactive_turn_lifecycle(tmp_path: Path):
     policy_allow < wake_created < host_wake_admitted < proactive_body_entry
     <= proactive_expression_context < expression_guard < proactive_turn_committed
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1838,7 +1948,9 @@ def test_abort_proactive_turn_transitions_to_superseded(tmp_path: Path):
     Assert Intent in store is IntentStatus.SUPERSEDED.
     Assert pending contexts cleared.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1867,7 +1979,9 @@ def test_abort_transition_failure_fails_closed(tmp_path: Path, monkeypatch: pyte
     Assert abort_proactive_turn returns HostTurnStatus.FAILED.
     Assert context is PRESERVED, not cleared.
     """
-    orchestrator, clock, _, _ = _build_test_stack(tmp_path, initial_longing=0.90, with_expression=True)
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
     now = clock.now() + timedelta(minutes=5)
     clock.advance(timedelta(minutes=5))
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
@@ -1905,13 +2019,21 @@ def test_certified_manifest_proactive_gap_verified():
     """
     from mind_runtime.validation import decode_runtime_manifest, load_runtime_config_manifest
 
-    manifest_path = Path(__file__).resolve().parents[2] / "certification" / "d11s" / "inputs" / "runtime-config.json"
+    manifest_path = (
+        Path(__file__).resolve().parents[2]
+        / "certification"
+        / "d11s"
+        / "inputs"
+        / "runtime-config.json"
+    )
     manifest = decode_runtime_manifest(load_runtime_config_manifest(manifest_path))
 
     reach_out_rules = [r for r in manifest.intent_engine.rules if r.kind == "reach_out"]
     assert len(reach_out_rules) == 0
 
-    proactive_policy_rules = [r for r in manifest.action_policy.rules if getattr(r, "proactive", False)]
+    proactive_policy_rules = [
+        r for r in manifest.action_policy.rules if getattr(r, "proactive", False)
+    ]
     assert len(proactive_policy_rules) == 0
 
     mode = getattr(manifest.decision_context, "mode", None)
@@ -1925,7 +2047,8 @@ def test_host_proactive_result_contract_clean():
     Assert as_dict() does not contain 'proactive_expression'.
     """
     import dataclasses
-    from mind_runtime.contracts.host import HostProactiveTurnResult, HostDecisionContext
+
+    from mind_runtime.contracts.host import HostProactiveTurnResult
 
     field_names = [f.name for f in dataclasses.fields(HostProactiveTurnResult)]
     assert "proactive_expression" not in field_names
@@ -1942,3 +2065,54 @@ def test_host_proactive_result_contract_clean():
     )
     d = res.as_dict()
     assert "proactive_expression" not in d
+
+
+def test_abort_proactive_turn_without_lifecycle_fails_closed(tmp_path: Path):
+    """Verify abort_proactive_turn fails closed when lifecycle authority is unavailable.
+
+    Covers both:
+    1. Pending execution context present (decision_context_ref populated)
+    2. Pending execution context absent (decision_context_ref is None)
+    In both cases:
+    - HostTurnStatus.FAILED, HostStatus.FAILED
+    - reason_codes contain 'intent_authority_unavailable'
+    - No provider invocation, no delivery, no committed intent
+    """
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+    turn_res = adapter.begin_proactive_turn(wake)
+    assert turn_res.status == HostTurnStatus.PROCESSING
+    assert wake.wake_id in adapter._pending_exec_contexts
+
+    # Remove lifecycle from components and orchestrator
+    assert isinstance(orchestrator.cognitive_tick_components, dict)
+    orchestrator.cognitive_tick_components.pop("lifecycle", None)
+    orchestrator.cognitive_tick_components.pop("intent_lifecycle", None)
+    orchestrator._intent_lifecycle = None
+    if hasattr(orchestrator, "intent_lifecycle"):
+        orchestrator.intent_lifecycle = None
+
+    # 1. Abort with pending_exec present
+    abort_res = adapter.abort_proactive_turn(wake.wake_id, reason="delivery_timeout")
+    assert abort_res.status == HostTurnStatus.FAILED
+    assert abort_res.outcome == HostStatus.FAILED
+    assert "intent_authority_unavailable" in abort_res.reason_codes
+    assert abort_res.decision_context_ref == turn_res.decision_context_ref
+
+    # 2. Abort with pending_exec absent
+    adapter._pending_exec_contexts.pop(wake.wake_id, None)
+    abort_res_no_exec = adapter.abort_proactive_turn(wake.wake_id, reason="delivery_timeout")
+    assert abort_res_no_exec.status == HostTurnStatus.FAILED
+    assert abort_res_no_exec.outcome == HostStatus.FAILED
+    assert "intent_authority_unavailable" in abort_res_no_exec.reason_codes
+    assert abort_res_no_exec.decision_context_ref is None

@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
@@ -112,9 +112,7 @@ def render_bounded_context(bounded) -> str | None:
         # SURFACE_V1 Host transports the exact renderer-admitted bytes.
         from mind_runtime.expression.renderer import DeterministicContextRenderer
 
-        DeterministicContextRenderer.verify_provider_information_isolation(
-            envelope_text
-        )
+        DeterministicContextRenderer.verify_provider_information_isolation(envelope_text)
         return envelope_text
     lines = [
         "MR CURRENT CONTEXT",
@@ -194,9 +192,7 @@ class XiyueMRAdapter:
                 user_message=message,
                 channel=channel,
                 session_id=session_id,
-                host_metadata=(
-                    ("persona_id", self._persona_id or ""),
-                ),
+                host_metadata=(("persona_id", self._persona_id or ""),),
             )
             result = self._port.begin_turn(request)
             if result.status in (HostTurnStatus.FAILED,):
@@ -229,7 +225,9 @@ class XiyueMRAdapter:
             ok = receipt.status == HostStatus.OK
             _logger.info(
                 "MR commit interaction=%s status=%s reason=%s",
-                handle.interaction_id, receipt.status, receipt.reason_codes,
+                handle.interaction_id,
+                receipt.status,
+                receipt.reason_codes,
             )
             return ok
         except Exception as exc:  # noqa: BLE001
@@ -241,9 +239,13 @@ class XiyueMRAdapter:
         if handle is None:
             return False
         try:
-            result = self._port.guard_provider_prose(HostProviderProseRequest(
-                turn_id=handle.turn_id, interaction_id=handle.interaction_id, prose=prose,
-            ))
+            result = self._port.guard_provider_prose(
+                HostProviderProseRequest(
+                    turn_id=handle.turn_id,
+                    interaction_id=handle.interaction_id,
+                    prose=prose,
+                )
+            )
             return result.status is HostStatus.OK
         except Exception as exc:  # noqa: BLE001 — Host boundary
             _logger.warning("MR provider prose guard failed: %s", exc)
@@ -264,7 +266,9 @@ class XiyueMRAdapter:
             )
             _logger.info(
                 "MR abort interaction=%s status=%s reason=%s",
-                handle.interaction_id, receipt.status, receipt.reason_codes,
+                handle.interaction_id,
+                receipt.status,
+                receipt.reason_codes,
             )
             return receipt.status == HostStatus.OK
         except Exception as exc:  # noqa: BLE001

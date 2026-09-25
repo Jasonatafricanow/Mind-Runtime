@@ -29,9 +29,11 @@ Invariants verified:
 - Exactly one WakeSignal emitted under competition with longing
 """
 
+# Historical consumer audit keeps long evidence strings readable in source.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
-import ast
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -40,26 +42,13 @@ from pathlib import Path
 import pytest
 
 from mind_runtime.binding_registry import BindingRegistry
-from mind_runtime.cognition.tick import (
-    CognitiveTicker,
-    CognitiveTickReport,
-    build_cognitive_ticker,
-)
 from mind_runtime.contracts import (
-    ActionDecision,
-    ActionPermission,
-    ActionPolicyInput,
-    ActionPolicyResult,
     ExpressionDisposition,
     HostDecisionContext,
-    HostProactiveTurnResult,
     HostStatus,
     HostTurnStatus,
-    HostWakeNotification,
-    Intent,
     IntentEngineInput,
     IntentStatus,
-    PolicyResources,
     ProjectedMindState,
     ReconsiderationPolicy,
     RuntimeState,
@@ -67,22 +56,16 @@ from mind_runtime.contracts import (
     ScopeDomain,
     Situation,
     SyncFields,
-    WakeSignal,
 )
 from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
-    LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
-    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
-    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
     FastStateStatus,
-    validate_longing_anti_spam_invariant,
     validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.expression import (
-    DecisionContextCompiler,
     DeterministicContextRenderer,
     DeterministicExpressionGuardChain,
     ExpressionGuardConfig,
@@ -90,11 +73,13 @@ from mind_runtime.expression import (
 from mind_runtime.expression.context import DecisionContextConfig
 from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
-from mind_runtime.intents.policy import ActionPolicyConfig, DeterministicActionPolicy, IntentPolicyRule
+from mind_runtime.intents.policy import (
+    ActionPolicyConfig,
+    IntentPolicyRule,
+)
 from mind_runtime.persona_publication import PersonaConfigPublicationRepository
 from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment
 from mind_runtime.shadow.runtime_loop import build_runtime_stack, run_cognitive_tick
-from mind_runtime.surface.evaluator import D_PREFIX
 from mind_runtime.surface.recipe import (
     CANDIDATE_RECIPE_DIGEST,
     CANDIDATE_RECIPE_ID,
@@ -313,7 +298,9 @@ def test_c_increasing_sharing_urge_monotonically_increases_share_intent_strength
     )
     engine = DeterministicIntentEngine((share_rule,), "fixture-runtime")
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona"
+    )
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     situation = Situation(
         situation_id="sit-1",
@@ -375,7 +362,7 @@ def test_c_increasing_sharing_urge_monotonically_increases_share_intent_strength
 
     # Monotonically strictly increasing
     for i in range(len(strengths) - 1):
-        assert strengths[i] < strengths[i + 1], f"Expected {strengths[i]} < {strengths[i+1]}"
+        assert strengths[i] < strengths[i + 1], f"Expected {strengths[i]} < {strengths[i + 1]}"
 
 
 def test_d_low_sharing_urge_below_threshold_produces_no_candidate() -> None:
@@ -395,7 +382,9 @@ def test_d_low_sharing_urge_below_threshold_produces_no_candidate() -> None:
     )
     engine = DeterministicIntentEngine((share_rule,), "fixture-runtime")
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona"
+    )
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     situation = Situation(
         situation_id="sit-1",
@@ -470,7 +459,9 @@ def test_e_high_sharing_urge_produces_spontaneous_share_candidate() -> None:
     )
     engine = DeterministicIntentEngine((share_rule,), "fixture-runtime")
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona"
+    )
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     situation = Situation(
         situation_id="sit-1",
@@ -545,7 +536,9 @@ def test_f_changing_curiosity_alone_does_not_change_spontaneous_share_score() ->
     )
     engine = DeterministicIntentEngine((share_rule,), "fixture-runtime")
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona"
+    )
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     situation = Situation(
         situation_id="sit-f",
@@ -645,7 +638,9 @@ def test_g_changing_sadness_alone_does_not_change_spontaneous_share_score() -> N
     )
     engine = DeterministicIntentEngine((share_rule,), "fixture-runtime")
     user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
-    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona")
+    agent_scope = Scope(
+        domain=ScopeDomain.AGENT, agent_id="fixture-agent", persona_id="fixture-persona"
+    )
     now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     situation = Situation(
         situation_id="sit-g",
@@ -1042,11 +1037,14 @@ def test_v_guard_reject_fails_closed(tmp_path: Path) -> None:
 def test_w_higher_sharing_urge_cannot_shorten_proactive_cooldown(tmp_path: Path) -> None:
     """W. Higher sharing_urge cannot shorten proactive cooldown."""
     # Invariant validator check
-    assert validate_sharing_urge_anti_spam_invariant(
-        sharing_urge=1.0,
-        base_cooldown_seconds=1800.0,
-        effective_cooldown_seconds=1800.0,
-    ) is True
+    assert (
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=1.0,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
     with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
         validate_sharing_urge_anti_spam_invariant(
             sharing_urge=1.0,
@@ -1184,7 +1182,9 @@ def test_certified_manifest_proactive_share_gap_verified() -> None:
 
     # Inspect manifest.action_policy.rules
     proactive_share_rules = [
-        r for r in manifest.action_policy.rules if getattr(r, "action_type", "") == "proactive_share"
+        r
+        for r in manifest.action_policy.rules
+        if getattr(r, "action_type", "") == "proactive_share"
     ]
     assert len(proactive_share_rules) == 0
 

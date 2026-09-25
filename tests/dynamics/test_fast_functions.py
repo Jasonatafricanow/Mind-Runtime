@@ -23,17 +23,17 @@ from pathlib import Path
 import pytest
 
 from mind_runtime.dynamics.fast_functions import (
-    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY,
-    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
-    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
-    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY,
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
     LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
     SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
     SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
@@ -133,11 +133,14 @@ def test_longing_controls_contact_pressure_without_frequency_permission() -> Non
         LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
         == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
     )
-    assert validate_longing_anti_spam_invariant(
-        longing=0.9,
-        base_cooldown_seconds=1800.0,
-        effective_cooldown_seconds=1800.0,
-    ) is True
+    assert (
+        validate_longing_anti_spam_invariant(
+            longing=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
     with pytest.raises(ValueError, match="Longing anti-spam violation"):
         validate_longing_anti_spam_invariant(
             longing=0.9,
@@ -161,9 +164,7 @@ def test_h_fatigue_is_associated_only_with_cognitive_rest_mode_ownership() -> No
     spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.fatigue"]
     assert spec.function_kind == FastFunctionKind.COGNITIVE_REST_PRESSURE
     assert spec.status == FastStateStatus.REGISTERED_ONLY
-    assert (
-        "cognitive-mode" in spec.primary_consumer or "homeostasis" in spec.primary_consumer
-    )
+    assert "cognitive-mode" in spec.primary_consumer or "homeostasis" in spec.primary_consumer
 
 
 def test_i_legacy_states_are_not_deleted() -> None:
@@ -179,15 +180,17 @@ def test_i_legacy_states_are_not_deleted() -> None:
         assert key not in FAST_FUNCTION_V1_REGISTRY
 
     # But they exist in persona definitions / configurations
-    kayla_json_path = (
-        Path(__file__).resolve().parents[2] / "configs" / "personas" / "kayla.json"
-    )
+    kayla_json_path = Path(__file__).resolve().parents[2] / "configs" / "personas" / "kayla.json"
     assert kayla_json_path.exists()
     with open(kayla_json_path, encoding="utf-8") as f:
         kayla_data = json.load(f)
     kayla_dims = {d["dimension"] for d in kayla_data["dimensions"]}
 
-    for key in ("agent.affect.closeness_craving", "agent.affect.social_pull", "agent.affect.introspective_pull"):
+    for key in (
+        "agent.affect.closeness_craving",
+        "agent.affect.social_pull",
+        "agent.affect.introspective_pull",
+    ):
         assert key in kayla_dims, f"Legacy state {key} missing from kayla.json"
 
     # anxiety exists in kayla_v0 test profile
@@ -225,7 +228,8 @@ def test_j_module_has_no_dependency_on_provider_body_llm() -> None:
     for imported in imported_names:
         for forbidden in forbidden_roots:
             assert forbidden not in imported.lower(), (
-                f"Forbidden dependency {forbidden!r} detected in fast_functions.py import: {imported}"
+                f"Forbidden dependency {forbidden!r} detected in "
+                f"fast_functions.py import: {imported}"
             )
 
 
@@ -233,7 +237,14 @@ def test_k_no_numeric_psychological_calibration_is_introduced() -> None:
     """K. no numeric psychological calibration is introduced."""
     # Ensure FastStateFunctionSpec does not define psychological numeric fields
     spec_fields = set(FastStateFunctionSpec.__dataclass_fields__.keys())
-    psychological_fields = {"baseline", "sensitivity", "recovery_rate", "ceiling", "floor", "decay_rate"}
+    psychological_fields = {
+        "baseline",
+        "sensitivity",
+        "recovery_rate",
+        "ceiling",
+        "floor",
+        "decay_rate",
+    }
     assert not (spec_fields & psychological_fields)
 
     # Fatigue must be REGISTERED_ONLY without provisional numeric parameters
@@ -283,11 +294,14 @@ def test_sharing_urge_maps_to_proactive_share() -> None:
         SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY
         == SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
     )
-    assert validate_sharing_urge_anti_spam_invariant(
-        sharing_urge=0.9,
-        base_cooldown_seconds=1800.0,
-        effective_cooldown_seconds=1800.0,
-    ) is True
+    assert (
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
     with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
         validate_sharing_urge_anti_spam_invariant(
             sharing_urge=0.9,
@@ -312,11 +326,14 @@ def test_curiosity_maps_to_inquiry_exploration() -> None:
         CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY
         == CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
     )
-    assert validate_curiosity_anti_spam_invariant(
-        curiosity=0.9,
-        base_cooldown_seconds=1800.0,
-        effective_cooldown_seconds=1800.0,
-    ) is True
+    assert (
+        validate_curiosity_anti_spam_invariant(
+            curiosity=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
     with pytest.raises(ValueError, match="Curiosity anti-spam violation"):
         validate_curiosity_anti_spam_invariant(
             curiosity=0.9,

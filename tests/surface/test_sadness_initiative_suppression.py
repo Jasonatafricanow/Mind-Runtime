@@ -23,6 +23,9 @@ Covers Sections 15 through 20:
   semantic authority separation invariant, and absence of synthetic withdrawal actions.
 """
 
+# Historical consumer audit keeps long evidence strings readable in source.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -35,12 +38,10 @@ import pytest
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPermission,
-    ActionPolicyInput,
     ActionPolicyResult,
     Intent,
     IntentEngineInput,
     IntentStatus,
-    PolicyResources,
     ProjectedMindState,
     ReconsiderationPolicy,
     RuntimeState,
@@ -48,12 +49,10 @@ from mind_runtime.contracts import (
     ScopeDomain,
     Situation,
     SyncFields,
-    WakeSignal,
 )
 from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
-    FAST_FUNCTION_V1_SPECS,
     SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
     SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
     FastFunctionKind,
@@ -70,8 +69,6 @@ from mind_runtime.expression.expression_map import (
     CANDIDATE_MAP_ID,
     CANDIDATE_MAP_VERSION,
     CANDIDATE_RECIPE_DIGEST,
-    CANDIDATE_RECIPE_ID,
-    CANDIDATE_RECIPE_VERSION,
     CONTROL_TO_GUIDANCE,
     GUIDANCE_TO_CONTROL,
     evaluate_control_band,
@@ -79,15 +76,21 @@ from mind_runtime.expression.expression_map import (
 )
 from mind_runtime.expression.renderer import DeterministicContextRenderer
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
-from mind_runtime.intents.policy import ActionPolicyConfig, DeterministicActionPolicy, IntentPolicyRule
+from mind_runtime.intents.policy import (
+    ActionPolicyConfig,
+    DeterministicActionPolicy,
+    IntentPolicyRule,
+)
 from mind_runtime.intents.surface_validator import (
     ELIGIBLE_INTENT_SURFACE_CONTROLS,
     INELIGIBLE_INTENT_SURFACE_CONTROLS,
-    get_control_transitive_roots,
-    validate_intent_rule_surface_overlap,
 )
 from mind_runtime.surface import SurfaceProductionAdapter
-from mind_runtime.surface.recipe import CANDIDATE_RECIPE_ID, CANDIDATE_RECIPE_VERSION, MANIFEST, candidate_recipe
+from mind_runtime.surface.recipe import (
+    CANDIDATE_RECIPE_ID,
+    CANDIDATE_RECIPE_VERSION,
+    candidate_recipe,
+)
 from tests.surface.spec_support import sample_candidate, state, trait
 
 # Authoritative audit status constants
@@ -446,8 +449,7 @@ def test_i_candidate_expression_map_v2_digest_preserved() -> None:
     assert CANDIDATE_MAP_ID == "surface-v1-candidate-map"
     assert CANDIDATE_MAP_VERSION == 2
     assert (
-        CANDIDATE_MAP_DIGEST
-        == "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
+        CANDIDATE_MAP_DIGEST == "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
     )
 
 

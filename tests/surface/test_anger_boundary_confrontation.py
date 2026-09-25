@@ -15,6 +15,9 @@ Covers Sections 15 through 18:
   deferred intent branch, eligible surface control verification, and final audit verdict.
 """
 
+# Historical consumer audit keeps long evidence strings readable in source.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -439,8 +442,7 @@ def test_j_candidate_expression_map_v2_digest_preserved() -> None:
     assert CANDIDATE_MAP_ID == "surface-v1-candidate-map"
     assert CANDIDATE_MAP_VERSION == 2
     assert (
-        CANDIDATE_MAP_DIGEST
-        == "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
+        CANDIDATE_MAP_DIGEST == "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
     )
 
 
@@ -498,9 +500,7 @@ def test_o_decision_context_compiler_surface_v1_includes_directness() -> None:
     guidance_items = [
         item for item in context.expression_context if item.kind.value == "surface_guidance"
     ]
-    directness_item = next(
-        (item for item in guidance_items if item.key == "directness"), None
-    )
+    directness_item = next((item for item in guidance_items if item.key == "directness"), None)
     assert directness_item is not None
     assert directness_item.value == "high"
 
@@ -539,12 +539,12 @@ def test_p_renderer_isolation_and_zero_anger_leak() -> None:
 
 def test_q_high_confrontation_alone_cannot_produce_action_permission() -> None:
     """Q. Elevated anger / confrontation pressure alone CANNOT produce ActionPermission.ALLOW."""
+    now = datetime(2026, 9, 25, 10, 0, 0, tzinfo=UTC)
     assert (
         ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
         == "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
     )
     # ActionPolicy alone owns action permissions; Surface/confrontation has zero permission authority.
-    now = datetime(2026, 9, 25, 10, 0, 0, tzinfo=UTC)
     scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-a")
     policy = DeterministicActionPolicy(
         ActionPolicyConfig(
@@ -629,7 +629,6 @@ def test_s_directness_guidance_cannot_emit_wake_signal() -> None:
     """S. Directness guidance cannot emit a WakeSignal or trigger ticker wakeup."""
     # A ticker tick requires an ActionPolicy result with ALLOW to emit a WakeSignal.
     # Qualitative directness is an expression-time artifact, downstream of policy gating.
-    now = datetime(2026, 9, 25, 10, 0, 0, tzinfo=UTC)
     scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id="persona-a")
 
     permission_deny = ActionPermission(
@@ -775,7 +774,8 @@ def test_y_no_certified_boundary_event_to_intent_authority() -> None:
 
     # E. Verify no certified event->Intent binding for boundary assertion exists
     boundary_event_bindings = [
-        r for r in intent_rules
+        r
+        for r in intent_rules
         if r.get("event_kind")
         and ("boundary" in r["event_kind"].lower() or "confrontation" in r["event_kind"].lower())
     ]

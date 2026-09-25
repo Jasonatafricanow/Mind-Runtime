@@ -42,9 +42,6 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
-    ActionDecision,
-    ActionPermission,
-    ActionPolicyResult,
     Authority,
     AuthorityLevel,
     Evidence,
@@ -52,17 +49,8 @@ from mind_runtime.contracts import (
     IntentStatus,
     Interaction,
     InteractionStatus,
-    ProjectedMindState,
-    Situation,
     SyncFields,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class _GuardAdmission:
-    disposition: ExpressionDisposition
-    guard_ref: str | None
-    accepted_at: datetime
 from mind_runtime.contracts.host import (
     HostAbortReceipt,
     HostAbortRequest,
@@ -87,6 +75,14 @@ from mind_runtime.pipeline.orchestrator import (
     TurnState,
 )
 from mind_runtime.pipeline.trace import TraceRecorder
+
+
+@dataclass(frozen=True, slots=True)
+class _GuardAdmission:
+    disposition: ExpressionDisposition
+    guard_ref: str | None
+    accepted_at: datetime
+
 
 _logger = logging.getLogger(__name__)
 
@@ -200,9 +196,9 @@ def _step_slow_state_summary(dctx) -> str | None:
 
         items = dctx.expression_context or ()
         slow = [
-            it for it in items
-            if it.kind is ExpressionContextKind.INTERNAL_STATE
-            and it.key.startswith("slow_")
+            it
+            for it in items
+            if it.kind is ExpressionContextKind.INTERNAL_STATE and it.key.startswith("slow_")
         ]
         if not slow:
             return None
@@ -259,9 +255,11 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
         emotional_state += f"; slow_state: {slow_summary}"
     situation_summary = f"situation_ref={ctx.situation_ref}"
     renderer = orchestrator.context_renderer
-    meaning = renderer.render_cognitive_meaning(ctx) if hasattr(
-        renderer, "render_cognitive_meaning"
-    ) else None
+    meaning = (
+        renderer.render_cognitive_meaning(ctx)
+        if hasattr(renderer, "render_cognitive_meaning")
+        else None
+    )
     return HostDecisionContext(
         intent_summary=intent_summary,
         emotional_state=emotional_state,
@@ -436,9 +434,7 @@ class MindRuntimeHostAdapter:
                 reason_codes=("begin_failed", type(exc).__name__),
             )
 
-    def _handle_replay(
-        self, request: HostTurnRequest, terminal: _TerminalRecord
-    ) -> HostTurnResult:
+    def _handle_replay(self, request: HostTurnRequest, terminal: _TerminalRecord) -> HostTurnResult:
         """Handle a replay of a terminal interaction_id.
 
         - Same user_message: return ALREADY_PROCESSED + previous bounded
@@ -536,8 +532,11 @@ class MindRuntimeHostAdapter:
             verdict = self._orchestrator.guard_surface_provider_prose(request.prose)
             return HostProviderProseResult(
                 interaction_id=request.interaction_id,
-                status=(HostStatus.OK if verdict.disposition is ExpressionDisposition.ACCEPT
-                        else HostStatus.FAILED),
+                status=(
+                    HostStatus.OK
+                    if verdict.disposition is ExpressionDisposition.ACCEPT
+                    else HostStatus.FAILED
+                ),
                 reason_codes=tuple(verdict.violations),
             )
         except (ValueError, RuntimeError) as exc:
@@ -597,8 +596,7 @@ class MindRuntimeHostAdapter:
         if request.include_trace:
             trace = self._trace.trace(request.interaction_id)
             trace_pairs = tuple(
-                (entry.stage, entry.outcome, entry.ref, _iso(entry.at))
-                for entry in trace
+                (entry.stage, entry.outcome, entry.ref, _iso(entry.at)) for entry in trace
             )
         else:
             trace_pairs = ()
@@ -620,9 +618,7 @@ class MindRuntimeHostAdapter:
             situation_ref=_situation_ref(self._orchestrator),
             expression_ref=_expression_ref(self._orchestrator),
             projection_ref=(
-                _projection_ref(self._orchestrator)
-                if request.include_projection
-                else None
+                _projection_ref(self._orchestrator) if request.include_projection else None
             ),
             trace=trace_pairs,
             recovery_decision=recovery,
@@ -760,9 +756,7 @@ class MindRuntimeHostAdapter:
                         break
 
             reason = (
-                "rejected:scope_mismatch"
-                if exists_other_scope
-                else "rejected:unknown_intent_id"
+                "rejected:scope_mismatch" if exists_other_scope else "rejected:unknown_intent_id"
             )
             return HostWakeNotification(
                 wake_id=wake.wake_id,
@@ -884,15 +878,19 @@ class MindRuntimeHostAdapter:
     ) -> ProactiveContextPreparer | ProactiveExpressionPreparer | None:
         if self._expression_preparer is not None:
             return self._expression_preparer
-        direct_ctx = getattr(self._orchestrator, "proactive_context_preparer", None)
-        if direct_ctx is not None and isinstance(direct_ctx, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
+        direct_ctx: object = getattr(self._orchestrator, "proactive_context_preparer", None)
+        if isinstance(
+            direct_ctx, (ProactiveContextPreparer, ProactiveExpressionPreparer)
+        ):
             return direct_ctx
-        direct_expr = getattr(self._orchestrator, "proactive_expression_preparer", None)
-        if direct_expr is not None and isinstance(direct_expr, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
+        direct_expr: object = getattr(self._orchestrator, "proactive_expression_preparer", None)
+        if isinstance(
+            direct_expr, (ProactiveContextPreparer, ProactiveExpressionPreparer)
+        ):
             return direct_expr
         components = getattr(self._orchestrator, "cognitive_tick_components", None)
         if isinstance(components, dict):
-            prep = components.get("context_preparer") or components.get("expression_preparer")
+            prep: object = components.get("context_preparer") or components.get("expression_preparer")
             if isinstance(prep, (ProactiveContextPreparer, ProactiveExpressionPreparer)):
                 return prep
         return None
@@ -905,7 +903,7 @@ class MindRuntimeHostAdapter:
             ticker = components.get("ticker")
             if ticker is not None and hasattr(ticker, "get_pending_wake_context"):
                 ctx = ticker.get_pending_wake_context(wake.wake_id)
-                if ctx is not None:
+                if isinstance(ctx, dict):
                     return ctx
         return None
 
@@ -1073,7 +1071,11 @@ class MindRuntimeHostAdapter:
 
         preparer = self._resolve_expression_preparer()
         guard = None
-        if preparer is not None and hasattr(preparer, "_coordinator") and hasattr(preparer._coordinator, "_guard"):
+        if (
+            preparer is not None
+            and hasattr(preparer, "_coordinator")
+            and hasattr(preparer._coordinator, "_guard")
+        ):
             guard = preparer._coordinator._guard
         if guard is None:
             guard = getattr(self._orchestrator, "expression_guard", None)
@@ -1089,7 +1091,10 @@ class MindRuntimeHostAdapter:
                 reason_codes=("guard_unavailable",),
             )
 
-        from mind_runtime.expression.guards import ExpressionGuardInput
+        from mind_runtime.expression.guards import (  # type: ignore[attr-defined]
+            ExpressionGuardInput,
+        )
+
         guard_input = ExpressionGuardInput(
             draft_id=f"proactive-{wake_id}",
             decision_context=exec_ctx.context,
@@ -1107,7 +1112,9 @@ class MindRuntimeHostAdapter:
                 at=wake.woken_at,
             )
 
-        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        now = getattr(
+            getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC)
+        )()
 
         if guard_res.disposition is ExpressionDisposition.ACCEPT:
             self._guard_admissions[wake_id] = _GuardAdmission(
@@ -1299,7 +1306,10 @@ class MindRuntimeHostAdapter:
                     debug_ref=f"debug-{wake.interaction_id}",
                     reason_codes=("intent_lookup_failed", str(exc)),
                 )
-            if current_intent.status is not IntentStatus.ALLOWED or current_intent.sync.version != wake.intent_version:
+            if (
+                current_intent.status is not IntentStatus.ALLOWED
+                or current_intent.sync.version != wake.intent_version
+            ):
                 return HostProactiveTurnResult(
                     wake_id=wake_id,
                     interaction_id=wake.interaction_id,
@@ -1308,10 +1318,16 @@ class MindRuntimeHostAdapter:
                     decision_context_ref=exec_ctx.context.context_id,
                     expression_ref=None,
                     debug_ref=f"debug-{wake.interaction_id}",
-                    reason_codes=("intent_not_allowed", f"status={current_intent.status.value}", f"version={current_intent.sync.version}"),
+                    reason_codes=(
+                        "intent_not_allowed",
+                        f"status={current_intent.status.value}",
+                        f"version={current_intent.sync.version}",
+                    ),
                 )
 
-        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        now = getattr(
+            getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC)
+        )()
         try:
             lifecycle.transition(
                 scope=wake.scope,
@@ -1390,6 +1406,8 @@ class MindRuntimeHostAdapter:
                 reason_codes=("unknown_wake_id",),
             )
 
+        pending_exec = self._pending_exec_contexts.get(wake_id)
+
         components = getattr(self._orchestrator, "cognitive_tick_components", None) or {}
         lifecycle = (
             components.get("lifecycle")
@@ -1403,13 +1421,17 @@ class MindRuntimeHostAdapter:
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
                 outcome=HostStatus.FAILED,
-                decision_context_ref=self._pending_exec_contexts.get(wake_id).context.context_id if wake_id in self._pending_exec_contexts else None,
+                decision_context_ref=(
+                    pending_exec.context.context_id if pending_exec is not None else None
+                ),
                 expression_ref=None,
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("intent_authority_unavailable",),
             )
 
-        now = getattr(getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC))()
+        now = getattr(
+            getattr(self._orchestrator, "clock", None), "now", lambda: datetime.now(UTC)
+        )()
         try:
             lifecycle.transition(
                 scope=wake.scope,
@@ -1426,7 +1448,9 @@ class MindRuntimeHostAdapter:
                 interaction_id=wake.interaction_id,
                 status=HostTurnStatus.FAILED,
                 outcome=HostStatus.FAILED,
-                decision_context_ref=self._pending_exec_contexts.get(wake_id).context.context_id if wake_id in self._pending_exec_contexts else None,
+                decision_context_ref=(
+                    pending_exec.context.context_id if pending_exec is not None else None
+                ),
                 expression_ref=None,
                 debug_ref=f"debug-{wake.interaction_id}",
                 reason_codes=("abort_transition_failed", str(exc)),

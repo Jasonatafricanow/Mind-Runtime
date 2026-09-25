@@ -12,10 +12,14 @@ PreviousExpressionPort is the future backing point for durable
 would-send/sent history (C7/C8), not a new rule.
 """
 
+# Helpers are kept above the fixture imports to mirror the historical seam.
+# Ruff's E402 is irrelevant to this test-only organization.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -42,6 +46,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     SyncFields,
+    WakeSignal,
 )
 from mind_runtime.contracts.host import HostProactiveTurnResult
 
@@ -79,7 +84,10 @@ class _TestTurnResult:
 def _run_test_proactive_turn(stack: _Stack, wake: WakeSignal) -> _TestTurnResult:
     adapter = stack["adapter"]
     prep_result = adapter.begin_proactive_turn(wake)
-    if prep_result.status is not HostTurnStatus.PROCESSING or prep_result.outcome is not HostStatus.OK:
+    if (
+        prep_result.status is not HostTurnStatus.PROCESSING
+        or prep_result.outcome is not HostStatus.OK
+    ):
         return _TestTurnResult(prep_result, None)
 
     preparer = stack["preparer"]
@@ -151,6 +159,8 @@ def _run_test_proactive_turn(stack: _Stack, wake: WakeSignal) -> _TestTurnResult
             reason_codes=(artifact.skip_reason,) if artifact.skip_reason else (),
         )
         return _TestTurnResult(fail_res, artifact)
+
+
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.expression import (
     AffectBand,
@@ -357,9 +367,7 @@ def make_stack(
             config=ProactiveExpressionConfig(proactive_action_types=proactive_action_types),
             runtime_id=runtime_id,
         )
-    policy = DeterministicActionPolicy(
-        make_policy_config(action_type=action_type), runtime_id
-    )
+    policy = DeterministicActionPolicy(make_policy_config(action_type=action_type), runtime_id)
     lifecycle = IntentLifecycleService(intent_backend)
     ticker = build_cognitive_ticker(
         orchestrator=orchestrator,
@@ -556,9 +564,7 @@ def test_ce2_prefix_duplicate_rejects_and_intent_survives(tmp_path: Path) -> Non
     baseline = make_stack(baseline_dir, with_expression=False)
     seed_affect(baseline, value=0.75, at=BASE)
     baseline["ticker"].tick(scope=baseline["scope"], now=BASE + timedelta(hours=2))
-    assert len(stack["state_backend"].load_states()) == len(
-        baseline["state_backend"].load_states()
-    )
+    assert len(stack["state_backend"].load_states()) == len(baseline["state_backend"].load_states())
     assert len(stack["intent_backend"].current(stack["scope"])) == len(
         baseline["intent_backend"].current(baseline["scope"])
     )
@@ -573,9 +579,7 @@ def stack_scope() -> Scope:
 
 def test_ce3_prefix_rewrite_succeeds(tmp_path: Path) -> None:
     prior = make_prior(stack_scope(), text=PREFIX_TWIN)
-    stack = make_stack(
-        tmp_path, agent_script=(WILL_SEND, "下午想把一首短诗读给你听"), prior=prior
-    )
+    stack = make_stack(tmp_path, agent_script=(WILL_SEND, "下午想把一首短诗读给你听"), prior=prior)
     seed_affect(stack, value=0.75, at=BASE)
 
     report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
@@ -688,7 +692,7 @@ def test_ce6_elapsed_zero_pass_skips_preparation(tmp_path: Path) -> None:
     assert artifact is not None
     assert artifact.disposition is None
     assert artifact.skip_reason == "no_transition"
-    assert artifact.would_send == None
+    assert artifact.would_send is None
     assert stack["agent"].call_count == 0
 
 
@@ -799,9 +803,7 @@ def test_ticker_rejects_wrong_expression_type(tmp_path: Path) -> None:
             intent_engine=DeterministicIntentEngine(make_rules(), "runtime-1"),
             action_policy=DeterministicActionPolicy(make_policy_config(), "runtime-1"),
             policy_resources=PolicyResources(("proactive_message", "respond")),
-            intent_lifecycle=IntentLifecycleService(
-                SqliteIntentBackend(tmp_path / "i.sqlite")
-            ),
+            intent_lifecycle=IntentLifecycleService(SqliteIntentBackend(tmp_path / "i.sqlite")),
             runtime_id="runtime-1",
             expression=object(),  # type: ignore[call-arg]
         )
@@ -811,7 +813,6 @@ def test_preparer_direct_prepare_skips_defense_paths(tmp_path: Path) -> None:
     """Direct prepare() callers get the same fail-closed skips the tick gate
     enforces via handles(): non-ALLOW and non-proactive never prepare."""
     from mind_runtime.cognition.express import (
-        ProactiveExpressionArtifact,
         ProactiveExpressionConfig,
         ProactiveExpressionPreparer,
     )

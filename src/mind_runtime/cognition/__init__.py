@@ -53,4 +53,3 @@ __all__ = [
     "get_cognitive_mode_spec",
     "observation_fact_reader",
 ]
-

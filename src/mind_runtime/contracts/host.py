@@ -32,12 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
-
 
 # ---------------------------------------------------------------------------
 # Status enums

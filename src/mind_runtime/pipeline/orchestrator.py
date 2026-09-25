@@ -251,6 +251,7 @@ class TurnOrchestrator:
 
     _REALITY_TERMINAL_SUFFIXES = frozenset({"cancelled", "completed", "resolved"})
     surface_projection_port: SurfaceProjectionPort | None = None
+    proactive_context_preparer: object = None
 
     def __init__(
         self,

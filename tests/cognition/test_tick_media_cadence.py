@@ -17,6 +17,10 @@ generic runtime default) disables the feature entirely; no runtime
 silently inherits one deployment's 1-per-3 rule (LR7a/b/c).
 """
 
+# Helpers are kept above the fixture imports to mirror the historical seam.
+# Ruff's E402 is irrelevant to this test-only organization.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -49,6 +53,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     SyncFields,
+    WakeSignal,
 )
 from mind_runtime.contracts.host import HostProactiveTurnResult
 
@@ -86,7 +91,10 @@ class _TestTurnResult:
 def _run_test_proactive_turn(stack: _Stack, wake: WakeSignal) -> _TestTurnResult:
     adapter = stack["adapter"]
     prep_result = adapter.begin_proactive_turn(wake)
-    if prep_result.status is not HostTurnStatus.PROCESSING or prep_result.outcome is not HostStatus.OK:
+    if (
+        prep_result.status is not HostTurnStatus.PROCESSING
+        or prep_result.outcome is not HostStatus.OK
+    ):
         return _TestTurnResult(prep_result, None)
 
     preparer = stack["preparer"]
@@ -158,6 +166,8 @@ def _run_test_proactive_turn(stack: _Stack, wake: WakeSignal) -> _TestTurnResult
             reason_codes=(artifact.skip_reason,) if artifact.skip_reason else (),
         )
         return _TestTurnResult(fail_res, artifact)
+
+
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.expression import (
     AffectBand,
@@ -173,8 +183,8 @@ from mind_runtime.expression import (
 )
 from mind_runtime.expression.history import NullPreviousExpressionPort
 from mind_runtime.facts.persistence import SqliteFactBackend
-from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.facts.service import FactIngestService
+from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.intents.engine import DeterministicIntentEngine, IntentRule
 from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.persistence import SqliteIntentBackend
@@ -480,9 +490,7 @@ def test_lr2_threshold_reached_eligible_but_no_forced_media(tmp_path: Path) -> N
         stack = make_stack(tmp_path / sub, media_rule=True, photo_cadence_threshold=3)
         seed_counter(stack, evidence_id="ev-cad", key=CADENCE_COUNTER, value=count)
         seed_affect(stack)
-        report = stack["ticker"].tick(
-            scope=stack["scope"], now=BASE + timedelta(hours=2)
-        )
+        report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
         facts = tick_situation_facts(stack)
         current = stack["intent_backend"].current(stack["scope"])
         return {

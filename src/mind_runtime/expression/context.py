@@ -31,14 +31,13 @@ from mind_runtime.contracts.late_projection import AcceptedAppraisal
 class StateDefinitionRegistry(Protocol):
     """Protocol for state definition lookup in expression compiler."""
 
-    def get(self, key: str) -> StateDefinition | None:
-        ...
+    def get(self, key: str) -> StateDefinition | None: ...
 
 
 @runtime_checkable
 class AppraisalJournalReader(Protocol):
-    def get_acceptance(self, acceptance_id: str) -> AcceptedAppraisal | None:
-        ...
+    def get_acceptance(self, acceptance_id: str) -> AcceptedAppraisal | None: ...
+
 
 REWRITE_GUIDANCE: dict[str, str] = {
     "forbidden_opening": "Use a different opening.",
@@ -641,8 +640,7 @@ class DecisionContextCompiler:
             if projected.scope.domain is ScopeDomain.AGENT:
                 has_agent_context = True
                 agent_match = (
-                    projected.scope.agent_id is not None
-                    and agent_id == projected.scope.agent_id
+                    projected.scope.agent_id is not None and agent_id == projected.scope.agent_id
                 )
                 persona_match = (
                     projected.scope.persona_id is not None
@@ -771,9 +769,7 @@ class DecisionContextCompiler:
     # from affect; source_refs carry (label, state_id, version) for
     # traceability.  Priority 40 places slow items in the same sort band
     # as affect items (INTERNAL_STATE section).
-    def _slow_state_items(
-        self, slow_records: SlowStateProjection
-    ) -> list[ExpressionContextItem]:
+    def _slow_state_items(self, slow_records: SlowStateProjection) -> list[ExpressionContextItem]:
         if not slow_records:
             return []
         items: list[ExpressionContextItem] = []
@@ -784,9 +780,7 @@ class DecisionContextCompiler:
                 or not isinstance(value, (int, float))
                 or not isfinite(value)
             ):
-                raise ValueError(
-                    f"slow_state value for {state.dimension} must be a finite number"
-                )
+                raise ValueError(f"slow_state value for {state.dimension} must be a finite number")
             items.append(
                 ExpressionContextItem(
                     f"internal_state-slow_{state.dimension}",

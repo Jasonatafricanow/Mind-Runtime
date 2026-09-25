@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -207,16 +207,8 @@ class CognitiveTickReport:
                 if self.proactive_expression is not None
                 else None
             ),
-            "wake_signal": (
-                self.wake_signal.as_dict()
-                if self.wake_signal is not None
-                else None
-            ),
-            "wake_id": (
-                self.wake_signal.wake_id
-                if self.wake_signal is not None
-                else None
-            ),
+            "wake_signal": (self.wake_signal.as_dict() if self.wake_signal is not None else None),
+            "wake_id": (self.wake_signal.wake_id if self.wake_signal is not None else None),
         }
 
 
@@ -249,7 +241,9 @@ class CognitiveTicker:
         **kwargs: Any,
     ) -> None:
         if "expression" in kwargs:
-            raise TypeError("CognitiveTicker cannot be constructed with an expression provider/executor")
+            raise TypeError(
+                "CognitiveTicker cannot be constructed with an expression provider/executor"
+            )
         composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
         if (
             surface_projection_port is not None
@@ -617,7 +611,7 @@ class CognitiveTicker:
         interaction_id: str | None = None,
     ) -> tuple[Intent, ActionPolicyResult] | None:
         """Run the policy gate; return the ALLOW selection for expression."""
-        actual_interaction_id = interaction_id or getattr(counters, "interaction_id", "")
+        actual_interaction_id = str(interaction_id or getattr(counters, "interaction_id", ""))
         lifecycle = self._intent_lifecycle
         selection: tuple[Intent, ActionPolicyResult] | None = None
         before_status = {
