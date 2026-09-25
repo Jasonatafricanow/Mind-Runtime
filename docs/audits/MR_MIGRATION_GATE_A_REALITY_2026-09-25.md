@@ -10,7 +10,7 @@
 - Implementation commit: `cabb3ed535dc9762e00c2b3655b2bb5718517d1b`.
 - Boundary regression commit: `919d152579d44025eeef724b3e69f5fe4489832a`.
 - Pull request: [#12](https://github.com/Jasonatafricanow/Mind-Runtime/pull/12).
-- At this report's writing, Gate A code is verified on the PR branch. The source worktree/ref remains preserved. Final main replacement SHA is recorded only after merge.
+- Gate A was merged as `ed229e694b9f98e834430f5be7f18784ace02881`, with parents `c378e1ae246bb5b7ab3505165d8f701c7bf5dfae` and `7d12aa7374bbaeb13e18c5f730b1b72380ca2462`. The merge tree equals the verified PR head tree. The source worktree/ref remains preserved.
 
 ## Exact changes
 
@@ -81,9 +81,11 @@ The extra tests exercise provider failure/malformed output, temporal windows, el
 | Ruff baseline, final `919d152` | 781 current / 801 allowed; pass |
 | mypy baseline, final `919d152` | 110 current / 125 allowed; pass |
 | GitHub Actions quality on `919d152` | [run #191](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36102559554): Success, clean-install/python/tests jobs passed |
+| GitHub Actions quality on report commit `7d12aa7` | [run #193](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36103423784): Success |
+| GitHub Actions quality on merged main `ed229e6` | [run #194](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36103845878): Success |
 
 The first PR run on `cabb3ed` failed only the 94% aggregate coverage gate; its 2993 tests passed. The new regression tests raised measured coverage without changing production behavior or the threshold. Windows required `tzdata` in the ignored local Python 3.12 virtual environment; repository dependencies were unchanged. A preliminary Python 3.14 Ruff invocation had a GBK subprocess decoding error, so only the UTF-8 Python 3.12 rerun is counted.
 
 ## Remaining boundary
 
-Gate A must be merged and its resulting current-main SHA/CI recorded before Gate B1 implementation begins. The old Reality worktree, branch and predecessor archive refs remain preserved until issue #11's final disposition review.
+Gate A is merged and current-main CI is green. The old Reality worktree, branch and predecessor archive refs remain preserved until issue #11's final disposition review.
