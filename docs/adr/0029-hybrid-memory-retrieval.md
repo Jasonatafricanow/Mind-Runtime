@@ -74,9 +74,23 @@ epistemic semantics. They may later be tuned by benchmark evidence.
 `PromptHyDEExpander` is model-agnostic. Composition supplies the completion
 call; MR supplies only the bounded prompt adapter.
 
-HyDE expansion or expanded retrieval fails closed by default. A caller may
-explicitly select `fallback_to_original=True`, allowing the already-successful
-original-query retrieval to remain usable if the optional expansion fails.
+The preferred product policy is **HyDE as search fallback, not an always-on
+stage**. `HyDEFallbackProvider` first runs the normal retrieval path. If that
+path returns at least the configured minimum number of unique candidates, no
+LLM expansion is called. If recall is sparse, HyDE generates one supplemental
+query and the original and supplemental rankings are fused with RRF.
+
+The initial fallback threshold is three candidates, capped by the requested
+query limit. This threshold is retrieval policy, not an epistemic rule, and may
+be changed by composition.
+
+If the primary retrieval call itself fails, the failure remains explicit. If
+primary retrieval succeeds but the optional HyDE expansion/supplemental search
+fails, the successful primary results are returned unchanged. The fallback
+therefore cannot make an otherwise usable cheap search unavailable.
+
+`HyDEAugmentedProvider` remains available for explicit always-on experiments,
+but it is not the preferred default composition.
 
 HyDE never writes Memory and never reinforces retrieved Memory.
 
