@@ -351,101 +351,33 @@ def test_atomic_fast_slow_marker_happy_path(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_c1a_slow_writer_accept_partially_succeeds_then_fails(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
+@pytest.mark.parametrize(
+    ("case", "owner_name", "method", "error"),
+    (
+        ("c1a", "writer", "accept", RuntimeError("injected accept failure")),
+        ("c1b", "writer", "prepare_flush", RuntimeError("injected prepare_flush failure")),
+        ("c2", "backend", "save_state", sqlite3.OperationalError("save_state failed")),
+        ("c3", "backend", "save_transition", sqlite3.OperationalError("transition failed")),
+        ("c4", "writer", "execute_flush_plan", sqlite3.OperationalError("slow flush failed")),
+        ("c7", "markers", "record_commit", sqlite3.OperationalError("marker insert failed")),
+    ),
+)
+def test_atomic_write_failures_roll_back_everything(
+    tmp_path: Path,
+    case: str,
+    owner_name: str,
+    method: str,
+    error: Exception,
+) -> None:
+    state_db = tmp_path / f"cognition_state_{case}.sqlite"
     _seed_db(state_db)
     snapshot_before = _db_snapshot(state_db)
-
     orch, backend, markers, writer = _make_stack(state_db)
+    owners = {"writer": writer, "backend": backend, "markers": markers}
 
-    # Make accept fail
-    def failing_accept(decision: Any, *, target_scope: Any = None) -> Any:
-        raise RuntimeError("injected accept failure before transaction")
-
-    with patch.object(writer, "accept", side_effect=failing_accept):
-        orch.begin_turn(_interaction("interaction-c1a"))
-        orch.ingest(make_evidence(text="c1a", evidence_id="ev-c1a", occurred_at=NOW))
-        orch.run()
-        with pytest.raises(CanonicalPersistenceError):
-            orch.commit_turn()
-
-    # In-memory slow pending cleared
-    assert len(writer._pending) == 0
-    # DB unchanged relative to pre-turn snapshot
-    assert _db_snapshot(state_db) == snapshot_before
-    backend.close()
-
-
-def test_c1b_slow_writer_prepare_flush_fails(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
-    _seed_db(state_db)
-    snapshot_before = _db_snapshot(state_db)
-
-    orch, backend, markers, writer = _make_stack(state_db)
-
-    with patch.object(writer, "prepare_flush", side_effect=RuntimeError("injected prepare_flush failure")):
-        orch.begin_turn(_interaction("interaction-c1b"))
-        orch.ingest(make_evidence(text="c1b", evidence_id="ev-c1b", occurred_at=NOW))
-        orch.run()
-        with pytest.raises(CanonicalPersistenceError):
-            orch.commit_turn()
-
-    # In-memory slow pending cleared
-    assert len(writer._pending) == 0
-    # DB unchanged relative to pre-turn snapshot
-    assert _db_snapshot(state_db) == snapshot_before
-    backend.close()
-
-
-def test_c2_fast_state_write_failure_rolls_back_all(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
-    _seed_db(state_db)
-    snapshot_before = _db_snapshot(state_db)
-
-    orch, backend, markers, writer = _make_stack(state_db)
-
-    with patch.object(backend, "save_state", side_effect=sqlite3.OperationalError("disk error on save_state")):
-        orch.begin_turn(_interaction("interaction-c2"))
-        orch.ingest(make_evidence(text="c2", evidence_id="ev-c2", occurred_at=NOW))
-        orch.run()
-        with pytest.raises(CanonicalPersistenceError):
-            orch.commit_turn()
-
-    assert _db_snapshot(state_db) == snapshot_before
-    assert len(writer._pending) == 0
-    backend.close()
-
-
-def test_c3_transition_write_failure_rolls_back_all(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
-    _seed_db(state_db)
-    snapshot_before = _db_snapshot(state_db)
-
-    orch, backend, markers, writer = _make_stack(state_db)
-
-    with patch.object(backend, "save_transition", side_effect=sqlite3.OperationalError("save_transition fail")):
-        orch.begin_turn(_interaction("interaction-c3"))
-        orch.ingest(make_evidence(text="c3", evidence_id="ev-c3", occurred_at=NOW))
-        orch.run()
-        with pytest.raises(CanonicalPersistenceError):
-            orch.commit_turn()
-
-    assert _db_snapshot(state_db) == snapshot_before
-    assert len(writer._pending) == 0
-    backend.close()
-
-
-def test_c4_slow_window_append_failure_rolls_back_all(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
-    _seed_db(state_db)
-    snapshot_before = _db_snapshot(state_db)
-
-    orch, backend, markers, writer = _make_stack(state_db)
-
-    # Invalidate slow window write
-    with patch.object(writer, "execute_flush_plan", side_effect=sqlite3.OperationalError("ledger append failed")):
-        orch.begin_turn(_interaction("interaction-c4"))
-        orch.ingest(make_evidence(text="c4", evidence_id="ev-c4", occurred_at=NOW))
+    with patch.object(owners[owner_name], method, side_effect=error):
+        orch.begin_turn(_interaction(f"interaction-{case}"))
+        orch.ingest(make_evidence(text=case, evidence_id=f"ev-{case}", occurred_at=NOW))
         orch.run()
         with pytest.raises(CanonicalPersistenceError):
             orch.commit_turn()
@@ -505,25 +437,6 @@ def test_c6_slow_accumulator_state_failure_rolls_back_all(tmp_path: Path) -> Non
             orch.commit_turn()
 
     # Everything rolled back: no fast state, no transition, no slow row, no marker
-    assert _db_snapshot(state_db) == snapshot_before
-    assert len(writer._pending) == 0
-    backend.close()
-
-
-def test_c7_marker_insert_failure_rolls_back_all(tmp_path: Path) -> None:
-    state_db = tmp_path / "cognition_state.sqlite"
-    _seed_db(state_db)
-    snapshot_before = _db_snapshot(state_db)
-
-    orch, backend, markers, writer = _make_stack(state_db)
-
-    with patch.object(markers, "record_commit", side_effect=sqlite3.OperationalError("marker insert failed")):
-        orch.begin_turn(_interaction("interaction-c7"))
-        orch.ingest(make_evidence(text="c7", evidence_id="ev-c7", occurred_at=NOW))
-        orch.run()
-        with pytest.raises(CanonicalPersistenceError):
-            orch.commit_turn()
-
     assert _db_snapshot(state_db) == snapshot_before
     assert len(writer._pending) == 0
     backend.close()
