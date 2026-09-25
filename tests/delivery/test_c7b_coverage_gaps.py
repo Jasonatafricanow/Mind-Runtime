@@ -1068,107 +1068,46 @@ def test_persistence_reopen_fails_when_receipt_status_corrupt(
         SqliteDeliveryBackend(db_path)
 
 
-def test_persistence_reopen_fails_when_attempt_outcome_corrupt(
+@pytest.mark.parametrize(
+    ("column", "raw_value", "message"),
+    (
+        ("outcome", "not-an-outcome", "att-bad"),
+        ("reason_codes", "{not-valid-json", "att-bad"),
+        ("reason_codes", '{"a": 1}', "must be a JSON array"),
+    ),
+)
+def test_persistence_reopen_rejects_corrupt_attempt_fields(
     tmp_path: Path,
+    column: str,
+    raw_value: str,
+    message: str,
 ) -> None:
-    """Corrupt the attempt's outcome to an unknown value; reopen
-    must fail closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_outcome.db"
+    db_path = tmp_path / f"c7b_bad_attempt_{column}.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
     backend.record_attempt(
-        attempt_id="att-bad", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
+        attempt_id="att-bad",
+        request_id=request.request_id,
+        attempt=1,
+        started_at=NOW,
+        ended_at=NOW,
         outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
         provider_receipt_ref=None,
         reason_codes=("x",),
     )
     backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET outcome = ? WHERE attempt_id = ?",
-        ("not-an-outcome", "att-bad"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="att-bad"):
-        SqliteDeliveryBackend(db_path)
 
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE delivery_attempts SET {column} = ? WHERE attempt_id = ?",
+            (raw_value, "att-bad"),
+        )
 
-def test_persistence_reopen_fails_when_reason_codes_malformed(
-    tmp_path: Path,
-) -> None:
-    """Corrupt the attempt's reason_codes JSON; reopen must fail
-    closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_reasons.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.record_attempt(
-        attempt_id="att-bad-r", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
-        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-        provider_receipt_ref=None,
-        reason_codes=("x",),
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET reason_codes = ?"
-        " WHERE attempt_id = ?",
-        ("{not-valid-json", "att-bad-r"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="att-bad-r"):
-        SqliteDeliveryBackend(db_path)
-
-
-def test_persistence_reopen_fails_when_reason_codes_not_array(
-    tmp_path: Path,
-) -> None:
-    """A reason_codes value that is valid JSON but not an array
-    fails closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_reasons2.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.record_attempt(
-        attempt_id="att-bad-r2", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
-        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-        provider_receipt_ref=None,
-        reason_codes=("x",),
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET reason_codes = ?"
-        " WHERE attempt_id = ?",
-        ('{"a": 1}', "att-bad-r2"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="must be a JSON array"):
+    with pytest.raises(ValueError, match=message):
         SqliteDeliveryBackend(db_path)
 
 
