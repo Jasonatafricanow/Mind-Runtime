@@ -36,9 +36,10 @@ Thread is not a second medium-term history store and is not a permanent
 longitudinal interpretation layer.
 
 When a mature Thread is successfully compiled into an accepted LCE Baseline,
-the higher-level projection supersedes the active Thread projection. MR records
-the Baseline identity for lineage and removes that Thread from the active
-working set. Canonical Memory and Evidence remain unchanged.
+the higher-level projection supersedes it and MR deletes the temporary Thread
+row. Durable lineage remains in LCE's stable `mr-thread:<thread_id>` Baseline
+region plus supporting canonical Memory IDs. Canonical Memory and Evidence
+remain unchanged.
 
 A failed or unavailable LCE compilation must not roll back factual Memory or
 delete the Thread projection.
