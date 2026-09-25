@@ -40,6 +40,56 @@ def test_bound_production_lab_isolation_and_restart(tmp_path):
     assert all(p.read_bytes() == contents for p, contents in before.items())
 
 
+def test_active_thread_projection_is_available_without_raw_retrieval_provider(tmp_path):
+    from datetime import timedelta
+
+    from mind_runtime.memory.product import MemoryProductStore
+    from mind_runtime.memory.retrieval_composition import build_memory_history
+
+    roots = dict(production_root=tmp_path / "prod", lab_root=tmp_path / "lab")
+    binding = lab_binding("thread-history")
+    paths = bind_storage(binding, **roots)
+    db = CanonicalMemoryStore(paths.memory_db)
+    db._commit((memory(),))
+    product = MemoryProductStore(paths.memory_db, db)
+    product.open_thread(
+        thread_id="hello-line",
+        scope=memory().scope,
+        open_question="Will hello continue?",
+        supporting_memory_ids=("memory-1",),
+        at=memory().committed_at - timedelta(days=1),
+        working_summary="Hello remains an active unresolved line.",
+    )
+    product.close()
+    db.close()
+
+    port = build_memory_history(
+        binding,
+        thread_enabled=True,
+        **roots,
+    )
+    bundle = port.read(**inputs())
+    assert bundle is not None
+    assert len(bundle.episodes) == 1
+    assert bundle.episodes[0].kind == "memory.thread_projection"
+    assert bundle.episodes[0].external_id == "hello-line"
+    assert bundle.episodes[0].proposition == "Hello remains an active unresolved line."
+    assert bundle.provider_trace == "active-thread-projection"
+
+
+def test_thread_projection_read_is_opt_in_and_flag_is_typed(tmp_path):
+    from mind_runtime.emotional_transition.history import NullHistoricalContext
+    from mind_runtime.memory.retrieval_composition import build_memory_history
+
+    binding = lab_binding("thread-disabled")
+    assert isinstance(
+        build_memory_history(binding, lab_root=tmp_path),
+        NullHistoricalContext,
+    )
+    with pytest.raises(TypeError, match="thread_enabled"):
+        build_memory_history(binding, thread_enabled=1, lab_root=tmp_path)
+
+
 def test_accepted_lce_understanding_precedes_raw_memory_within_shared_budget(
     tmp_path, monkeypatch
 ):
