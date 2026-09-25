@@ -13,7 +13,7 @@ from mind_runtime.contracts.historical import HistoricalContextBundle, Historica
 from mind_runtime.emotional_transition.history import NullHistoricalContext
 from mind_runtime.integrations.lce import open_lce_read_binding
 from mind_runtime.memory.history import MemoryHistoricalContextAdapter
-from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
+from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.retrieval import (
     DEFAULT_SURFACE_BUDGET,
@@ -184,7 +184,7 @@ class _BoundMemoryHistory:
         store = CanonicalMemoryStore(self.paths.memory_db, read_only=True)
         product = MemoryProductStore(self.paths.memory_db, store, read_only=True)
         try:
-            ranked = []
+            ranked: list[tuple[float, datetime, str, MemoryThread]] = []
             for thread in product.list_threads(
                 scope,
                 status=ThreadStatus.OPEN,
