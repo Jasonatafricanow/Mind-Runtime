@@ -38,12 +38,14 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
+from mind_runtime.binding_registry import BindingRegistryReader
 from mind_runtime.cognition import (
     CognitiveTickConfig,
     CognitiveTicker,
     CognitiveTickReport,
 )
 from mind_runtime.contracts import Scope
+from mind_runtime.contracts.surface import SurfaceProjectionPort
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol
 from mind_runtime.dynamics.engine import DynamicsEngine
 from mind_runtime.dynamics.persona import PersonaProfile
@@ -68,13 +70,14 @@ from mind_runtime.intents.policy import (
     DeterministicActionPolicy,
     IntentPolicyRule,
 )
+from mind_runtime.persona_publication import PersonaConfigPublicationRepository, PersonaRevisionRef
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator
-from mind_runtime.pipeline.ports import HistoricalContextPort
+from mind_runtime.pipeline.ports import ExpressionGuardPort, HistoricalContextPort
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.providers.clock import Clock
 from mind_runtime.reality import RealityInputService, build_reality_input
 from mind_runtime.runtime_admission import NamespaceAdmissionAuthority
-from mind_runtime.runtime_binding import RuntimeBinding, resolve_storage_paths
+from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment, resolve_storage_paths
 from mind_runtime.shadow.production_wiring import ProductionShadowTap, ShadowTapReport
 from mind_runtime.shadow.source_bridge import (
     SOURCE_NAME,
@@ -238,6 +241,14 @@ def build_runtime_stack(
     homeostasis_gate: HomeostasisGate | None = None,
     telemetry_sink: TelemetrySinkProtocol | None = None,
     reality_input: RealityInputService | None = None,
+    persona_publication: PersonaConfigPublicationRepository | None = None,
+    persona_revision_ref: PersonaRevisionRef | None = None,
+    surface_binding_registry: BindingRegistryReader | None = None,
+    surface_binding_id: str | None = None,
+    surface_binding_environment: RuntimeEnvironment | None = None,
+    surface_projection_port: SurfaceProjectionPort | None = None,
+    delivery_db: str | Path | None = None,
+    expression_guard: ExpressionGuardPort | None = None,
 ) -> tuple[TurnOrchestrator, HermesProductionBridge]:
     """Assemble ONE durable production stack bound to SQLite backends.
 
@@ -252,16 +263,63 @@ def build_runtime_stack(
     ``build_cognitive_ticker`` can run on this stack without repurposing the
     orchestrator's stub turn ports.
     """
+    surface_mode = (
+        decision_context_config is not None and decision_context_config.mode == "SURFACE_V1"
+    )
+    if surface_mode:
+        if (
+            persona_publication is None
+            or surface_binding_registry is None
+            or surface_binding_id is None
+            or surface_binding_environment is None
+        ):
+            raise ValueError("SURFACE_V1 requires durable binding and published Persona authority")
+        bound_runtime = surface_binding_registry.resolve_binding(
+            surface_binding_id, environment=surface_binding_environment
+        )
+        if bound_runtime.runtime_id != origin_runtime_id:
+            raise ValueError("SURFACE_V1 runtime differs from durable binding")
+        pinned_ref = surface_binding_registry.resolve_persona_revision(
+            surface_binding_id, environment=surface_binding_environment
+        )
+        if pinned_ref.persona_id != bound_runtime.persona_id:
+            raise ValueError("SURFACE_V1 Persona differs from durable binding")
+        if persona_revision_ref is not None and persona_revision_ref != pinned_ref:
+            raise ValueError("SURFACE_V1 Persona reference differs from pinned revision")
+        persona_revision_ref = pinned_ref
+        resolved_persona = persona_publication.resolve(persona_revision_ref).profile
+        if persona is not None and persona != resolved_persona:
+            raise ValueError("SURFACE_V1 Persona differs from published revision")
+        persona = resolved_persona
+        if surface_projection_port is not None:
+            raise ValueError("production Surface projection is composed once by runtime root")
+        from mind_runtime.surface.projector import DeterministicSurfaceProjector
+
+        surface_projection_port = DeterministicSurfaceProjector()
+        if (
+            intent_rules is None
+            or intent_db is None
+            or action_policy_config is None
+            or policy_resources is None
+            or delivery_db is None
+            or expression_guard is None
+        ):
+            raise ValueError("SURFACE_V1 requires durable Intent, Policy, C7 handoff and Guard")
+    elif surface_projection_port is not None:
+        raise ValueError("Surface port requires SURFACE_V1 composition")
     if type(memory_enabled) is not bool:
         raise ValueError("memory_enabled must be bool")
     if memory_enabled:
         from mind_runtime.memory.composition import build_bound_fact_service
+
         if memory_binding is None:
             raise ValueError("enabled Memory requires a Runtime binding")
         paths = resolve_storage_paths(memory_binding)
-        if (Path(facts_db).resolve() != paths.facts_db.resolve()
-                or Path(state_db).resolve() != paths.state_db.resolve()
-                or origin_runtime_id != memory_binding.runtime_id):
+        if (
+            Path(facts_db).resolve() != paths.facts_db.resolve()
+            or Path(state_db).resolve() != paths.state_db.resolve()
+            or origin_runtime_id != memory_binding.runtime_id
+        ):
             raise ValueError("Memory binding must match the factual/state runtime namespace")
         fact_service = build_bound_fact_service(memory_binding, clock=clock, enabled=True)
     else:
@@ -298,7 +356,8 @@ def build_runtime_stack(
             state_backend.save_definition(definition)
     projection_journal = (
         ProjectionJournal(Path(state_db).with_name("appraisal_journal.sqlite"))
-        if appraisal_producer is not None else None
+        if appraisal_producer is not None
+        else None
     )
     decision_context_compiler = None
     context_renderer = None
@@ -316,9 +375,7 @@ def build_runtime_stack(
     # these authorities, keep the orchestrator's internal persona branch
     # (unchanged pre-composition behavior), which cannot reach the gate.
     emotional_transition = None
-    if persona is not None and (
-        appraisal_producer is not None or homeostasis_gate is not None
-    ):
+    if persona is not None and (appraisal_producer is not None or homeostasis_gate is not None):
         emotional_transition = EngineEmotionalTransitionPort(
             engine=DynamicsEngine(persona=persona),
             runtime_id=origin_runtime_id,
@@ -330,6 +387,28 @@ def build_runtime_stack(
             state_definitions=definitions,
             telemetry_sink=telemetry_sink,
         )
+    turn_intent_engine = None
+    turn_intent_lifecycle = None
+    turn_action_policy = None
+    turn_policy_resources = None
+    surface_delivery_backend = None
+    if surface_mode:
+        from mind_runtime.contracts import PolicyResources
+        from mind_runtime.delivery.persistence import SqliteDeliveryBackend
+
+        if (
+            intent_rules is None
+            or intent_db is None
+            or action_policy_config is None
+            or policy_resources is None
+            or delivery_db is None
+        ):
+            raise ValueError("SURFACE_V1 requires durable Intent, Policy and C7 handoff")
+        turn_intent_engine = DeterministicIntentEngine(intent_rules, origin_runtime_id)
+        turn_intent_lifecycle = IntentLifecycleService(SqliteIntentBackend(intent_db))
+        turn_action_policy = DeterministicActionPolicy(action_policy_config, origin_runtime_id)
+        turn_policy_resources = PolicyResources(tuple(policy_resources))
+        surface_delivery_backend = SqliteDeliveryBackend(delivery_db)
     orchestrator = TurnOrchestrator(
         clock=clock,
         trace=TraceRecorder(),
@@ -349,6 +428,13 @@ def build_runtime_stack(
         slow_plasticity_writer=slow_plasticity_writer,
         telemetry_sink=telemetry_sink,
         reality_input=reality_input if reality_input is not None else build_reality_input(),
+        surface_projection_port=surface_projection_port,
+        surface_delivery_backend=surface_delivery_backend,
+        intent_engine=turn_intent_engine,
+        intent_lifecycle=turn_intent_lifecycle,
+        action_policy=turn_action_policy,
+        policy_resources=turn_policy_resources,
+        expression_guard=expression_guard,
         # MR-RUNTIME-05: enroll the stack in the process-local, per-namespace
         # canonical admission authority — whole turns on this namespace are
         # serialized and each admitted turn refreshes from the durable base.
@@ -704,8 +790,7 @@ def main(argv: list[str] | None = None) -> int:
         "--persona-json",
         default=None,
         help=(
-            "C5B: persona profile path for the cognitive tick "
-            "(required when the tick gate is ON)."
+            "C5B: persona profile path for the cognitive tick (required when the tick gate is ON)."
         ),
     )
     parser.add_argument(
@@ -717,8 +802,8 @@ def main(argv: list[str] | None = None) -> int:
         "--intent-rules-json",
         default=None,
         help=(
-            "C5B: path to a JSON file {\"rules\": [...], \"policy\": {...}, "
-            "\"resources\": [...]} configuring the tick's real Intent/Policy "
+            'C5B: path to a JSON file {"rules": [...], "policy": {...}, '
+            '"resources": [...]} configuring the tick\'s real Intent/Policy '
             "authorities (STEP 3: Kayla numbers live here, never in kernel)."
         ),
     )
@@ -726,8 +811,8 @@ def main(argv: list[str] | None = None) -> int:
         "--runtime-behavior-json",
         default=None,
         help=(
-            "C6B: path to a runtime behavior JSON file {\"proactive\": "
-            "{\"photo_cadence_threshold\": N}} configuring deployment-specific "
+            'C6B: path to a runtime behavior JSON file {"proactive": '
+            '{"photo_cadence_threshold": N}} configuring deployment-specific '
             "proactive behavior (e.g. cadence threshold). Defaults to the "
             "repo's configs/runtime/kayla.json when the tick gate is ON; "
             "not required unless the tick gate is ON."
@@ -884,9 +969,7 @@ def tick_config_policy(args: argparse.Namespace) -> ActionPolicyConfig:
                 intent_kind=entry["intent_kind"],
                 action_type=entry["action_type"],
                 proactive=entry.get("proactive", False),
-                interrupts_active_conversation=entry.get(
-                    "interrupts_active_conversation", False
-                ),
+                interrupts_active_conversation=entry.get("interrupts_active_conversation", False),
                 media_counter_fact=entry.get("media_counter_fact"),
                 media_limit=entry.get("media_limit"),
                 required_resource=entry.get("required_resource"),

@@ -12,7 +12,11 @@ from mind_runtime.contracts.action import (
     ActionPermission,
     ActionPolicyResult,
 )
-from mind_runtime.contracts.affect import AffectiveDimensionProfile
+from mind_runtime.contracts.affect import (
+    DISPOSITION_TRAIT_NAMES,
+    AffectiveDimensionProfile,
+    BehavioralDisposition,
+)
 from mind_runtime.contracts.appraisal import (
     AmbiguityAssessment,
     AppraisalModelProposal,
@@ -56,6 +60,7 @@ from mind_runtime.contracts.expression import (
     ExpressionDisposition,
     ExpressionGuardInput,
     ExpressionGuardResult,
+    ExpressionMode,
     ExpressionOutcome,
     PreviousExpression,
     ProviderExpressionContext,
@@ -101,6 +106,23 @@ from mind_runtime.contracts.scope import (
 from mind_runtime.contracts.situation import Situation
 from mind_runtime.contracts.slow_state import SlowStateProjection
 from mind_runtime.contracts.state import RuntimeState, StateDefinition, StateDomain, StateValueType
+from mind_runtime.contracts.surface import (
+    DEFERRED_CONTROLS,
+    ENABLED_CONTROLS,
+    SURFACE_INELIGIBLE_PERSONA,
+    SURFACE_MISSING_STATE,
+    SURFACE_NONFINITE,
+    SURFACE_NUMERIC_TYPE,
+    SURFACE_PERSONA_CONTENT_MISMATCH,
+    SURFACE_RANGE,
+    SURFACE_RECIPE_CONTENT_CONFLICT,
+    SURFACE_RECIPE_UNSUPPORTED,
+    SURFACE_SCHEMA_MISMATCH,
+    SurfaceControl,
+    SurfaceProjectionPort,
+    SurfaceProjectionResult,
+    SurfaceProjectionStatus,
+)
 from mind_runtime.contracts.trace import EvidenceRef, TraceKind, TraceRef
 from mind_runtime.contracts.transition import StateTransition, TransitionIntent
 
@@ -119,9 +141,12 @@ __all__ = [
     "AppraisalRouteDecision",
     "Authority",
     "AuthorityLevel",
+    "BehavioralDisposition",
     "BehavioralPriorContribution",
+    "DISPOSITION_TRAIT_NAMES",
     "DataSensitivity",
     "DecisionContext",
+    "DEFERRED_CONTROLS",
     "DeliveryReceipt",
     "DeliveryStatus",
     "DynamicsPolicy",
@@ -129,6 +154,7 @@ __all__ = [
     "EffectiveWindowKind",
     "EmotionalTransitionInput",
     "EmotionalTransitionResult",
+    "ENABLED_CONTROLS",
     "Evidence",
     "EvidenceRef",
     "DecisionContextCompileTrace",
@@ -139,6 +165,7 @@ __all__ = [
     "ExpressionDisposition",
     "ExpressionGuardInput",
     "ExpressionGuardResult",
+    "ExpressionMode",
     "ExpressionOutcome",
     "HistoricalContextBundle",
     "HistoricalContextItem",
@@ -185,6 +212,19 @@ __all__ = [
     "SyncFields",
     "Syncable",
     "SlowStateProjection",
+    "SURFACE_INELIGIBLE_PERSONA",
+    "SURFACE_MISSING_STATE",
+    "SURFACE_NONFINITE",
+    "SURFACE_NUMERIC_TYPE",
+    "SURFACE_PERSONA_CONTENT_MISMATCH",
+    "SURFACE_RANGE",
+    "SURFACE_RECIPE_CONTENT_CONFLICT",
+    "SURFACE_RECIPE_UNSUPPORTED",
+    "SURFACE_SCHEMA_MISMATCH",
+    "SurfaceControl",
+    "SurfaceProjectionPort",
+    "SurfaceProjectionResult",
+    "SurfaceProjectionStatus",
     "TraceKind",
     "TraceRef",
     "TransitionIntent",

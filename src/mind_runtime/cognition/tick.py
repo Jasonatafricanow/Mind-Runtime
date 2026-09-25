@@ -55,6 +55,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     Situation,
+    SurfaceProjectionPort,
     SyncFields,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
@@ -67,6 +68,7 @@ from mind_runtime.pipeline.ports import AgentFailure
 from mind_runtime.situation.derived import media_photo_cadence_eligible
 from mind_runtime.situation.temporal import daypart
 from mind_runtime.state.persistence import StateBackend
+from mind_runtime.surface import project_surface_for_cognition
 
 TICK_INTERACTION_PREFIX = "cognitive-tick-"
 COUNTER_OBSERVATION_KEY = "system_counter.observed"
@@ -150,16 +152,12 @@ def observation_fact_reader(orchestrator: TurnOrchestrator) -> PolicyFactReader:
                 known = latest_by_key.get(fact_key)
                 # Authority order: observed_at first; exact ties fall back to
                 # the evidence ref, then nothing — never iteration order.
-                last_ref = (
-                    observation.evidence_refs[-1] if observation.evidence_refs else ""
-                )
+                last_ref = observation.evidence_refs[-1] if observation.evidence_refs else ""
                 rank = (observation.observed_at, last_ref)
                 known_rank = (known[0], known[2]) if known is not None else None
                 if known is None or known_rank is None or rank >= known_rank:
                     latest_by_key[fact_key] = (observation.observed_at, fact_value, last_ref)
-            return tuple(
-                sorted((key, item) for key, (_at, item, _ref) in latest_by_key.items())
-            )
+            return tuple(sorted((key, item) for key, (_at, item, _ref) in latest_by_key.items()))
 
     return _Reader()
 
@@ -218,6 +216,8 @@ class CognitiveTicker:
     independently of it. The C2.10 turn path stays byte-for-byte frozen.
     """
 
+    surface_projection_port: SurfaceProjectionPort | None = None
+
     def __init__(
         self,
         *,
@@ -232,7 +232,15 @@ class CognitiveTicker:
         projection_scope: Scope | None = None,
         expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
+        surface_projection_port: SurfaceProjectionPort | None = None,
     ) -> None:
+        composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
+        if (
+            surface_projection_port is not None
+            and surface_projection_port is not composed_surface_port
+        ):
+            raise ValueError("ticker Surface port must be the composed turn Surface authority")
+        self.surface_projection_port = composed_surface_port
         self._orchestrator = orchestrator
         self._persona = persona
         self._intent_lifecycle = intent_lifecycle
@@ -275,6 +283,14 @@ class CognitiveTicker:
             situation=situation,
             now=now,
         )
+        surface_result = project_surface_for_cognition(
+            surface_port=self.surface_projection_port,
+            persona=self._persona,
+            projected=projected,
+            runtime_id=self._runtime_id,
+            scope=projected.scope,
+            interaction_or_tick_ref=f"tick:{interaction_id}",
+        )
         engine_result = self._intent_engine.evaluate(
             IntentEngineInput(
                 interaction_id=interaction_id,
@@ -284,6 +300,9 @@ class CognitiveTicker:
                 projected=projected,
                 accepted_events=(),
                 clock=now,
+                surface=surface_result,
+                persona_version=self._persona.version,
+                persona_content_digest=self._persona.persona_content_digest,
             )
         )
         persisted_rows = self._persist_projection(projected)
@@ -475,10 +494,7 @@ class CognitiveTicker:
         for state in projected.projected_states:
             new_value = _as_float(state.value)
             before = existing.get(state.state_id)
-            if (
-                before is not None
-                and math.isclose(_as_float(before.value), new_value)
-            ):
+            if before is not None and math.isclose(_as_float(before.value), new_value):
                 continue
             if self._state_backend.save_state(state):
                 written += 1
@@ -486,9 +502,7 @@ class CognitiveTicker:
 
     # ── stage 3: tick Situation (no inbound Interaction, no Evidence) ────
 
-    def _tick_situation(
-        self, *, scope: Scope, interaction_id: str, now: datetime
-    ) -> Situation:
+    def _tick_situation(self, *, scope: Scope, interaction_id: str, now: datetime) -> Situation:
         facts = list(self._fact_reader.facts(scope)) if self._fact_reader is not None else []
         facts.append(("time.tick_ref", interaction_id))
         # D6 temporal owner reuse: the guard chain's temporal grounding and
@@ -573,8 +587,7 @@ class CognitiveTicker:
         reconsidered = tuple(
             intent
             for intent in lifecycle.backend.current(scope)
-            if intent.status is IntentStatus.CANDIDATE
-            and intent.intent_id not in candidate_ids
+            if intent.status is IntentStatus.CANDIDATE and intent.intent_id not in candidate_ids
         )
         ordered = sorted(
             admitted + list(reconsidered),
@@ -696,9 +709,7 @@ class CognitiveTicker:
 
     def _count_status(self, scope: Scope, status: IntentStatus) -> int:
         return sum(
-            1
-            for intent in self._intent_lifecycle.backend.current(scope)
-            if intent.status is status
+            1 for intent in self._intent_lifecycle.backend.current(scope) if intent.status is status
         )
 
 
