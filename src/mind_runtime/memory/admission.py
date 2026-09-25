@@ -1,6 +1,7 @@
 """Only the successful factual admission hook may register Memory eligibility."""
 
 import json
+from dataclasses import replace
 
 from mind_runtime.contracts import Evidence, SyncFields
 from mind_runtime.contracts.common import require_non_empty
@@ -75,7 +76,10 @@ class MemoryAdmissionService:
                         memory_id=memory_id,
                         scope=evidence.scope,
                         content=candidate.content,
-                        provenance=candidate.provenance,
+                        provenance=replace(
+                            candidate.provenance,
+                            interaction_id=observation.interaction_id,
+                        ),
                         origin_runtime_id=self._origin,
                         committed_at=job[0],
                         sync=SyncFields(evidence.scope, self._origin, memory_id, 1, memory_id),
