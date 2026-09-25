@@ -1,103 +1,222 @@
 # Optional MR to LCE binding
 
-The adapter implements LCE Core V0's existing `MemorySubstratePort`. MR owns
-all canonical Memory reads; LCE owns only its independent Baseline revisions.
-See ADR-0026. Default production composition does not import or invoke LCE.
+MR keeps canonical Memory authority. LCE remains a separately installed
+longitudinal-cognition module and owns only derived cognition such as Baseline
+revisions. The current integration supports three distinct paths:
 
-## Install the frozen optional dependency
-
-LCE is not a default MR dependency and is not vendored. In an isolated Python
-3.12+ environment, install the verified local Git source at its frozen commit:
-
-```powershell
-python -m pip install 'git+file:///C:/projects/LCE@d1eb5f63b427f216df0e38bde48eaff639546391'
+```text
+selected MR Memory -> LCE Core consolidation
+mature MR Thread   -> no-model LCE Baseline handoff
+accepted Baseline  -> bounded MR HistoricalContext readback
 ```
 
-Adjust the repository location for another host while preserving the exact
-revision. Do not substitute an unverified public package with the same name.
-Pip's installed `lce-core` distribution `direct_url.json` records the source
-commit; verify it before an enabled deployment. No Qdrant, FastEmbed, model
-files, embedding SDK, or API key is needed for explicit-ID consolidation.
-Missing optional LCE imports raise `LceIntegrationUnavailable` when enabled.
+See ADR-0026 and `docs/architecture/MEMORY_ARCHITECTURE_V1.md`.
 
-## Explicit composition
+## Verified optional dependency
 
-The trusted composition owner supplies an existing RuntimeBinding, an
-authorized production `Scope`, an explicit tuple of selected MR Memory IDs,
-and an implementation of frozen LCE's `SemanticConsolidatorPort`. Scope is
-not inferred from the IDs. Do not expose arbitrary caller-selected Scope as
-an authentication mechanism.
+The compatibility baseline used by this integration is:
+
+```text
+Jasonatafricanow/LCE-Longitudinal-Cognition-Engine
+commit 5894a2334943d9a12310992fedcc1932a473b3d2
+package lce-core 0.1.0
+```
+
+LCE is not a default MR dependency and is not vendored. A deployment that
+enables the integration should install and verify that source revision, for
+example:
+
+```powershell
+python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@5894a2334943d9a12310992fedcc1932a473b3d2"
+```
+
+Disabled composition does not import LCE or initialize its storage.
+
+## Canonical Memory adapter
+
+`MrMemorySubstrateAdapter(binding, authorized_scope, ...)` implements LCE's
+external `MemorySubstratePort`.
+
+It accepts 1–100 distinct stable MR Memory IDs and rejects the entire selection
+if any ID is unknown, outside the authorized Scope, or not ACTIVE. Scope is
+supplied by trusted composition; it is never inferred from the selected IDs.
+
+Returned `MemoryItemView` values use canonical MR content and Evidence
+provenance. Provider text, vector UUIDs, similarity scores, embeddings, Thread
+summaries and LCE output do not become factual Memory.
+
+## Generic LCE Core path
+
+Use `open_lce_binding` when the caller has deliberately selected canonical
+Memory and wants a supplied `SemanticConsolidatorPort` to form or revise a
+Baseline:
 
 ```python
 from mind_runtime.integrations.lce import open_lce_binding
 
-# binding, authorized_scope and consolidator come from trusted composition.
-# memory_ids are stable MR IDs; region_id is an opaque LCE lineage ID.
 session = open_lce_binding(
-    binding, authorized_scope, enabled=True, consolidator=consolidator,
+    binding,
+    authorized_scope,
+    enabled=True,
+    consolidator=consolidator,
 )
 assert session is not None
+
 with session:
     result = session.core.consolidate(region_id, memory_ids)
     history = session.core.get_history(region_id)
 ```
 
-This is an explicitly enabled composition example, not Xiyue activation.
-There is no production consolidator selection or automatic discovery policy
-in this ticket. In Lab/tests, supply isolated `lab_root` and `production_root`
-through the existing Runtime resolver. The integration accepts no Memory DB
-path. Binding and Memory storage must already exist; reads never initialize
-or claim canonical storage.
+The adapter revalidates every Memory ID before LCE receives it.
 
-`MrMemorySubstrateAdapter(binding, authorized_scope, ...).get_by_ids(ids)` can
-also be injected directly into frozen LCE. It accepts 1–100 distinct IDs,
-preserves their order, and rejects the entire set if any ID is unknown,
-outside the authorized Scope, or not ACTIVE. Duplicate IDs are errors.
-No views escape a failed selection and LCE cannot call its consolidator
-until selection succeeds. Source refs are canonical Evidence refs. Metadata
-is an immutable empty mapping for this explicit-ID seam.
+## Mature Thread handoff
 
-Selection can start with existing `MemoryRetrievalService.search`: take the
-resolved objects' `memory.memory_id` values and pass them explicitly. The
-adapter still revalidates against canonical SQLite. Provider text, UUIDs,
-scores, and embedding coordinates never become content or provenance.
+A mature MR Thread is already an online-reasoned, bounded medium-term working
+structure. Do not send it through another discovery/model pass merely to
+reconstruct the same relation.
 
-## Independent persistence and restart
+`open_lce_thread_handoff` performs a no-model handoff:
 
-The existing Runtime StoragePaths supplies:
+```python
+from mind_runtime.integrations.lce import open_lce_thread_handoff
+
+session = open_lce_thread_handoff(
+    binding,
+    authorized_scope,
+    enabled=True,
+)
+assert session is not None
+
+with session:
+    result = session.handoff_thread(thread)
+```
+
+The handoff requires:
+
+- a non-abandoned Thread;
+- `mature=True`;
+- a non-empty `working_summary`;
+- current-valid canonical MR support.
+
+The Thread carries bounded `origin_memory_ids` and
+`current_support_ids`. LCE re-resolves those IDs from canonical MR Memory and
+stores the accepted cognition under the stable lineage:
+
+```text
+mr-thread:<thread_id>
+```
+
+Replaying an unchanged mature Thread does not create a new semantic revision.
+Thread does not own PROGRESS/REVERSAL history; longitudinal revision authority
+belongs to LCE.
+
+## Accepted cognition readback
+
+`open_lce_read_binding` exposes current accepted Baseline HEADs without
+invoking a model. It returns no session when no LCE Baseline database exists,
+so a read-only product path does not create an empty cognition store.
+
+Before an accepted understanding is returned, all supporting MR Memory IDs are
+revalidated against canonical Scope/lifecycle state.
+
+The regular history composition can consume this directly:
+
+```python
+history = build_memory_history(
+    binding,
+    provider=retrieval_provider,
+    lce_enabled=True,
+)
+```
+
+When applicable accepted cognition exists, it is placed before raw Memory
+retrieval inside the same bounded HistoricalContext budget. Raw Memory fills
+remaining capacity.
+
+This is the consumption rule:
+
+```text
+accepted compiled understanding
+        +
+only the raw Memory detail still needed
+        ->
+current turn context
+```
+
+Reading does not reinforce either Memory or cognition.
+
+## Persistence and restart
+
+Per-Scope LCE Baselines remain physically separate from MR canonical Memory:
 
 ```text
 <runtime namespace>/memory.sqlite
 <runtime namespace>/lce/<sha256(full structured Scope JSON)>/lce_baselines.sqlite
 ```
 
-Only the latter is written by LCE. Scope partitioning prevents the same
-opaque region ID from exposing another Scope's previous Baseline. The path
-digest is not a cognitive field or region identity. Reopen the same Runtime
-and Scope to reconstruct Baseline head/history. Lifecycle filtering applies
-to newly selected Memory; this ticket does not rewrite prior LCE history.
+The Scope digest is deployment addressing, not a cognitive identity. Reopening
+the same Runtime and Scope restores the same Baseline HEAD/history.
 
-LCE equivalence remains normalized-string equality. No vector equivalence,
-supersession emitter, reinforcement, or reverse writeback is introduced.
-Removing the derived index prevents semantic discovery but does not prevent
-explicit-ID consolidation. Consumers must keep provider outages distinct
-from empty retrieval results, as required by MR-MEM-2.
+## Relation to standalone LCE V1
+
+The current LCE repository also includes a standalone V1 pipeline:
+
+```text
+Raw Evidence
+-> Semantic Block
+-> vector projection
+-> cutoff snapshots
+-> overlapping structure discovery
+-> relation candidate
+-> DraftRevision / Worktree
+-> Baseline
+-> AcceptedUnderstandingReadAPI
+```
+
+MR does not currently copy canonical Memory into LCE's standalone
+`ReferenceMemoryStore`. That store owns both source evidence and derived
+artifacts for standalone operation; duplicating MR facts there would create a
+second factual authority.
+
+A future latent-discovery adapter must keep the ownership split:
+
+```text
+source content / validity
+    -> MR canonical Memory
+
+Semantic Blocks / vectors / snapshots / drafts
+    -> LCE-owned derived storage
+```
+
+The mature-Thread path does not need that discovery pipeline because the
+structure was already formed online.
 
 ## Verification
 
-Install the frozen LCE package and run `python -m pytest tests/lce_binding -q`.
-The optional real Qdrant test uses the existing MR-MEM-3 extra and synthetic
-fixture vectors, not an embedding-quality benchmark. With LCE absent, its
-integration tests are explicitly skipped; the no-site-packages default-OFF
-test still runs. Acceptance evidence must use the frozen package with no
-LCE skips. Frozen LCE does not ship a `py.typed` marker, so adapter type
-verification uses `mypy --follow-imports=silent --follow-untyped-imports
-src/mind_runtime/integrations/lce.py` against its installed source.
+MR's integration tests cover:
+
+- canonical content/provenance mapping;
+- Scope and lifecycle rejection;
+- durable Baseline restart;
+- no reverse MR authority;
+- mature Thread handoff and replay;
+- accepted cognition readback;
+- default-OFF/no-dependency behavior.
+
+Run:
+
+```bash
+python -m pytest tests/lce_binding tests/memory_retrieval -q
+```
+
+The full MR CI additionally runs clean-install, Ruff-baseline, mypy and the
+complete pytest/coverage suite.
 
 ## Activation boundary
 
-Memory admission, semantic retrieval, and LCE invocation remain OFF by
-default. The MR-MEM-1 fact-commit/job-registration crash gap remains a
-PRE-PRODUCTION-ACTIVATION BLOCKER. No historical corpus was processed.
-STRUCTURE-06, Hot Start, topology, reverse MR projection, Chinese embedding
-quality certification, and research Gemini space remain unchanged.
+LCE remains opt-in. `default_adapter(..., lce_enabled=False)` is the default.
+
+Automatic Thread formation/maturity policy and full latent-discovery scheduling
+are separate runtime work. Enabling the binding does not grant LCE factual
+write authority and does not claim that general longitudinal cognition is a
+solved problem.
