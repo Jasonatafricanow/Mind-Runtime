@@ -68,6 +68,24 @@ quality gate that applies to it. The public CI currently covers:
 Do not hide failing tests, silently widen skips/xfails, or claim external/live validation
 that was not performed.
 
+## Test design discipline
+
+Coverage is a regression signal, not an instruction to manufacture tests for individual
+source lines or branch numbers.
+
+- Test externally meaningful behavior, contracts, persistence, restart/replay, authority,
+  isolation, idempotency, and fail-closed boundaries.
+- Before adding a test, search the nearest suite for the same contract. Extend an existing
+  table or fixture instead of restating the setup in a new test.
+- Prefer `pytest.mark.parametrize`, small builders, and shared fixtures for symmetric
+  environments, invalid-input matrices, thresholds, and fault-injection matrices.
+- Do not add `test_*_coverage_gaps.py` cases whose only purpose is to hit an implementation
+  branch. If a defensive branch is unreachable through supported interfaces, document the
+  invariant or simplify the implementation instead of inventing a production-impossible
+  test double solely for coverage.
+- A refactor should not preserve duplicate tests merely to keep the collected-test count
+  high. Preserve distinct guarantees, not historical test volume.
+
 ## Scope discipline
 
 Keep changes bounded. If work starts creating a new planner, workflow engine, tool router,
