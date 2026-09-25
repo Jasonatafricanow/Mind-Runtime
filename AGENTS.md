@@ -85,6 +85,9 @@ source lines or branch numbers.
   test double solely for coverage.
 - A refactor should not preserve duplicate tests merely to keep the collected-test count
   high. Preserve distinct guarantees, not historical test volume.
+- `research/archive/**` is frozen historical evidence, not an active runtime contract or
+  default verification surface. Do not use archived harnesses, red-phase proofs, or old gate
+  vocabulary as implementation authority unless an accepted current ADR explicitly revives it.
 
 ## Scope discipline
 
@@ -94,37 +97,3 @@ re-check ownership before expanding MR.
 
 Task reports should state: changed files, verification run, contract/ADR impact, explicit
 non-goals, known gaps, and whether the change is ready to merge.
-
-
-## Machine-enforced architecture compatibility markers
-
-The repository still has governance tests that verify historical delivery-gate vocabulary.
-These markers preserve that executable contract; they are not a reviewer scoring rubric.
-
-Active authority references include:
-
-- `docs/adr/0007-bound-expression-authority.md`
-- `docs/adr/0008-split-d11-certification-and-live-shadow.md`
-- `docs/superpowers/specs/2026-08-22-d7r-compressed-runtime-and-agent-onboarding-design.md`
-- `docs/superpowers/specs/2026-08-23-d11s-deterministic-certification-and-d11l-entry-design.md`
-
-Protected boundary vocabulary retained by governance tests includes
-`EmotionalTransition and Assessment/Contribution Trace`,
-`Intent lifecycle and scheduling`, and the rule that
-`History facts cannot become Persona`.
-
-Current historical gate markers:
-
-- D7R is closed.
-- D8 is closed.
-- D9 is closed.
-- D10 is closed.
-- D11S is closed.
-- D11L is blocked by the external environment.
-- D11P, MR-4, and MR-5 remain blocked.
-
-The frozen split is:
-
-```text
-D10 -> D11S -> D11L -> D11 completion -> D11P
-```
