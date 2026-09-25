@@ -64,9 +64,9 @@ def _merge_bundles(
     if lce is None and thread is None and memory is None:
         return None
 
-    # Compiled cognition is preferred. Raw Memory fills the remaining bounded
-    # budget instead of forcing the model to reconstruct an already accepted
-    # longitudinal line again.
+    # Prefer the highest available logical projection. A relevant active
+    # Thread can carry not-yet-compiled online reasoning; canonical Memory
+    # fills the remaining budget rather than reconstructing accepted logic.
     candidates: list[HistoricalContextItem] = []
     for bundle in (lce, thread, memory):
         if bundle is None:
