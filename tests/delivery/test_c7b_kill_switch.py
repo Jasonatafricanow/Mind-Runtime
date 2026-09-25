@@ -271,29 +271,43 @@ def test_unblock_target_with_channel_blocks_remaining_off_channel(
 # ----------------------------------------------------------- bad input
 
 
-def test_decide_rejects_empty_channel_or_target(db_path: Path) -> None:
-    """decide() refuses empty channel or target."""
-
+@pytest.mark.parametrize(
+    ("operation", "kwargs", "message"),
+    (
+        ("decide", {"channel": "", "target": "user-1"}, "channel"),
+        ("decide", {"channel": "weixin", "target": ""}, "target"),
+        (
+            "block_channel",
+            {"channel": "", "reason": "x", "updated_at": NOW},
+            "channel",
+        ),
+        (
+            "block_channel",
+            {"channel": "weixin", "reason": "", "updated_at": NOW},
+            "reason",
+        ),
+        (
+            "block_target",
+            {"target": "", "reason": "x", "updated_at": NOW},
+            "target",
+        ),
+        (
+            "block_target",
+            {"target": "user-1", "reason": "", "updated_at": NOW},
+            "reason",
+        ),
+    ),
+)
+def test_kill_switch_rejects_empty_inputs(
+    db_path: Path,
+    operation: str,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
     backend = SqliteDeliveryBackend(db_path)
     try:
-        ks = backend.kill_switch()
-        with pytest.raises(ValueError, match="channel"):
-            ks.decide(channel="", target="user-1")
-        with pytest.raises(ValueError, match="target"):
-            ks.decide(channel="weixin", target="")
+        with pytest.raises(ValueError, match=message):
+            getattr(backend.kill_switch(), operation)(**kwargs)
     finally:
         backend.close()
 
-
-def test_block_channel_rejects_empty_inputs(db_path: Path) -> None:
-    """block_channel refuses empty channel or reason."""
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        ks = backend.kill_switch()
-        with pytest.raises(ValueError, match="channel"):
-            ks.block_channel("", reason="x", updated_at=datetime.now(tz=UTC))
-        with pytest.raises(ValueError, match="reason"):
-            ks.block_channel("weixin", reason="", updated_at=datetime.now(tz=UTC))
-    finally:
-        backend.close()
