@@ -320,6 +320,8 @@ class MemoryProductStore:
         memories = tuple(self._memory(mid, active=True) for mid in supporting_memory_ids)
         if any(memory.scope != scope for memory in memories):
             raise ValueError("thread support must exactly match thread Scope")
+        if mature and not self._has_independent_support(supporting_memory_ids):
+            raise ValueError("mature Thread requires support from at least two interactions")
         thread = MemoryThread(
             thread_id=thread_id,
             scope=scope,
@@ -406,6 +408,11 @@ class MemoryProductStore:
             raise ValueError("thread support must exactly match thread Scope")
         next_summary = thread.working_summary if working_summary is None else working_summary
         next_mature = thread.mature if mature is None else mature
+        maturity_support = tuple(
+            dict.fromkeys((*thread.origin_memory_ids, *supporting_memory_ids))
+        )
+        if next_mature and not self._has_independent_support(maturity_support):
+            raise ValueError("mature Thread requires support from at least two interactions")
         if (
             thread.current_support_ids == supporting_memory_ids
             and thread.working_summary == next_summary
@@ -447,6 +454,9 @@ class MemoryProductStore:
             dict.fromkeys((*thread.current_support_ids, memory_id))
         )[-MAX_THREAD_CURRENT_SUPPORT:]
         summary = thread.working_summary if working_summary is None else working_summary
+        maturity_support = tuple(
+            dict.fromkeys((*thread.origin_memory_ids, *support))
+        )
         updated = replace(
             thread,
             status=ThreadStatus.RESOLVED,
@@ -454,7 +464,11 @@ class MemoryProductStore:
             touch_count=thread.touch_count + 1,
             current_support_ids=support,
             working_summary=summary,
-            mature=thread.mature or summary is not None,
+            mature=thread.mature
+            or (
+                summary is not None
+                and self._has_independent_support(maturity_support)
+            ),
         )
         self._put_thread(updated)
         return updated
@@ -470,6 +484,8 @@ class MemoryProductStore:
             raise ValueError("Thread is not mature for LCE handoff")
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
+        if not self._has_independent_support(thread.handoff_memory_ids):
+            raise ValueError("Thread maturity lacks independent interaction support")
         return thread
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
@@ -531,6 +547,16 @@ class MemoryProductStore:
             candidates.append((score, thread.updated_at, thread.thread_id, thread))
         candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         return tuple(item[3] for item in candidates[:limit])
+
+    def _has_independent_support(self, memory_ids: tuple[str, ...]) -> bool:
+        interaction_ids = {
+            memory.provenance.interaction_id
+            for memory_id in memory_ids
+            if (memory := self._canonical.get(memory_id)) is not None
+            and memory.lifecycle is MemoryLifecycle.ACTIVE
+            and memory.provenance.interaction_id is not None
+        }
+        return len(interaction_ids) >= 2
 
     def _thread_support_is_current(self, thread: MemoryThread) -> bool:
         for memory_id in thread.handoff_memory_ids:
