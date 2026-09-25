@@ -1,6 +1,9 @@
 """RED 5 tests for StateEligibility gate."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from mind_runtime.contracts import (
     EffectiveWindow,
@@ -141,3 +144,39 @@ def test_null_window_is_observation_only() -> None:
     obs = make_obs(effective_window=None)
     decision = evaluate_state_eligibility(obs, admission_anchor=NOW, has_exact_target=False)
     assert decision is StateEligibility.OBSERVATION_ONLY
+
+
+def test_non_user_scope_and_unconfigured_definition_never_project_state() -> None:
+    observation = make_obs()
+    agent_scope = Scope(domain=ScopeDomain.AGENT, agent_id="agent-1", persona_id="p1")
+    non_user = replace(
+        observation,
+        scope=agent_scope,
+        sync=replace(observation.sync, scope=agent_scope),
+    )
+    assert evaluate_state_eligibility(non_user) is StateEligibility.REJECTED
+    assert (
+        evaluate_state_eligibility(observation, is_valid_definition=False)
+        is StateEligibility.OBSERVATION_ONLY
+    )
+
+
+def test_future_open_interval_and_expired_interval_never_project_current_state() -> None:
+    future = make_obs(effective_window=EffectiveWindow(
+        kind=EffectiveWindowKind.OPEN_INTERVAL,
+        start_at=NOW + timedelta(hours=1),
+    ))
+    expired = make_obs(effective_window=EffectiveWindow(
+        kind=EffectiveWindowKind.INTERVAL,
+        start_at=NOW - timedelta(hours=2),
+        end_at=NOW - timedelta(hours=1),
+    ))
+    assert evaluate_state_eligibility(future) is StateEligibility.OBSERVATION_ONLY
+    assert evaluate_state_eligibility(expired) is StateEligibility.OBSERVATION_ONLY
+
+
+def test_retry_cannot_supply_new_wall_clock_as_admission_anchor() -> None:
+    with pytest.raises(ValueError, match="admission_anchor"):
+        evaluate_state_eligibility(
+            make_obs(), admission_anchor=NOW + timedelta(days=1)
+        )
