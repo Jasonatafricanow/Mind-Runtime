@@ -1000,20 +1000,21 @@ class TestObservationBindingsEnumeration:
 # ===========================================================================
 
 
-class TestScopedReadEndpointsIsolation:
-    @pytest.fixture
-    def test_client(self, multi_binding_setup):
-        reg = multi_binding_setup["registry"]
-        resolver = multi_binding_setup["resolver"]
-        catalog = ObservationBindingCatalog(
-            reader=reg.reader,
-            environment=RuntimeEnvironment.PRODUCTION,
-            resolver=resolver,
-        )
-        resolved_a = resolver.resolve(multi_binding_setup["binding_a"])
-        app, _ = compose_ow_app(resolved_a, catalog=catalog)
-        return TestClient(app)
+@pytest.fixture
+def test_client(multi_binding_setup):
+    reg = multi_binding_setup["registry"]
+    resolver = multi_binding_setup["resolver"]
+    catalog = ObservationBindingCatalog(
+        reader=reg.reader,
+        environment=RuntimeEnvironment.PRODUCTION,
+        resolver=resolver,
+    )
+    resolved_a = resolver.resolve(multi_binding_setup["binding_a"])
+    app, _ = compose_ow_app(resolved_a, catalog=catalog)
+    return TestClient(app)
 
+
+class TestScopedReadEndpointsIsolation:
     def test_scoped_overview_isolation(self, test_client):
         resp_a = test_client.get("/api/runtime-bindings/agent-a-prod/overview")
         assert resp_a.status_code == 200
@@ -1222,19 +1223,6 @@ class TestCursorBindingIsolation:
 
 
 class TestScopedErrorResponses:
-    @pytest.fixture
-    def test_client(self, multi_binding_setup):
-        reg = multi_binding_setup["registry"]
-        resolver = multi_binding_setup["resolver"]
-        catalog = ObservationBindingCatalog(
-            reader=reg.reader,
-            environment=RuntimeEnvironment.PRODUCTION,
-            resolver=resolver,
-        )
-        resolved_a = resolver.resolve(multi_binding_setup["binding_a"])
-        app, _ = compose_ow_app(resolved_a, catalog=catalog)
-        return TestClient(app)
-
     def test_unknown_binding_returns_404(self, test_client):
         resp = test_client.get("/api/runtime-bindings/unknown-id/overview")
         assert resp.status_code == 404
