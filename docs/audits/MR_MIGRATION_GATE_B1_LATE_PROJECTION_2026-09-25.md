@@ -9,7 +9,8 @@
 - Updated target main base: `04e545b9c1b42be2e22ee95de1490ac6d455acdc`, after concurrent Memory hybrid retrieval publication. The B1 branch incorporated this main commit by normal merge, without force push.
 - Forward-port branch/worktree: `w/mr-migration-w2-gate-b1-20260925`, `C:\projects\mind-runtime-main-merge\.worktrees\mr-migration-w2-gate-b1-20260925`.
 - Migration code/test commit: `912210e366cc006ef7b82195657bff8da16e4d70`; current-main incorporation commit: `68729253e68fcfd60c72cdf2df599fc333f5403e`.
-- Pull request: [#13](https://github.com/Jasonatafricanow/Mind-Runtime/pull/13). Final main replacement SHA is recorded after merge.
+- Pull request: [#13](https://github.com/Jasonatafricanow/Mind-Runtime/pull/13). Final main replacement SHA: `15c73f710be87e86e15187062c63e0bc6710df31`.
+- Actual first parent at merge: `5ed5df9ee9f44ebc13ba06f5e8faf85cd93bf0b8`, which added the concurrent Memory HyDE fallback after B1's `04e545b` development base. Second parent: report commit `83aa4c88e398aae8d6e79fc0dbebc9aea8ee2938`. The four intervening Memory file paths had zero overlap with the 36 B1 PR paths, and the merged Memory ADR-0029 blob equals the `5ed5df9` blob.
 
 ## Exact migrated files
 
@@ -80,9 +81,12 @@ No W2 behavior was intentionally changed. Source and migrated code contain no `g
 | Ruff baseline | 765 current / 801 allowed; pass |
 | mypy baseline | 109 current / 125 allowed; pass |
 | GitHub Actions quality on `6872925` | [run #205](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36105148663): Success, clean-install/python/tests jobs passed |
+| GitHub Actions quality on report commit `83aa4c8` | [run #211](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36106026337): Success |
+| GitHub Actions quality on merged main `15c73f7` | [run #212](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36106481112): Success |
+| Merged-main focused W2/Reality/Memory hybrid | 232 passed, using the root main source tree |
 
 The initial full run on `912210e` was stopped at 53% without a failure when main published new Memory hybrid retrieval code. It is not a certification result. The complete result above is from the updated target base. The currently published Memory main quality run #201 also completed successfully.
 
 ## Remaining boundary
 
-This report commit needs its own current PR CI. Merge Gate B1 only after that result and a fresh main-head check. Keep all archived and local W2 refs/worktrees until issue #11's final disposition. W3 Surface, Fast Function and consumers remain separate later gates.
+Gate B1 is merged and current-main CI is green. Keep all archived and local W2 refs/worktrees until issue #11's final disposition. W3 Surface, Fast Function and consumers remain separate later gates.
