@@ -13,10 +13,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from mind_runtime.memory.providers.bm25 import lexical_tokens
-
 from mind_runtime.contracts import Scope
 from mind_runtime.memory.contracts import MemoryLifecycle
+from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.product import MemoryThread, ThreadStatus
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
 from mind_runtime.runtime_binding import (
@@ -27,7 +26,6 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
-    from lce.contracts.baseline import Baseline
     from lce.contracts.consolidation import ConsolidationResult, SemanticConsolidatorPort
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
@@ -104,7 +102,9 @@ class MrMemorySubstrateAdapter:
         try:
             from lce.contracts.external_memory import MemoryItemView
         except ImportError as exc:
-            raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
         return tuple(
             MemoryItemView(m.memory_id, m.content, m.provenance.evidence_refs, MappingProxyType({}))
             for m in memories
@@ -252,7 +252,9 @@ class LceThreadHandoffSession:
             from lce.contracts.consolidation import CandidateBaseline
             from lce.core.engine import LceCore
         except ImportError as exc:
-            raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
 
         support = thread.handoff_memory_ids
         # Revalidate every canonical support point before LCE sees the candidate.
