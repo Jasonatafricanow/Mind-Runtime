@@ -1,7 +1,7 @@
 """Product-level memory governance over canonical MR Memory.
 
 Canonical Memory remains factual authority. This module stores only derived
-attention state and explicit unresolved trajectories in the same memory.sqlite.
+attention state and short-lived logical projections in the same memory.sqlite.
 Neither attention nor threads can create Evidence, Observation, or Memory.
 """
 
@@ -111,6 +111,7 @@ class ThreadStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     ABANDONED = "abandoned"
+    COMPILED = "compiled"
 
 
 MAX_THREAD_ORIGIN_SUPPORT = 8
@@ -140,6 +141,7 @@ class MemoryThread:
     current_support_ids: tuple[str, ...]
     working_summary: str | None = None
     mature: bool = False
+    compiled_baseline_id: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.thread_id, "thread_id")
@@ -184,6 +186,12 @@ class MemoryThread:
             raise ValueError("mature must be bool")
         if self.mature and self.working_summary is None:
             raise ValueError("mature Thread requires working_summary")
+        if self.compiled_baseline_id is not None:
+            require_non_empty(self.compiled_baseline_id, "compiled_baseline_id")
+        if self.status is ThreadStatus.COMPILED and self.compiled_baseline_id is None:
+            raise ValueError("COMPILED Thread requires compiled_baseline_id")
+        if self.status is not ThreadStatus.COMPILED and self.compiled_baseline_id is not None:
+            raise ValueError("only COMPILED Thread may carry compiled_baseline_id")
 
     @property
     def handoff_memory_ids(self) -> tuple[str, ...]:
@@ -464,13 +472,49 @@ class MemoryProductStore:
         thread = self.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"unknown thread: {thread_id}")
-        if thread.status is ThreadStatus.ABANDONED:
-            raise ValueError("abandoned Thread cannot be handed off")
+        if thread.status in (ThreadStatus.ABANDONED, ThreadStatus.COMPILED):
+            raise ValueError(f"{thread.status.value} Thread cannot be handed off")
         if not thread.mature or thread.working_summary is None:
             raise ValueError("Thread is not mature for LCE handoff")
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
         return thread
+
+    def compile_thread(
+        self,
+        thread_id: str,
+        *,
+        baseline_id: str,
+        at: datetime,
+    ) -> MemoryThread:
+        """Retire a mature Thread after an accepted higher-level projection exists."""
+        self._writable()
+        require_non_empty(baseline_id, "baseline_id")
+        require_aware_utc(at, "at")
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            raise ValueError(f"unknown thread: {thread_id}")
+        if thread.status is ThreadStatus.COMPILED:
+            if thread.compiled_baseline_id != baseline_id:
+                raise MemoryProductConflict(
+                    f"Thread {thread_id} already compiled into "
+                    f"{thread.compiled_baseline_id}"
+                )
+            return thread
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be compiled")
+        if not thread.mature or thread.working_summary is None:
+            raise ValueError("Thread is not mature for compilation")
+        if not self._thread_support_is_current(thread):
+            raise ValueError("Thread support is not current")
+        updated = replace(
+            thread,
+            status=ThreadStatus.COMPILED,
+            updated_at=at,
+            compiled_baseline_id=baseline_id,
+        )
+        self._put_thread(updated)
+        return updated
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
         self._writable()
