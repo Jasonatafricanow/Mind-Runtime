@@ -574,243 +574,159 @@ class TestBindingRegistryContract:
         assert len(lab_list) == 1
         assert lab_list[0].binding_id == "b-lab"
 
-    def test_w2c_r2_proof_b_two_prod_defaults_fail_closed(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("environment", "prefix", "namespace"),
+        (
+            (RuntimeEnvironment.PRODUCTION, "prod", "production"),
+            (RuntimeEnvironment.LAB, "lab", "exp"),
+        ),
+    )
+    def test_multiple_defaults_fail_closed_per_environment(
+        self,
+        tmp_path: Path,
+        environment: RuntimeEnvironment,
+        prefix: str,
+        namespace: str,
     ) -> None:
-        """Proof B: Two PRODUCTION defaults fail closed with MULTIPLE_DEFAULTS."""
-        store_dir = tmp_path / "proof_b_store"
+        store_dir = tmp_path / f"multiple_defaults_{prefix}"
         store_dir.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {
+                "binding_id": f"{prefix}-{index}",
+                "is_default": True,
+                "identity": {
+                    "environment": environment.value,
+                    "persona_id": f"p{index}",
+                    "agent_id": f"a{index}",
+                    "runtime_id": f"r{index}",
+                    "storage_namespace": f"{namespace}-{index}",
+                },
+            }
+            for index in (1, 2)
+        ]
         (store_dir / "registry.json").write_text(
-            json.dumps({
-                "version": 1,
-                "entries": [
-                    {
-                        "binding_id": "prod-1",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "production",
-                            "persona_id": "p1",
-                            "agent_id": "a1",
-                            "runtime_id": "r1",
-                            "storage_namespace": "production/p1",
-                        },
-                    },
-                    {
-                        "binding_id": "prod-2",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "production",
-                            "persona_id": "p2",
-                            "agent_id": "a2",
-                            "runtime_id": "r2",
-                            "storage_namespace": "production/p2",
-                        },
-                    },
-                ],
-            }),
+            json.dumps({"version": 1, "entries": entries}),
             encoding="utf-8",
         )
         registry = build_binding_registry(store_dir)
         with pytest.raises(BindingRegistryError) as exc_info:
-            registry.reader.list_bindings(environment=RuntimeEnvironment.PRODUCTION)
+            registry.reader.list_bindings(environment=environment)
         assert exc_info.value.code == RegistryFailureCode.MULTIPLE_DEFAULTS
 
-    def test_w2c_r2_proof_c_two_lab_defaults_fail_closed(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("environment", "binding_id", "agent_id"),
+        (
+            (RuntimeEnvironment.PRODUCTION, "prod-xiyue", "hermes-xiyue"),
+            (RuntimeEnvironment.LAB, "lab-exp", "agent-lab"),
+        ),
+    )
+    def test_default_binding_is_environment_scoped(
+        self,
+        tmp_path: Path,
+        environment: RuntimeEnvironment,
+        binding_id: str,
+        agent_id: str,
     ) -> None:
-        """Proof C: Two LAB defaults fail closed with MULTIPLE_DEFAULTS."""
-        store_dir = tmp_path / "proof_c_store"
+        store_dir = tmp_path / f"default_{environment.value}"
         store_dir.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {
+                "binding_id": "prod-xiyue",
+                "is_default": True,
+                "identity": {
+                    "environment": "production",
+                    "persona_id": "p-prod",
+                    "agent_id": "hermes-xiyue",
+                    "runtime_id": "rt-xiyue",
+                    "storage_namespace": "production/xiyue",
+                },
+            },
+            {
+                "binding_id": "lab-exp",
+                "is_default": True,
+                "identity": {
+                    "environment": "lab",
+                    "persona_id": "p-lab",
+                    "agent_id": "agent-lab",
+                    "runtime_id": "rt-lab",
+                    "storage_namespace": "exp-lab",
+                },
+            },
+        ]
         (store_dir / "registry.json").write_text(
-            json.dumps({
-                "version": 1,
-                "entries": [
-                    {
-                        "binding_id": "lab-1",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "lab",
-                            "persona_id": "p1",
-                            "agent_id": "a1",
-                            "runtime_id": "r1",
-                            "storage_namespace": "exp-1",
-                        },
-                    },
-                    {
-                        "binding_id": "lab-2",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "lab",
-                            "persona_id": "p2",
-                            "agent_id": "a2",
-                            "runtime_id": "r2",
-                            "storage_namespace": "exp-2",
-                        },
-                    },
-                ],
-            }),
+            json.dumps({"version": 1, "entries": entries}),
             encoding="utf-8",
         )
-        registry = build_binding_registry(store_dir)
-        with pytest.raises(BindingRegistryError) as exc_info:
-            registry.reader.list_bindings(environment=RuntimeEnvironment.LAB)
-        assert exc_info.value.code == RegistryFailureCode.MULTIPLE_DEFAULTS
-
-    def test_w2c_r2_proof_d_default_binding_prod_returns_only_prod_descriptor(
-        self, tmp_path: Path
-    ) -> None:
-        """Proof D: default_binding(PRODUCTION) returns only PRODUCTION descriptor."""
-        store_dir = tmp_path / "proof_d_store"
-        store_dir.mkdir(parents=True, exist_ok=True)
-        (store_dir / "registry.json").write_text(
-            json.dumps({
-                "version": 1,
-                "entries": [
-                    {
-                        "binding_id": "prod-xiyue",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "production",
-                            "persona_id": "p-prod",
-                            "agent_id": "hermes-xiyue",
-                            "runtime_id": "rt-xiyue",
-                            "storage_namespace": "production/xiyue",
-                        },
-                    },
-                    {
-                        "binding_id": "lab-exp",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "lab",
-                            "persona_id": "p-lab",
-                            "agent_id": "agent-lab",
-                            "runtime_id": "rt-lab",
-                            "storage_namespace": "exp-lab",
-                        },
-                    },
-                ],
-            }),
-            encoding="utf-8",
+        result = build_binding_registry(store_dir).reader.default_binding(
+            environment=environment
         )
-        registry = build_binding_registry(store_dir)
-        res = registry.reader.default_binding(environment=RuntimeEnvironment.PRODUCTION)
-        assert res.status == "DEFAULT_BINDING"
-        assert res.descriptor is not None
-        assert res.descriptor.binding_id == "prod-xiyue"
-        assert res.descriptor.environment == RuntimeEnvironment.PRODUCTION
-        assert res.descriptor.agent_id == "hermes-xiyue"
+        assert result.status == "DEFAULT_BINDING"
+        assert result.descriptor is not None
+        assert result.descriptor.binding_id == binding_id
+        assert result.descriptor.environment == environment
+        assert result.descriptor.agent_id == agent_id
 
-    def test_w2c_r2_proof_e_default_binding_lab_returns_only_lab_descriptor(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("target_environment", "first_id", "second_id", "other_id"),
+        (
+            (RuntimeEnvironment.PRODUCTION, "prod-a", "prod-b", "lab-a"),
+            (RuntimeEnvironment.LAB, "lab-a", "lab-b", "prod-a"),
+        ),
+    )
+    def test_set_default_replaces_only_target_environment(
+        self,
+        tmp_path: Path,
+        target_environment: RuntimeEnvironment,
+        first_id: str,
+        second_id: str,
+        other_id: str,
     ) -> None:
-        """Proof E: default_binding(LAB) returns only LAB descriptor."""
-        store_dir = tmp_path / "proof_e_store"
-        store_dir.mkdir(parents=True, exist_ok=True)
-        (store_dir / "registry.json").write_text(
-            json.dumps({
-                "version": 1,
-                "entries": [
-                    {
-                        "binding_id": "prod-xiyue",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "production",
-                            "persona_id": "p-prod",
-                            "agent_id": "hermes-xiyue",
-                            "runtime_id": "rt-xiyue",
-                            "storage_namespace": "production/xiyue",
-                        },
-                    },
-                    {
-                        "binding_id": "lab-exp",
-                        "is_default": True,
-                        "identity": {
-                            "environment": "lab",
-                            "persona_id": "p-lab",
-                            "agent_id": "agent-lab",
-                            "runtime_id": "rt-lab",
-                            "storage_namespace": "exp-lab",
-                        },
-                    },
-                ],
-            }),
-            encoding="utf-8",
-        )
-        registry = build_binding_registry(store_dir)
-        res = registry.reader.default_binding(environment=RuntimeEnvironment.LAB)
-        assert res.status == "DEFAULT_BINDING"
-        assert res.descriptor is not None
-        assert res.descriptor.binding_id == "lab-exp"
-        assert res.descriptor.environment == RuntimeEnvironment.LAB
-        assert res.descriptor.agent_id == "agent-lab"
-
-    def test_w2c_r2_proof_f_set_default_prod_replaces_prod_only_lab_unchanged(
-        self, tmp_path: Path
-    ) -> None:
-        """Proof F: set_default(PRODUCTION-B) replaces PRODUCTION-A only; LAB default remains unchanged."""
-        store_dir = tmp_path / "proof_f_store"
-        registry = build_binding_registry(store_dir)
+        registry = build_binding_registry(tmp_path / f"set_default_{target_environment.value}")
         registry.writer.initialize()
 
-        p_a = _make_binding(namespace="production/pa", environment=RuntimeEnvironment.PRODUCTION, agent_id="pa")
-        p_b = _make_binding(namespace="production/pb", environment=RuntimeEnvironment.PRODUCTION, agent_id="pb")
-        l_a = _make_binding(namespace="exp-la", environment=RuntimeEnvironment.LAB, agent_id="la")
+        bindings = {
+            "prod-a": _make_binding(
+                namespace="production/pa",
+                environment=RuntimeEnvironment.PRODUCTION,
+                agent_id="pa",
+            ),
+            "prod-b": _make_binding(
+                namespace="production/pb",
+                environment=RuntimeEnvironment.PRODUCTION,
+                agent_id="pb",
+            ),
+            "lab-a": _make_binding(
+                namespace="exp-la",
+                environment=RuntimeEnvironment.LAB,
+                agent_id="la",
+            ),
+            "lab-b": _make_binding(
+                namespace="exp-lb",
+                environment=RuntimeEnvironment.LAB,
+                agent_id="lb",
+            ),
+        }
+        for binding_id in {first_id, second_id, other_id}:
+            registry.writer.register(bindings[binding_id], binding_id)
 
-        registry.writer.register(p_a, "prod-a")
-        registry.writer.register(p_b, "prod-b")
-        registry.writer.register(l_a, "lab-a")
+        registry.writer.set_default(first_id)
+        registry.writer.set_default(other_id)
+        registry.writer.set_default(second_id)
 
-        registry.writer.set_default("prod-a")
-        registry.writer.set_default("lab-a")
+        target = registry.reader.default_binding(environment=target_environment)
+        assert target.status == "DEFAULT_BINDING"
+        assert target.descriptor is not None
+        assert target.descriptor.binding_id == second_id
 
-        # Prior state: prod-a is default in PROD, lab-a is default in LAB
-        assert registry.reader.default_binding(environment=RuntimeEnvironment.PRODUCTION).descriptor.binding_id == "prod-a"
-        assert registry.reader.default_binding(environment=RuntimeEnvironment.LAB).descriptor.binding_id == "lab-a"
-
-        # Action: set_default(prod-b)
-        registry.writer.set_default("prod-b")
-
-        # PROD default replaced by prod-b
-        prod_res = registry.reader.default_binding(environment=RuntimeEnvironment.PRODUCTION)
-        assert prod_res.status == "DEFAULT_BINDING"
-        assert prod_res.descriptor.binding_id == "prod-b"
-
-        # LAB default strictly unchanged
-        lab_res = registry.reader.default_binding(environment=RuntimeEnvironment.LAB)
-        assert lab_res.status == "DEFAULT_BINDING"
-        assert lab_res.descriptor.binding_id == "lab-a"
-
-    def test_w2c_r2_proof_g_set_default_lab_replaces_lab_only_prod_unchanged(
-        self, tmp_path: Path
-    ) -> None:
-        """Proof G: set_default(LAB-B) replaces LAB-A only; PRODUCTION default remains unchanged."""
-        store_dir = tmp_path / "proof_g_store"
-        registry = build_binding_registry(store_dir)
-        registry.writer.initialize()
-
-        p_a = _make_binding(namespace="production/pa", environment=RuntimeEnvironment.PRODUCTION, agent_id="pa")
-        l_a = _make_binding(namespace="exp-la", environment=RuntimeEnvironment.LAB, agent_id="la")
-        l_b = _make_binding(namespace="exp-lb", environment=RuntimeEnvironment.LAB, agent_id="lb")
-
-        registry.writer.register(p_a, "prod-a")
-        registry.writer.register(l_a, "lab-a")
-        registry.writer.register(l_b, "lab-b")
-
-        registry.writer.set_default("prod-a")
-        registry.writer.set_default("lab-a")
-
-        # Action: set_default(lab-b)
-        registry.writer.set_default("lab-b")
-
-        # LAB default replaced by lab-b
-        lab_res = registry.reader.default_binding(environment=RuntimeEnvironment.LAB)
-        assert lab_res.status == "DEFAULT_BINDING"
-        assert lab_res.descriptor.binding_id == "lab-b"
-
-        # PRODUCTION default strictly unchanged
-        prod_res = registry.reader.default_binding(environment=RuntimeEnvironment.PRODUCTION)
-        assert prod_res.status == "DEFAULT_BINDING"
-        assert prod_res.descriptor.binding_id == "prod-a"
+        other_environment = (
+            RuntimeEnvironment.LAB
+            if target_environment is RuntimeEnvironment.PRODUCTION
+            else RuntimeEnvironment.PRODUCTION
+        )
+        other = registry.reader.default_binding(environment=other_environment)
+        assert other.status == "DEFAULT_BINDING"
+        assert other.descriptor is not None
+        assert other.descriptor.binding_id == other_id
 
     def test_w2c_r2_proof_h_clear_default_prod_does_not_clear_lab_default(
         self, tmp_path: Path
