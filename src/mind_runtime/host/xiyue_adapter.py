@@ -276,6 +276,7 @@ def default_adapter(
     binding: RuntimeBinding | None = None,
     memory_enabled: bool = False,
     retrieval_provider: RetrievalProvider | None = None,
+    lce_enabled: bool = False,
 ) -> XiyueMRAdapter:
     """Build the production XiyueMRAdapter bound to the MR host adapter.
 
@@ -345,7 +346,11 @@ def default_adapter(
         telemetry_sink=telemetry_sink,
         memory_enabled=memory_enabled,
         memory_binding=binding,
-        historical_context=build_memory_history(binding, provider=retrieval_provider),
+        historical_context=build_memory_history(
+            binding,
+            provider=retrieval_provider,
+            lce_enabled=lce_enabled,
+        ),
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)
     return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id="user")
