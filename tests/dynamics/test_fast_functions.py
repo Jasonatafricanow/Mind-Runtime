@@ -24,6 +24,8 @@ import pytest
 from mind_runtime.dynamics.fast_functions import (
     CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY,
     CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
     FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
@@ -34,6 +36,7 @@ from mind_runtime.dynamics.fast_functions import (
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
+    validate_anger_boundary_pressure_invariant,
     validate_curiosity_anti_spam_invariant,
     validate_diligence_anti_spam_invariant,
     validate_sharing_urge_anti_spam_invariant,
@@ -297,6 +300,40 @@ def test_curiosity_maps_to_inquiry_exploration() -> None:
             curiosity=0.9,
             base_cooldown_seconds=1800.0,
             effective_cooldown_seconds=600.0,
+        )
+
+
+def test_anger_maps_to_boundary_confrontation() -> None:
+    """anger maps to BOUNDARY_CONFRONTATION and preserves pressure != permission invariant."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.anger"]
+    assert spec.function_kind == FastFunctionKind.BOUNDARY_CONFRONTATION
+    assert spec.primary_consumer == "existing Surface / Intent / expression path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+        == "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
+    )
+    assert (
+        ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION
+        == ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+    )
+    assert validate_anger_boundary_pressure_invariant(
+        confrontation_score=0.9,
+        action_permission=False,
+        policy_authorized=False,
+    ) is True
+    assert validate_anger_boundary_pressure_invariant(
+        confrontation_score=0.9,
+        action_permission=True,
+        policy_authorized=True,
+    ) is True
+    with pytest.raises(ValueError, match="Anger boundary pressure invariant violation"):
+        validate_anger_boundary_pressure_invariant(
+            confrontation_score=0.9,
+            action_permission=True,
+            policy_authorized=False,
         )
 
 
