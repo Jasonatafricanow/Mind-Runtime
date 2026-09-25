@@ -111,7 +111,9 @@ compiled; accepted Baselines carry forward the logic that is worth retaining.
 The production framework supports automatic mature-Thread compilation when LCE
 is explicitly enabled. Accepted Baseline identity retires the lower-level
 Thread from the active working set; failed/disabled compilation leaves it
-intact.
+intact. The outward Memory history composer can also surface one bounded,
+currently relevant active Thread projection without exposing the whole Thread
+working set.
 
 Thread wake-up quality, expiry/capacity policy, context exposure policy, and
 idle/sleep/dream discovery scheduling are intentionally deferred refinements,
