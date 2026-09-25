@@ -77,6 +77,7 @@ def canonical_state_rows_equal(left: RuntimeState, right: RuntimeState) -> bool:
         and left.origin_runtime_id == right.origin_runtime_id
     )
 
+
 _APPLICATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS application_receipts (
     application_id TEXT PRIMARY KEY,
@@ -483,9 +484,7 @@ class SqliteStateBackend:
                 _to_json(state.value),
                 _format_dt(state.valid_from),
                 _format_dt(state.valid_until) if state.valid_until is not None else None,
-                _format_dt(state.relevant_until)
-                if state.relevant_until is not None
-                else None,
+                _format_dt(state.relevant_until) if state.relevant_until is not None else None,
                 _format_dt(state.last_observed_at),
                 _to_json(state.evidence_refs),
                 _to_json(state.transition_refs),
@@ -616,9 +615,7 @@ class SqliteStateBackend:
             f"{' AND '.join(f'{col} = ?' for col in _SCOPE_COLUMNS)}",
             scope_vals,
         ).fetchall()
-        return tuple(
-            (_scope_from_row(row), row["target_dimension"]) for row in rows
-        )
+        return tuple((_scope_from_row(row), row["target_dimension"]) for row in rows)
 
     def max_slow_window_sequence(self, scope: Scope, dimension: str) -> int:
         """Return the current max sequence for (scope, dimension), or 0 if none."""
@@ -867,3 +864,21 @@ class SqliteCommitMarkerStore:
             (scope.domain.value, scope.user_id or "", interaction_id),
         ).fetchone()
         return row is not None
+
+    def committed_state_ids(self, *, interaction_id: str, scope: Scope) -> tuple[str, ...] | None:
+        """Read the exact canonical state set named by an admitted commit."""
+        row = self._conn.execute(
+            "SELECT projected_state_ids FROM commit_markers WHERE scope_domain=?"
+            " AND scope_user_id=? AND interaction_id=?",
+            (scope.domain.value, scope.user_id or "", interaction_id),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = json.loads(row["projected_state_ids"])
+        if not isinstance(parsed, list) or any(
+            not isinstance(item, str) or not item for item in parsed
+        ):
+            raise ValueError("committed state identity is malformed")
+        if len(parsed) != len(set(parsed)):
+            raise ValueError("committed state identity contains duplicate IDs")
+        return tuple(parsed)

@@ -49,6 +49,7 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
         "projection",
         "scope",
         "situation",
+        "surface",
     },
     "trace": {"common", "scope"},
     "governance": {"common", "scope"},
@@ -106,7 +107,10 @@ def _expression_dir() -> Path:
 
 def test_expression_package_imports_only_stdlib_contracts_and_siblings() -> None:
     """The bounded D10 expression package never imports pipeline or later layers."""
-    allowed_prefixes = ("mind_runtime.contracts", "mind_runtime.expression")
+    # ADR-0031: Expression consumes the single Surface lineage contract.
+    allowed_prefixes = (
+        "mind_runtime.contracts", "mind_runtime.expression", "mind_runtime.surface"
+    )
     for module_path in sorted(_expression_dir().glob("*.py")):
         tree = ast.parse(module_path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

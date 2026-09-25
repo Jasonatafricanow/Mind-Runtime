@@ -9,6 +9,7 @@ from mind_runtime.contracts.intent import Intent
 from mind_runtime.contracts.projection import ProjectedMindState
 from mind_runtime.contracts.scope import Scope
 from mind_runtime.contracts.situation import Situation
+from mind_runtime.contracts.surface import SurfaceProjectionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,9 @@ class IntentEngineInput:
     projected: ProjectedMindState
     accepted_events: tuple[SemanticEventCandidate, ...]
     clock: datetime
+    surface: SurfaceProjectionResult | None = None
+    persona_version: int | None = None
+    persona_content_digest: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -36,6 +40,9 @@ class IntentEngineInput:
                 raise ValueError("accepted event ids must be unique")
             seen.add(event.candidate_id)
         require_aware_utc(self.clock, "clock")
+        if self.surface is not None:
+            if type(self.surface) is not SurfaceProjectionResult:
+                raise ValueError("surface must be a SurfaceProjectionResult or None")
 
 
 @dataclass(frozen=True, slots=True)

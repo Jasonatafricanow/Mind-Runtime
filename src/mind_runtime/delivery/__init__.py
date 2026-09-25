@@ -59,6 +59,7 @@ never appear in any trace event.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, runtime_checkable
@@ -74,6 +75,61 @@ from mind_runtime.contracts.common import (
     require_non_empty,
     validate_sync_fields,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceHandoffProvenance:
+    """Bounded consumer-use refs for one already admitted Body handoff."""
+
+    context_id: str
+    intent_id: str
+    action_type: str
+    policy_id: str
+    policy_constraints: tuple[str, ...]
+    controls_id: str
+    recipe_ref: str
+    expression_map_ref: str
+    qualitative_guidance: tuple[tuple[str, str], ...]
+    intent_surface_use_ref: str
+    render_id: str
+    logical_attempt_id: str
+    envelope_digest: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "context_id",
+            "intent_id",
+            "action_type",
+            "policy_id",
+            "controls_id",
+            "recipe_ref",
+            "expression_map_ref",
+            "intent_surface_use_ref",
+            "render_id",
+            "logical_attempt_id",
+            "envelope_digest",
+        ):
+            require_non_empty(getattr(self, name), name)
+        if (
+            type(self.policy_constraints) is not tuple
+            or any(not isinstance(value, str) or not value for value in self.policy_constraints)
+            or type(self.qualitative_guidance) is not tuple
+            or any(
+                type(pair) is not tuple
+                or len(pair) != 2
+                or not all(isinstance(value, str) and value for value in pair)
+                for pair in self.qualitative_guidance
+            )
+        ):
+            raise ValueError("Surface handoff evidence must use immutable typed tuples")
+        if tuple(sorted(self.qualitative_guidance)) != self.qualitative_guidance:
+            raise ValueError("qualitative guidance must be canonically sorted")
+        if {key for key, _ in self.qualitative_guidance} != {"directness", "warmth", "restraint"}:
+            raise ValueError("Surface handoff requires exact expression guidance")
+        if any(value not in {"low", "moderate", "high"} for _, value in self.qualitative_guidance):
+            raise ValueError("Surface guidance must be qualitative bands")
+        if len(self.policy_constraints) != len(set(self.policy_constraints)):
+            raise ValueError("Policy constraints must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +158,14 @@ class DeliveryRequest:
     payload_bytes: bytes
     created_at: datetime
     sync: SyncFields
+    surface_handoff: SurfaceHandoffProvenance | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
-            "request_id", "message_id", "origin_runtime_id", "channel",
+            "request_id",
+            "message_id",
+            "origin_runtime_id",
+            "channel",
             "target",
         ):
             require_non_empty(getattr(self, field_name), field_name)
@@ -130,6 +190,13 @@ class DeliveryRequest:
             origin_runtime_id=self.origin_runtime_id,
             object_id=self.request_id,
         )
+        if self.surface_handoff is not None and (
+            not isinstance(self.surface_handoff, SurfaceHandoffProvenance)
+            or self.surface_handoff.action_type != self.action_type
+            or self.surface_handoff.envelope_digest
+            != hashlib.sha256(self.payload_bytes).hexdigest()
+        ):
+            raise ValueError("Surface handoff must match DeliveryRequest action")
 
     def sync_fields(self) -> SyncFields:
         return self.sync
@@ -157,34 +224,26 @@ class DeliveryRequestStore(Protocol):
     only safe consumer is the in-memory implementation below.
     """
 
-    def record(self, request: DeliveryRequest) -> None:
-        ...
+    def record(self, request: DeliveryRequest) -> None: ...
 
-    def has(self, request_id: str) -> bool:
-        ...
+    def has(self, request_id: str) -> bool: ...
 
-    def get(self, request_id: str) -> DeliveryRequest | None:
-        ...
+    def get(self, request_id: str) -> DeliveryRequest | None: ...
 
-    def all(self) -> tuple[DeliveryRequest, ...]:
-        ...
+    def all(self) -> tuple[DeliveryRequest, ...]: ...
 
 
 @runtime_checkable
 class DeliveryReceiptStore(Protocol):
     """Append-only durable record of every delivery receipt observed."""
 
-    def record(self, receipt: DeliveryReceipt) -> None:
-        ...
+    def record(self, receipt: DeliveryReceipt) -> None: ...
 
-    def get(self, receipt_id: str) -> DeliveryReceipt | None:
-        ...
+    def get(self, receipt_id: str) -> DeliveryReceipt | None: ...
 
-    def by_message_id(self, message_id: str) -> tuple[DeliveryReceipt, ...]:
-        ...
+    def by_message_id(self, message_id: str) -> tuple[DeliveryReceipt, ...]: ...
 
-    def all(self) -> tuple[DeliveryReceipt, ...]:
-        ...
+    def all(self) -> tuple[DeliveryReceipt, ...]: ...
 
 
 @dataclass
@@ -206,7 +265,8 @@ class InMemoryDeliveryRequestStore:
             # (this is the immutable-bytes guarantee the G5 test pins).
             raise ValueError(
                 f"durable request id collision: {request.request_id!r} "
-                "exists with different immutable bytes")
+                "exists with different immutable bytes"
+            )
         self._records[request.request_id] = request
 
     def has(self, request_id: str) -> bool:
@@ -235,7 +295,8 @@ class InMemoryDeliveryReceiptStore:
         if existing is not None and existing != receipt:
             raise ValueError(
                 f"durable receipt id collision: {receipt.receipt_id!r} "
-                "exists with different immutable bytes")
+                "exists with different immutable bytes"
+            )
         self._records[receipt.receipt_id] = receipt
         self._by_message.setdefault(receipt.message_id, []).append(receipt)
 
@@ -284,8 +345,7 @@ class InMemoryDeliveryBackend:
         self._seen_request_ids.add(request.request_id)
         self._seen_message_ids.setdefault(request.message_id, request.request_id)
 
-        if (self._fail_after is not None
-                and self._sent >= self._fail_after):
+        if self._fail_after is not None and self._sent >= self._fail_after:
             return _build_receipt(request, DeliveryStatus.UNKNOWN)
 
         self._sent += 1
@@ -300,9 +360,7 @@ class InMemoryDeliveryBackend:
         return frozenset(self._seen_request_ids)
 
 
-def _build_receipt(
-    request: DeliveryRequest, status: DeliveryStatus
-) -> DeliveryReceipt:
+def _build_receipt(request: DeliveryRequest, status: DeliveryStatus) -> DeliveryReceipt:
     return DeliveryReceipt(
         receipt_id=f"recpt-{request.request_id}",
         scope=request.scope,
@@ -320,8 +378,7 @@ def _build_receipt(
     )
 
 
-def make_request_id(scope: Scope, action_intent_id: str,
-                    idempotency_key: str) -> str:
+def make_request_id(scope: Scope, action_intent_id: str, idempotency_key: str) -> str:
     """Build the durable request_id from the turn's idempotency contract.
 
     The key contract: same (scope, action_intent_id, idempotency_key) →

@@ -32,6 +32,7 @@ from mind_runtime.contracts import Scope, ScopeDomain
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
+    HostProviderProseRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnStatus,
@@ -101,6 +102,17 @@ def render_bounded_context(bounded) -> str | None:
     """
     if bounded is None:
         return None
+    envelope_text = getattr(bounded, "provider_envelope_text", None)
+    if envelope_text is not None:
+        if not isinstance(envelope_text, str):
+            raise ValueError("SURFACE_V1 envelope must be text")
+        # SURFACE_V1 Host transports the exact renderer-admitted bytes.
+        from mind_runtime.expression.renderer import DeterministicContextRenderer
+
+        DeterministicContextRenderer.verify_provider_information_isolation(
+            envelope_text
+        )
+        return envelope_text
     lines = [
         "MR CURRENT CONTEXT",
         "Current emotional/behavioral steering:",
@@ -219,6 +231,19 @@ class XiyueMRAdapter:
             return ok
         except Exception as exc:  # noqa: BLE001
             _logger.warning("MR commit_turn exception: %s", exc)
+            return False
+
+    def guard_turn_prose(self, handle: MrTurnHandle, prose: str) -> bool:
+        """Run MR ExpressionGuard before Body transports a SURFACE_V1 reply."""
+        if handle is None:
+            return False
+        try:
+            result = self._port.guard_provider_prose(HostProviderProseRequest(
+                turn_id=handle.turn_id, interaction_id=handle.interaction_id, prose=prose,
+            ))
+            return result.status is HostStatus.OK
+        except Exception as exc:  # noqa: BLE001 — Host boundary
+            _logger.warning("MR provider prose guard failed: %s", exc)
             return False
 
     def abort_turn(self, handle: MrTurnHandle, reason: str = "host_abort") -> bool:

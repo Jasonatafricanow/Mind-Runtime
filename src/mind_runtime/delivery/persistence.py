@@ -49,7 +49,7 @@ from mind_runtime.contracts import (
 from mind_runtime.contracts.common import (
     require_aware_utc,
 )
-from mind_runtime.delivery import DeliveryRequest
+from mind_runtime.delivery import DeliveryRequest, SurfaceHandoffProvenance
 from mind_runtime.delivery.kill_switch import (
     DeliveryKillSwitch,
     _ensure_kill_switch_schema,
@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
     target TEXT NOT NULL,
     action_type TEXT NOT NULL DEFAULT '',
     payload_bytes BLOB NOT NULL,
+    surface_handoff TEXT,
     created_at TEXT NOT NULL,
     sync TEXT NOT NULL,
     lifecycle_state TEXT NOT NULL,
@@ -228,7 +229,51 @@ def _request_from_row(row: sqlite3.Row) -> DeliveryRequest:
         payload_bytes=payload,
         created_at=_parse_required_dt(row["created_at"]),
         sync=sync,
+        surface_handoff=_surface_handoff_from_json(row["surface_handoff"])
+        if "surface_handoff" in row.keys() else None,
     )
+
+
+def _surface_handoff_to_json(value: SurfaceHandoffProvenance | None) -> str | None:
+    if value is None:
+        return None
+    return _to_json({
+        "context_id": value.context_id,
+        "intent_id": value.intent_id,
+        "action_type": value.action_type,
+        "policy_id": value.policy_id,
+        "policy_constraints": list(value.policy_constraints),
+        "controls_id": value.controls_id,
+        "recipe_ref": value.recipe_ref,
+        "expression_map_ref": value.expression_map_ref,
+        "qualitative_guidance": [list(pair) for pair in value.qualitative_guidance],
+        "intent_surface_use_ref": value.intent_surface_use_ref,
+        "render_id": value.render_id,
+        "logical_attempt_id": value.logical_attempt_id,
+        "envelope_digest": value.envelope_digest,
+    })
+
+
+def _surface_handoff_from_json(raw: str | None) -> SurfaceHandoffProvenance | None:
+    if raw is None:
+        return None
+    try:
+        data = _from_json(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Surface handoff must be an object")
+        return SurfaceHandoffProvenance(
+            context_id=data["context_id"], intent_id=data["intent_id"],
+            action_type=data["action_type"], policy_id=data["policy_id"],
+            policy_constraints=tuple(data["policy_constraints"]),
+            controls_id=data["controls_id"], recipe_ref=data["recipe_ref"],
+            expression_map_ref=data["expression_map_ref"],
+            qualitative_guidance=tuple(tuple(pair) for pair in data["qualitative_guidance"]),
+            intent_surface_use_ref=data["intent_surface_use_ref"],
+            render_id=data["render_id"], logical_attempt_id=data["logical_attempt_id"],
+            envelope_digest=data["envelope_digest"],
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid durable Surface handoff provenance") from exc
 
 
 def _validate_sync_payload(raw: str, row_id: str, row_label: str) -> None:
@@ -511,6 +556,10 @@ class SqliteDeliveryBackend:
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        if "surface_handoff" not in {
+            row["name"] for row in self._conn.execute("PRAGMA table_info('delivery_requests')")
+        }:
+            self._conn.execute("ALTER TABLE delivery_requests ADD COLUMN surface_handoff TEXT")
         # Validate the schema on reopen: a manually-corrupted file
         # with missing columns / wrong types fails closed.
         _validate_required_row_columns(self._conn)
@@ -609,12 +658,12 @@ class SqliteDeliveryBackend:
                 "INSERT INTO delivery_requests ("
                 "request_id, message_id,"
                 f"{', '.join(_SCOPE_COLUMNS)},"
-                " origin_runtime_id, channel, target, action_type, payload_bytes,"
+                " origin_runtime_id, channel, target, action_type, payload_bytes, surface_handoff,"
                 " created_at, sync, lifecycle_state, attempt_count,"
                 " last_attempt_at, last_reconcile_at, last_provider_receipt_ref,"
                 " sync_version"
                 ") VALUES ("
-                f"?, ?, {', '.join('?' * 7)}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                f"?, ?, {', '.join('?' * 7)}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
                 ")",
                 (
                     request.request_id,
@@ -625,6 +674,7 @@ class SqliteDeliveryBackend:
                     request.target,
                     request.action_type,
                     request.payload_bytes,
+                    _surface_handoff_to_json(request.surface_handoff),
                     _format_dt(request.created_at),
                     _to_json({
                         "scope": request.scope.domain.value,
@@ -841,20 +891,38 @@ class SqliteDeliveryBackend:
         for code in reason_codes:
             if not isinstance(code, str) or not code:
                 raise ValueError("reason_codes entries must be non-empty strings")
-        existing = self._conn.execute(
-            "SELECT attempt_id FROM delivery_attempts WHERE attempt_id = ?",
-            (attempt_id,),
-        ).fetchone()
-        if existing is not None:
-            return False
-        # The request row must already exist; the attempt is a child
-        # of a persisted request.
+        # C7 legacy callers record an IN_FLIGHT event and subsequently report
+        # a terminal event under the same attempt id. Preserve that historical
+        # contract. A SURFACE_V1 handoff instead makes each physical attempt
+        # immutable, because its admitted provider evidence must not drift.
         parent = self._conn.execute(
-            "SELECT request_id FROM delivery_requests WHERE request_id = ?",
+            "SELECT request_id, surface_handoff FROM delivery_requests WHERE request_id = ?",
             (request_id,),
         ).fetchone()
         if parent is None:
             raise ValueError(f"unknown delivery request: {request_id!r}")
+        existing = self._conn.execute(
+            "SELECT * FROM delivery_attempts WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        if existing is not None:
+            if parent["surface_handoff"] is None:
+                return False
+            existing_reason_codes = _from_json(existing["reason_codes"])
+            if not isinstance(existing_reason_codes, list):
+                raise ValueError("durable delivery attempt has malformed reason codes")
+            if (
+                existing["request_id"] == request_id
+                and existing["attempt"] == attempt
+                and existing["started_at"] == _format_dt(started_at)
+                and existing["ended_at"] == (_format_dt(ended_at) if ended_at else None)
+                and existing["outcome"] == outcome.value
+                and existing["provider_receipt_ref"] == provider_receipt_ref
+                and tuple(existing_reason_codes) == reason_codes
+            ):
+                return False
+            raise ValueError("durable delivery attempt id collision with different evidence")
+        # The attempt is a child of the already-persisted request.
         with self._conn:
             self._conn.execute(
                 "INSERT INTO delivery_attempts ("

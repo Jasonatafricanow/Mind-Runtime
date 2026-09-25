@@ -1,5 +1,7 @@
 """Durable, reconsiderable cognitive Intent contracts (ADR-0004)."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -51,6 +53,7 @@ class Intent:
     state_refs: tuple[str, ...]
     status: IntentStatus
     sync: SyncFields
+    surface_use: IntentScoreTrace | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.intent_id, "intent_id")
@@ -79,6 +82,15 @@ class Intent:
             origin_runtime_id=self.origin_runtime_id,
             object_id=self.intent_id,
         )
+        if self.surface_use is not None:
+            if (
+                not isinstance(self.surface_use, IntentScoreTrace)
+                or not self.surface_use.admitted
+                or self.surface_use.intent_id != self.intent_id
+                or self.surface_use.scope != self.scope
+                or self.surface_use.surface_controls_ref is None
+            ):
+                raise ValueError("Intent Surface-use evidence must match admitted Intent")
 
     def sync_fields(self) -> SyncFields:
         """Return the Intent synchronization identity."""
@@ -115,6 +127,12 @@ class IntentScoreTrace:
     admitted: bool
     reason_codes: tuple[str, ...]
     created_at: datetime
+    surface_controls_ref: str | None = None
+    surface_dependency_digest: str | None = None
+    overlap_validation_ref: str | None = None
+    surface_weights: tuple[tuple[str, float], ...] = ()
+    surface_recipe_ref: str | None = None
+    ruleset_ref: str | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -134,6 +152,12 @@ class IntentScoreTrace:
         for code in self.reason_codes:
             require_non_empty(code, "reason_codes entries")
         require_aware_utc(self.created_at, "created_at")
+        if self.surface_controls_ref is not None:
+            require_non_empty(self.surface_controls_ref, "surface_controls_ref")
+        if self.surface_dependency_digest is not None:
+            require_non_empty(self.surface_dependency_digest, "surface_dependency_digest")
+        if self.overlap_validation_ref is not None:
+            require_non_empty(self.overlap_validation_ref, "overlap_validation_ref")
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,8 +16,9 @@ class ResolverEffectiveStatePort:
     passthrough so an empty factual plane still produces a valid turn).
     """
 
-    def __init__(self, *, resolver: EffectiveStateResolver) -> None:
+    def __init__(self, *, resolver: EffectiveStateResolver, runtime_id: str = "runtime-1") -> None:
         self._resolver = resolver
+        self._runtime_id = runtime_id
 
     def effective(
         self,
@@ -44,7 +45,7 @@ class ResolverEffectiveStatePort:
         return RuntimeState(
             state_id=state_id,
             scope=scope,
-            origin_runtime_id="runtime-1",
+            origin_runtime_id=self._runtime_id,
             dimension=dimension,
             value={"evidence_refs": list(evidence_refs)},
             status="active",
@@ -56,5 +57,5 @@ class ResolverEffectiveStatePort:
             transition_refs=(),
             updated_at=now,
             version=1,
-            sync=SyncFields(scope, "runtime-1", state_id, 1, "idem-eff"),
+            sync=SyncFields(scope, self._runtime_id, state_id, 1, "idem-eff"),
         )
