@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -321,7 +322,7 @@ class BindingRegistry:
                 lock.write(b"\0")
                 lock.flush()
             lock.seek(0)
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
 
                 msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
@@ -333,11 +334,11 @@ class BindingRegistry:
             else:
                 import fcntl
 
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
                 try:
                     yield
                 finally:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     # -----------------------------------------------------------------------
     # Storage Engine (atomic, fail-closed)
