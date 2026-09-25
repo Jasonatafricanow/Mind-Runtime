@@ -61,6 +61,16 @@ def event(
     )
 
 
+class RecordingCompiler:
+    def __init__(self, baseline_id: str | None = "baseline-1") -> None:
+        self.baseline_id = baseline_id
+        self.calls = []
+
+    def compile(self, thread):
+        self.calls.append(thread)
+        return self.baseline_id
+
+
 def setup_service(tmp_path):
     path = tmp_path / "memory.sqlite"
     canonical = CanonicalMemoryStore(path)
@@ -131,6 +141,101 @@ def test_track_creates_then_updates_same_thread_and_matures(tmp_path):
     assert updated.current_support_ids == ("m1", "m2")
     assert updated.mature
     assert len(product.list_threads(memory().scope)) == 1
+    service.close()
+
+
+def test_mature_thread_is_compiled_and_removed_from_active_set(tmp_path):
+    path = tmp_path / "memory.sqlite"
+    canonical = CanonicalMemoryStore(path)
+    canonical._commit(
+        (
+            remembered("m1", "I want a new laptop.", "e1", "o1"),
+            remembered("m2", "The current laptop is slow.", "e2", "o2"),
+        )
+    )
+    product = MemoryProductStore(path, canonical)
+    compiler = RecordingCompiler()
+    service = ThreadAutoUpdateService(
+        canonical=canonical,
+        product=product,
+        projection_compiler=compiler,
+    )
+    first = service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c1",
+                refs=("e1",),
+                action="track",
+                question="Will I replace my laptop?",
+                summary="Laptop replacement is under consideration.",
+            ),
+        ),
+        at=NOW,
+    )[0]
+    assert first.status is ThreadStatus.OPEN
+
+    second = service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c2",
+                refs=("e2",),
+                action="track",
+                question="Will I replace my laptop?",
+                summary="Performance pressure makes the replacement logic explicit.",
+            ),
+        ),
+        at=NOW,
+    )[0]
+    assert len(compiler.calls) == 1
+    assert compiler.calls[0].mature
+    assert second.status is ThreadStatus.COMPILED
+    assert second.compiled_baseline_id == "baseline-1"
+    assert product.list_threads(memory().scope, status=ThreadStatus.OPEN) == ()
+    service.close()
+
+
+def test_failed_or_disabled_projection_keeps_mature_thread_active(tmp_path):
+    path = tmp_path / "memory.sqlite"
+    canonical = CanonicalMemoryStore(path)
+    canonical._commit(
+        (
+            remembered("m1", "I want a new laptop.", "e1", "o1"),
+            remembered("m2", "The current laptop is slow.", "e2", "o2"),
+        )
+    )
+    product = MemoryProductStore(path, canonical)
+    compiler = RecordingCompiler(None)
+    service = ThreadAutoUpdateService(
+        canonical=canonical,
+        product=product,
+        projection_compiler=compiler,
+    )
+    service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c1",
+                refs=("e1",),
+                action="track",
+                question="Will I replace my laptop?",
+                summary="Laptop replacement is under consideration.",
+            ),
+            event(
+                candidate_id="c2",
+                refs=("e2",),
+                action="track",
+                question="Will I replace my laptop?",
+                summary="Performance pressure makes the replacement logic explicit.",
+            ),
+        ),
+        at=NOW,
+    )
+    active = product.list_threads(memory().scope, status=ThreadStatus.OPEN)
+    assert len(active) == 1
+    assert active[0].mature
+    assert active[0].compiled_baseline_id is None
     service.close()
 
 
