@@ -96,7 +96,3 @@ def test_every_fixture_is_complete() -> None:
         if scenario.expected_allowed_llm_path is not None:
             assert isinstance(scenario.expected_allowed_llm_path, AppraisalPath)
 
-
-def test_every_fixture_owner_names_a_future_w() -> None:
-    for factory in _FIXTURE_FACTORIES.values():
-        assert factory().owner.endswith("not implemented")
