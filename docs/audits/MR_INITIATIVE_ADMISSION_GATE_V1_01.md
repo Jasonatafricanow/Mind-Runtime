@@ -4,6 +4,8 @@
 **Task Type**: `ARCHITECTURE-BOUND IMPLEMENTATION`  
 **Executor**: AGY  
 **Base SHA**: `9b46d663ae9d8595357c16b2e71b12ae6ec017d8`  
+**Initial Implementation SHA**: `6bfefb4ade22aa7a8d567ff779c9d809b750e55a`  
+**Final Hardened SHA**: `4057aa17c27de37a68232f48e9052826a79059d4`  
 **Branch**: `w/mr-initiative-admission-gate-v1-01`  
 **ADR Authority**: `docs/adr/0030-bounded-intent-engine-initiative-admission-gate.md`  
 **Architecture Decision**: `MR_INITIATIVE_ADMISSION_GATE_ARCHITECTURE_DECISION_V1.md`  
@@ -55,10 +57,10 @@ The implementation respects all non-negotiable architectural boundaries:
 ## 4. Verification Test Results
 
 ### 4.1 Dedicated Gate Test Suite (`tests/intents/test_initiative_admission_gate.py`)
-- **Total Dedicated Tests**: 31
-- **Passed**: 31
+- **Total Dedicated Tests**: 41
+- **Passed**: 41
 - **Failed**: 0
-- **Duration**: 1.12s
+- **Duration**: 0.82s
 - **Coverage**:
   - Section 23: `TestSection23IntentRuleContract` (7 tests)
   - Section 24: `TestSection24DomainScorePreservation` (2 tests)
@@ -69,6 +71,8 @@ The implementation respects all non-negotiable architectural boundaries:
   - Section 29: `TestSection29TurnAndTick` (1 test)
   - Section 30: `TestSection30PersistenceAndRulesetRef` (3 tests)
   - Section 12: `TestSection12ConfigDecoding` (1 test)
+  - Section 31: `TestSection31ContractHardeningAndConsistency` (10 tests, A through J)
+*(Historical note: Initial unhardened pass was 31 tests; expanded to 41 tests under V1-02 contract hardening).*
 
 ### 4.2 Targeted Regression Suite
 - **Suites**: `tests/intents/test_engine.py`, `tests/surface/test_intent_surface_boundary.py`, `tests/intents/test_sharing_urge_proactive_share.py`, `tests/intents/test_curiosity_proactive_inquiry.py`, `tests/intents/test_longing_proactive_contact.py`, `tests/surface/test_anger_boundary_confrontation.py`, `tests/surface/test_sadness_initiative_suppression.py`, `tests/intents/test_persistence.py`, `tests/cognition/`, `tests/pipeline/`, `tests/runtime_config/`
@@ -78,12 +82,25 @@ The implementation respects all non-negotiable architectural boundaries:
 
 ### 4.3 Core Test Suite
 - **Command**: `python -m pytest --ignore=tests/memory_vector -q`
-- **Passed**: 3432
+- **Passed**: 3442
 - **Skipped**: 7
 - **Deselected**: 4
 - **Xfailed**: 1 (G28 live-shadow certified baseline expectation)
+- **Warnings**: 2
 - **Failed**: 0
-- **Duration**: 466.74s
+- **Duration**: 428.34s
+*(Historical note: Initial unhardened core pass was 3432 tests prior to V1-02 contract hardening).*
+
+### 4.4 Full Test Suite
+- **Command**: `python -m pytest -q`
+- **Passed**: 3473
+- **Skipped**: 9
+- **Deselected**: 4
+- **Xfailed**: 1 (G28 live-shadow certified baseline expectation)
+- **Warnings**: 2
+- **Failed**: 0
+- **Duration**: 447.14s
+- **Optional Memory Vector Environment**: AVAILABLE (`tests/memory_vector`: 31 passed, 2 skipped in 11.11s)
 
 ---
 
@@ -93,11 +110,21 @@ The implementation respects all non-negotiable architectural boundaries:
 TASK_ID=MR-INITIATIVE-ADMISSION-GATE-V1-01
 TASK_TYPE=ARCHITECTURE-BOUND IMPLEMENTATION
 BASE_SHA=9b46d663ae9d8595357c16b2e71b12ae6ec017d8
+INITIAL_IMPLEMENTATION_SHA=6bfefb4ade22aa7a8d567ff779c9d809b750e55a
+FINAL_HARDENED_SHA=4057aa17c27de37a68232f48e9052826a79059d4
 BRANCH=w/mr-initiative-admission-gate-v1-01
 ADR=docs/adr/0030-bounded-intent-engine-initiative-admission-gate.md
+LINE_ENDING_CHURN=NONE
+INITIATIVE_TRACE_COMPARATOR_INVARIANT=PASS
+INTENT_TRACE_ADMISSION_CONSISTENCY=PASS
+ADMISSION_REF_BINDS_DIRECT_WEIGHT=YES
 ROOT_OVERLAP_POLICY=CONDITIONAL
 REJECTED_TRACE_AUDIT_SEAM=REUSED
+DEDICATED_GATE_SUITE=41 passed
+CORE_SUITE=3442 passed, 7 skipped, 4 deselected, 1 xfailed, 2 warnings
+FULL_SUITE=3473 passed, 9 skipped, 4 deselected, 1 xfailed, 2 warnings
+OPTIONAL_MEMORY_VECTOR_ENVIRONMENT=AVAILABLE
 INITIATIVE_GATE_CALIBRATION_STATUS=PROVISIONAL
 INITIATIVE_GATE_PRODUCTION_ACTIVATION=BLOCKED_BY_CONFIG
-FINAL_VERDICT=INITIATIVE_ADMISSION_GATE_V1_READY_CONFIG_PENDING
+FINAL_VERDICT=INITIATIVE_ADMISSION_GATE_V1_FROZEN_CONFIG_PENDING
 ```
