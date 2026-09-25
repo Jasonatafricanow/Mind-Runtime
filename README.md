@@ -75,7 +75,7 @@ turn context
 
 The default implementation works without a vector database. Qdrant/FastEmbed adapters are optional and live behind provider interfaces under `src/mind_runtime/memory/providers/`.
 
-The retrieval seam also supports a dependency-free BM25 arm, Reciprocal Rank Fusion across lexical/semantic providers, and optional HyDE query expansion. These mechanisms only rank stable Memory IDs; canonical Scope/lifecycle/content are still revalidated by MR before anything reaches context. See ADR-0029.
+The retrieval seam also supports a dependency-free BM25 arm, Reciprocal Rank Fusion across lexical/semantic providers, and optional HyDE query expansion. The preferred policy keeps HyDE off the normal path and invokes it only when primary hybrid recall is sparse. These mechanisms only rank stable Memory IDs; canonical Scope/lifecycle/content are still revalidated by MR before anything reaches context. See ADR-0029.
 
 MR now freezes three memory timescales:
 
