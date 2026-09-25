@@ -1,7 +1,9 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from mind_runtime.memory.retrieval import MemorySurfaceBudget
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.runtime_binding import bind_storage, production_binding
 from tests.host.test_runtime_binding import lab_binding
@@ -36,6 +38,105 @@ def test_bound_production_lab_isolation_and_restart(tmp_path):
         assert prod.read(**inputs()).episodes[0].proposition == "hello"
         assert isolated.read(**inputs()) is None
     assert all(p.read_bytes() == contents for p, contents in before.items())
+
+
+def test_accepted_lce_understanding_precedes_raw_memory_within_shared_budget(
+    tmp_path, monkeypatch
+):
+    from mind_runtime.memory import retrieval_composition
+
+    roots = dict(production_root=tmp_path / "prod", lab_root=tmp_path / "lab")
+    binding = lab_binding("lce-history")
+    paths = bind_storage(binding, **roots)
+    db = CanonicalMemoryStore(paths.memory_db)
+    db._commit((memory(),))
+    db.close()
+
+    class Reader:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def accepted_understandings(self, current_context, *, limit):
+            assert current_context == "hello"
+            assert limit == 1
+            return (
+                SimpleNamespace(
+                    content="Compiled understanding about hello.",
+                    baseline_id="base-1",
+                    region_id="mr-thread:t1",
+                    revision_number=2,
+                    supporting_memory_ids=("memory-1",),
+                    source_refs=("evidence-1",),
+                    relevance=1.0,
+                ),
+            )
+
+    monkeypatch.setattr(
+        retrieval_composition,
+        "open_lce_read_binding",
+        lambda *args, **kwargs: Reader(),
+    )
+    port = retrieval_composition.build_memory_history(
+        binding,
+        provider=ScriptedProvider((candidate(),)),
+        budget=MemorySurfaceBudget(max_items=1, max_characters=4096),
+        lce_enabled=True,
+        **roots,
+    )
+    bundle = port.read(**inputs())
+    assert bundle is not None
+    assert len(bundle.episodes) == 1
+    assert bundle.episodes[0].kind == "lce.accepted_understanding"
+    assert bundle.episodes[0].proposition == "Compiled understanding about hello."
+    assert bundle.provider_trace.startswith("lce-accepted-baseline")
+
+
+def test_lce_only_history_path_does_not_require_raw_retrieval_provider(tmp_path, monkeypatch):
+    from mind_runtime.memory import retrieval_composition
+
+    roots = dict(production_root=tmp_path / "prod", lab_root=tmp_path / "lab")
+    binding = lab_binding("lce-only")
+    paths = bind_storage(binding, **roots)
+    db = CanonicalMemoryStore(paths.memory_db)
+    db._commit((memory(),))
+    db.close()
+
+    class Reader:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def accepted_understandings(self, current_context, *, limit):
+            return (
+                SimpleNamespace(
+                    content="Accepted cognition.",
+                    baseline_id="base-only",
+                    region_id="mr-thread:t",
+                    revision_number=1,
+                    supporting_memory_ids=("memory-1",),
+                    source_refs=("evidence-1",),
+                    relevance=0.5,
+                ),
+            )
+
+    monkeypatch.setattr(
+        retrieval_composition,
+        "open_lce_read_binding",
+        lambda *args, **kwargs: Reader(),
+    )
+    port = retrieval_composition.build_memory_history(
+        binding,
+        lce_enabled=True,
+        **roots,
+    )
+    bundle = port.read(**inputs())
+    assert bundle is not None
+    assert bundle.episodes[0].external_id == "base-only"
 
 
 def test_enabled_missing_or_mismatched_manifest_fails_closed(tmp_path):

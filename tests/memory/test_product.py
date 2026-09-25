@@ -13,9 +13,7 @@ from mind_runtime.memory.product import (
     MemoryProductStore,
     MemorySurfacePolicy,
     SurfaceMode,
-    ThreadEvent,
     ThreadStatus,
-    ThreadTransition,
 )
 from mind_runtime.memory.retrieval import (
     MemoryRetrievalQuery,
@@ -155,7 +153,7 @@ def test_retrieval_is_read_only_and_does_not_reinforce(tmp_path):
     canonical.close()
 
 
-def test_open_touch_resolve_thread_is_durable_and_idempotent(tmp_path):
+def test_open_update_resolve_thread_is_bounded_durable_and_handoff_ready(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
     thread = product.open_thread(
@@ -167,72 +165,110 @@ def test_open_touch_resolve_thread_is_durable_and_idempotent(tmp_path):
         importance=7,
     )
     assert thread.status is ThreadStatus.OPEN
-    assert thread.touch_count == 0
-    assert product.open_thread(
-        thread_id="thread-upgrade",
-        scope=memory().scope,
-        open_question="Will the computer replacement happen?",
-        supporting_memory_ids=("memory-1",),
-        at=at,
-        importance=7,
-    ) == thread
+    assert thread.origin_memory_ids == ("memory-1",)
+    assert thread.current_support_ids == ("memory-1",)
+    assert not thread.mature
 
-    progressed = product.touch_thread(
+    updated = product.update_thread(
         "thread-upgrade",
-        memory_id="memory-2",
-        transition=ThreadTransition.PROGRESS,
+        supporting_memory_ids=("memory-1", "memory-2"),
         at=at + timedelta(days=2),
-        note="new supporting event",
+        working_summary="Price delayed replacement; performance pressure reopened it.",
+        mature=True,
     )
-    assert progressed.touch_count == 1
-    replay = product.touch_thread(
-        "thread-upgrade",
-        memory_id="memory-2",
-        transition=ThreadTransition.PROGRESS,
-        at=at + timedelta(days=3),
-        note="replay is ignored",
-    )
-    assert replay == progressed
+    assert updated.touch_count == 1
+    assert updated.current_support_ids == ("memory-1", "memory-2")
+    assert updated.mature
+    assert product.thread_handoff("thread-upgrade") == updated
 
-    reversed_thread = product.touch_thread(
-        "thread-upgrade",
-        memory_id="memory-2",
-        transition=ThreadTransition.REVERSAL,
-        at=at + timedelta(days=3),
-    )
-    assert reversed_thread.touch_count == 2
+    product.close()
+    product = MemoryProductStore(path, canonical)
+    assert product.get_thread("thread-upgrade") == updated
 
     resolved = product.resolve_thread(
         "thread-upgrade",
         memory_id="memory-2",
         at=at + timedelta(days=4),
-        note="closed",
+        working_summary="Replacement line closed after the final decision.",
     )
     assert resolved.status is ThreadStatus.RESOLVED
-    assert product.resolve_thread(
-        "thread-upgrade",
-        memory_id="memory-2",
-        at=at + timedelta(days=5),
-    ) == resolved
-
-    product.close()
-    product = MemoryProductStore(path, canonical)
-    assert product.get_thread("thread-upgrade") == resolved
+    assert resolved.mature
+    assert product.thread_handoff("thread-upgrade") == resolved
     assert product.surface_threads(memory().scope, now=at + timedelta(days=6)) == ()
     product.close()
     canonical.close()
 
 
-def test_thread_contract_validation():
+def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
+    path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
-    with pytest.raises(ValueError):
-        ThreadEvent("", ThreadTransition.SUPPORT, at)
-    with pytest.raises(ValueError):
-        ThreadEvent("memory-1", "support", at)
-    with pytest.raises(ValueError):
-        ThreadEvent("memory-1", ThreadTransition.SUPPORT, datetime(2026, 9, 25))
-    with pytest.raises(ValueError):
-        ThreadEvent("memory-1", ThreadTransition.SUPPORT, at, "x" * 2049)
+    product.open_thread(
+        thread_id="t1",
+        scope=memory().scope,
+        open_question="open?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+    )
+    with pytest.raises(ValueError, match="1..8"):
+        product.update_thread(
+            "t1",
+            supporting_memory_ids=(),
+            at=at + timedelta(days=1),
+        )
+    with pytest.raises(ValueError, match="mature Thread requires"):
+        product.update_thread(
+            "t1",
+            supporting_memory_ids=("memory-1",),
+            at=at + timedelta(days=1),
+            mature=True,
+        )
+    with pytest.raises(ValueError, match="not mature"):
+        product.thread_handoff("t1")
+    product.close()
+
+    legacy_payload = {
+        "thread_id": "legacy",
+        "scope": {
+            "domain": memory().scope.domain.value,
+            "user_id": memory().scope.user_id,
+            "agent_id": memory().scope.agent_id,
+            "persona_id": memory().scope.persona_id,
+            "relationship_id": memory().scope.relationship_id,
+            "world_id": memory().scope.world_id,
+            "interaction_id": memory().scope.interaction_id,
+        },
+        "open_question": "legacy?",
+        "status": "open",
+        "importance": 5,
+        "created_at": at.isoformat(),
+        "updated_at": (at + timedelta(days=1)).isoformat(),
+        "touch_count": 2,
+        "suppressed": False,
+        "events": [
+            {"memory_id": "memory-1", "transition": "opened", "at": at.isoformat(), "note": ""},
+            {
+                "memory_id": "memory-2",
+                "transition": "progress",
+                "at": (at + timedelta(days=1)).isoformat(),
+                "note": "old semantic label",
+            },
+        ],
+    }
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO memory_threads(thread_id,payload) VALUES(?,?)",
+            ("legacy", json.dumps(legacy_payload)),
+        )
+
+    product = MemoryProductStore(path, canonical)
+    migrated = product.get_thread("legacy")
+    assert migrated is not None
+    assert migrated.origin_memory_ids == ("memory-1",)
+    assert migrated.current_support_ids == ("memory-1", "memory-2")
+    assert migrated.working_summary is None
+    assert not migrated.mature
+    product.close()
+    canonical.close()
 
 
 def test_thread_scope_authority_conflict_and_lifecycle_guards(tmp_path):
@@ -279,17 +315,9 @@ def test_thread_scope_authority_conflict_and_lifecycle_guards(tmp_path):
             at=at,
         )
     with pytest.raises(ValueError):
-        product.touch_thread(
+        product.update_thread(
             "t1",
-            memory_id="memory-1",
-            transition=ThreadTransition.RESOLVED,
-            at=at,
-        )
-    with pytest.raises(ValueError):
-        product.touch_thread(
-            "t1",
-            memory_id="memory-2",
-            transition=ThreadTransition.SUPPORT,
+            supporting_memory_ids=("memory-2",),
             at=at,
         )
     abandoned = product.abandon_thread("t1", at=at + timedelta(days=1))
@@ -298,10 +326,9 @@ def test_thread_scope_authority_conflict_and_lifecycle_guards(tmp_path):
     with pytest.raises(ValueError):
         product.resolve_thread("t1", memory_id="memory-1", at=at + timedelta(days=3))
     with pytest.raises(ValueError):
-        product.touch_thread(
+        product.update_thread(
             "t1",
-            memory_id="memory-1",
-            transition=ThreadTransition.SUPPORT,
+            supporting_memory_ids=("memory-1",),
             at=at + timedelta(days=3),
         )
     with pytest.raises(ValueError):

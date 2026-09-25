@@ -1,9 +1,14 @@
-"""One-way canonical Memory read binding to frozen LCE Core V0 (ADR-0026)."""
+"""MR bindings for current LCE Core plus bounded Thread handoff/readback.
+
+MR remains the only factual Memory authority. LCE receives stable canonical
+Memory IDs and owns only derived Baseline cognition.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -11,6 +16,8 @@ from typing import TYPE_CHECKING
 
 from mind_runtime.contracts import Scope
 from mind_runtime.memory.contracts import MemoryLifecycle
+from mind_runtime.memory.product import MemoryThread, ThreadStatus
+from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
 from mind_runtime.runtime_binding import (
     BindingManifestMismatchError,
@@ -20,7 +27,12 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
-    from lce.contracts.consolidation import SemanticConsolidatorPort
+    from lce.contracts.baseline import Baseline
+    from lce.contracts.consolidation import (
+        CandidateBaseline,
+        ConsolidationResult,
+        SemanticConsolidatorPort,
+    )
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
     from lce.store.sqlite_store import SqliteBaselineStore
@@ -96,7 +108,9 @@ class MrMemorySubstrateAdapter:
         try:
             from lce.contracts.external_memory import MemoryItemView
         except ImportError as exc:
-            raise LceIntegrationUnavailable("install the frozen optional lce-core package") from exc
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
         return tuple(
             MemoryItemView(m.memory_id, m.content, m.provenance.evidence_refs, MappingProxyType({}))
             for m in memories
@@ -104,16 +118,119 @@ class MrMemorySubstrateAdapter:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class LceAcceptedUnderstanding:
+    """Current-valid accepted LCE Baseline resolved through MR Memory."""
+
+    content: str
+    baseline_id: str
+    region_id: str
+    revision_number: int
+    supporting_memory_ids: tuple[str, ...]
+    source_refs: tuple[str, ...]
+    relevance: float
+
+
+class _PrecomputedThreadConsolidator:
+    """Return an already-reasoned Thread product without invoking a model."""
+
+    def __init__(self, candidate: CandidateBaseline) -> None:
+        self._candidate = candidate
+
+    def consolidate(
+        self,
+        *,
+        memories: tuple[MemoryItemView, ...],
+        previous_baseline: Baseline | None,
+        context: Mapping[str, object] | None = None,
+    ) -> CandidateBaseline:
+        del memories, previous_baseline, context
+        return self._candidate
+
+
+def _accepted_understandings(
+    adapter: MrMemorySubstrateAdapter,
+    store: SqliteBaselineStore,
+    *,
+    current_context: str | None,
+    limit: int,
+) -> tuple[LceAcceptedUnderstanding, ...]:
+    if type(limit) is not int or not 0 <= limit <= 100:
+        raise ValueError("limit must be an integer in [0, 100]")
+    if limit == 0:
+        return ()
+    query_tokens = set(lexical_tokens(current_context or ""))
+    candidates: list[LceAcceptedUnderstanding] = []
+    for region_id in store.list_regions():
+        baseline = store.get_head(region_id)
+        if baseline is None:
+            continue
+        try:
+            memories = adapter.get_by_ids(baseline.supporting_memory_ids)
+        except MemorySelectionError:
+            # Accepted cognition whose factual support is no longer current is
+            # not served back into MR context.
+            continue
+        if len(memories) != len(baseline.supporting_memory_ids):
+            continue
+        by_id = {item.memory_id: item for item in memories}
+        if set(by_id) != set(baseline.supporting_memory_ids):
+            continue
+        searchable = " ".join(
+            [baseline.content, *(by_id[mid].content for mid in baseline.supporting_memory_ids)]
+        )
+        searchable_tokens = set(lexical_tokens(searchable))
+        if query_tokens:
+            overlap = len(query_tokens & searchable_tokens)
+            if overlap == 0:
+                continue
+            relevance = overlap / len(query_tokens)
+        else:
+            relevance = 1.0
+        source_refs = tuple(
+            sorted(
+                {
+                    ref
+                    for memory in memories
+                    for ref in memory.source_refs
+                }
+            )
+        )
+        candidates.append(
+            LceAcceptedUnderstanding(
+                content=baseline.content,
+                baseline_id=baseline.baseline_id,
+                region_id=baseline.region_id,
+                revision_number=baseline.revision_number,
+                supporting_memory_ids=baseline.supporting_memory_ids,
+                source_refs=source_refs,
+                relevance=min(1.0, relevance),
+            )
+        )
+    candidates.sort(
+        key=lambda item: (-item.relevance, item.region_id, -item.revision_number)
+    )
+    return tuple(candidates[:limit])
+
+
 @dataclass(frozen=True)
 class LceBindingSession:
-    """Owns only the LCE connection. Core retains its frozen public API."""
+    """Generic external-Memory LCE Core session."""
 
     core: LceCore
     _store: SqliteBaselineStore
+    _adapter: MrMemorySubstrateAdapter
 
     @property
     def db_path(self) -> Path:
-        return self._store.db_path
+        return Path(self._store.db_path)
+
+    def accepted_understandings(
+        self, current_context: str | None, *, limit: int = 4
+    ) -> tuple[LceAcceptedUnderstanding, ...]:
+        return _accepted_understandings(
+            self._adapter, self._store, current_context=current_context, limit=limit
+        )
 
     def close(self) -> None:
         self._store.close()
@@ -123,6 +240,137 @@ class LceBindingSession:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+
+@dataclass(frozen=True)
+class LceThreadHandoffSession:
+    """No-model path from mature MR Thread to accepted LCE Baseline."""
+
+    _adapter: MrMemorySubstrateAdapter
+    _store: SqliteBaselineStore
+
+    @property
+    def db_path(self) -> Path:
+        return Path(self._store.db_path)
+
+    def handoff_thread(self, thread: MemoryThread) -> ConsolidationResult:
+        if not isinstance(thread, MemoryThread):
+            raise TypeError("thread must be MemoryThread")
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be handed off")
+        if not thread.mature or thread.working_summary is None:
+            raise ValueError("Thread is not mature for LCE handoff")
+        try:
+            from lce.contracts.consolidation import CandidateBaseline
+            from lce.core.engine import LceCore
+        except ImportError as exc:
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
+
+        support = thread.handoff_memory_ids
+        # Revalidate every canonical support point before LCE sees the candidate.
+        self._adapter.get_by_ids(support)
+        candidate = CandidateBaseline(
+            content=thread.working_summary,
+            supporting_memory_ids=support,
+            model_trace={},
+        )
+        core = LceCore(
+            memory_substrate=self._adapter,
+            baseline_store=self._store,
+            consolidator=_PrecomputedThreadConsolidator(candidate),
+        )
+        return core.consolidate(
+            f"mr-thread:{thread.thread_id}",
+            support,
+            context={
+                "source": "mr-thread",
+                "open_question": thread.open_question,
+                "thread_status": thread.status.value,
+            },
+        )
+
+    def accepted_understandings(
+        self, current_context: str | None, *, limit: int = 4
+    ) -> tuple[LceAcceptedUnderstanding, ...]:
+        return _accepted_understandings(
+            self._adapter, self._store, current_context=current_context, limit=limit
+        )
+
+    def close(self) -> None:
+        self._store.close()
+
+    def __enter__(self) -> LceThreadHandoffSession:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
+    scope_address = hashlib.sha256(scope_json(adapter.scope).encode("utf-8")).hexdigest()
+    return adapter._paths.lce_root / scope_address
+
+
+def open_lce_thread_handoff(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceThreadHandoffSession | None:
+    """Open the no-model mature-Thread -> LCE Baseline path."""
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
+    try:
+        from lce.store.sqlite_store import SqliteBaselineStore
+    except ImportError as exc:
+        raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
+    return LceThreadHandoffSession(adapter, SqliteBaselineStore(_scope_lce_root(adapter)))
+
+
+def open_lce_read_binding(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceThreadHandoffSession | None:
+    """Open accepted Baselines without creating an LCE store when none exists."""
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
+    root = _scope_lce_root(adapter)
+    db_path = root / "lce_baselines.sqlite"
+    if not db_path.exists():
+        return None
+    try:
+        from lce.store.sqlite_store import SqliteBaselineStore
+    except ImportError as exc:
+        raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
+    return LceThreadHandoffSession(adapter, SqliteBaselineStore(root))
 
 
 def open_lce_binding(
@@ -155,11 +403,10 @@ def open_lce_binding(
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the frozen optional lce-core package") from exc
-    scope_address = hashlib.sha256(scope_json(scope).encode("utf-8")).hexdigest()
-    store = SqliteBaselineStore(adapter._paths.lce_root / scope_address)
+    store = SqliteBaselineStore(_scope_lce_root(adapter))
     try:
         core = LceCore(memory_substrate=adapter, baseline_store=store, consolidator=consolidator)
-        return LceBindingSession(core, store)
+        return LceBindingSession(core, store, adapter)
     except BaseException:
         store.close()
         raise
