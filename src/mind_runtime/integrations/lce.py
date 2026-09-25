@@ -494,6 +494,37 @@ class LceThreadHandoffSession:
         self.close()
 
 
+@dataclass(frozen=True, slots=True)
+class LceThreadProjectionCompiler:
+    """Optional adapter that compiles mature Thread projections into LCE.
+
+    It does not own Memory or Thread lifecycle. A returned Baseline ID only
+    tells the Memory product layer that an accepted higher-level projection
+    now exists for the same logical line.
+    """
+
+    binding: RuntimeBinding
+    enabled: bool = False
+    production_root: Path | str | None = None
+    lab_root: Path | str | None = None
+
+    def compile(self, thread: MemoryThread) -> str | None:
+        if not isinstance(thread, MemoryThread):
+            raise TypeError("thread must be MemoryThread")
+        session = open_lce_thread_handoff(
+            self.binding,
+            thread.scope,
+            enabled=self.enabled,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        if session is None:
+            return None
+        with session:
+            result = session.handoff_thread(thread)
+        return result.baseline.baseline_id
+
+
 def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
     scope_address = hashlib.sha256(scope_json(adapter.scope).encode("utf-8")).hexdigest()
     return adapter._paths.lce_root / scope_address
