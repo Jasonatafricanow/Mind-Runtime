@@ -10,12 +10,15 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from mind_runtime.contracts import Scope
-from mind_runtime.memory.contracts import MemoryLifecycle
+from mind_runtime.contracts import EffectiveWindow, ObservationModality, Scope, SemanticTime
+from mind_runtime.contracts.common import require_aware_utc
+from mind_runtime.facts.persistence import SqliteFactReader
+from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
 from mind_runtime.memory.product import MemoryThread, ThreadStatus
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
@@ -38,6 +41,54 @@ if TYPE_CHECKING:
     from lce.store.sqlite_store import SqliteBaselineStore
 
 MAX_SELECTED_MEMORIES = 100
+MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY = 32
+TEMPORAL_CONTEXT_KEY = "mr.temporal_memory_views.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalEvidenceView:
+    """Source chronology without pretending it is proposition-valid time."""
+
+    evidence_id: str
+    source_occurred_at: datetime
+    received_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalPropositionView:
+    """One authoritative Reality Observation over supporting Evidence."""
+
+    observation_id: str
+    key: str
+    modality: ObservationModality
+    observed_at: datetime
+    evidence_refs: tuple[str, ...]
+    semantic_time: SemanticTime
+    effective_window: EffectiveWindow | None
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalMemoryView:
+    """Read-only MR temporal authority adjacent to LCE factual Memory views."""
+
+    memory_id: str
+    content: str
+    source_refs: tuple[str, ...]
+    source_observation_id: str
+    source_observed_at: datetime
+    source_semantic_time: SemanticTime
+    source_effective_window: EffectiveWindow | None
+    evidence: tuple[TemporalEvidenceView, ...]
+    proposition_observations: tuple[TemporalPropositionView, ...]
+    committed_at: datetime
+
+    @property
+    def knowledge_available_at(self) -> datetime:
+        points = (self.committed_at, self.source_observed_at) + tuple(
+            item.received_at for item in self.evidence
+        ) + tuple(item.observed_at for item in self.proposition_observations)
+        return max(points)
+
 
 
 class MemorySelectionError(ValueError):
@@ -87,7 +138,9 @@ class MrMemorySubstrateAdapter:
         object.__setattr__(self, "scope", scope)
         object.__setattr__(self, "_paths", paths)
 
-    def get_by_ids(self, memory_ids: tuple[str, ...]) -> tuple[MemoryItemView, ...]:
+    def _selected_memories(
+        self, memory_ids: tuple[str, ...]
+    ) -> tuple[CommittedMemory, ...]:
         if not isinstance(memory_ids, tuple) or not 1 <= len(memory_ids) <= MAX_SELECTED_MEMORIES:
             raise MemorySelectionError("expected a tuple of 1 to 100 stable Memory IDs")
         if any(not isinstance(mid, str) or not mid.strip() for mid in memory_ids):
@@ -101,10 +154,16 @@ class MrMemorySubstrateAdapter:
         finally:
             store.close()
         if any(
-            m is None or m.scope != self.scope or m.lifecycle is not MemoryLifecycle.ACTIVE
-            for m in memories
+            memory is None
+            or memory.scope != self.scope
+            or memory.lifecycle is not MemoryLifecycle.ACTIVE
+            for memory in memories
         ):
             raise MemorySelectionError("selected Memory set contains unavailable or ineligible IDs")
+        return tuple(memory for memory in memories if memory is not None)
+
+    def get_by_ids(self, memory_ids: tuple[str, ...]) -> tuple[MemoryItemView, ...]:
+        memories = self._selected_memories(memory_ids)
         try:
             from lce.contracts.external_memory import MemoryItemView
         except ImportError as exc:
@@ -112,10 +171,109 @@ class MrMemorySubstrateAdapter:
                 "install the current optional lce-core package"
             ) from exc
         return tuple(
-            MemoryItemView(m.memory_id, m.content, m.provenance.evidence_refs, MappingProxyType({}))
-            for m in memories
-            if m is not None
+            MemoryItemView(
+                memory.memory_id,
+                memory.content,
+                memory.provenance.evidence_refs,
+                MappingProxyType({}),
+            )
+            for memory in memories
         )
+
+    def get_temporal_by_ids(
+        self,
+        memory_ids: tuple[str, ...],
+        *,
+        cutoff: datetime | None = None,
+    ) -> tuple[TemporalMemoryView, ...]:
+        """Resolve MR-owned temporal authority without changing Memory authority."""
+        memories = self._selected_memories(memory_ids)
+        if cutoff is not None:
+            require_aware_utc(cutoff, "cutoff")
+
+        reader = SqliteFactReader(self._paths.facts_db)
+        try:
+            observations = reader.load_observations()
+            views: list[TemporalMemoryView] = []
+            for memory in memories:
+                source_observation = reader.find_observation(
+                    self.scope, memory.provenance.observation_id
+                )
+                if source_observation is None:
+                    raise MemorySelectionError(
+                        "selected Memory has no authoritative source Observation"
+                    )
+                source_refs = set(memory.provenance.evidence_refs)
+                if (
+                    not source_observation.evidence_refs
+                    or not set(source_observation.evidence_refs).issubset(source_refs)
+                ):
+                    raise MemorySelectionError(
+                        "selected Memory provenance disagrees with its source Observation"
+                    )
+
+                evidence_views: list[TemporalEvidenceView] = []
+                for evidence_id in memory.provenance.evidence_refs:
+                    pair = reader.find_evidence(self.scope, evidence_id)
+                    if pair is None:
+                        raise MemorySelectionError(
+                            "selected Memory has unavailable supporting Evidence"
+                        )
+                    evidence = pair[0]
+                    evidence_views.append(
+                        TemporalEvidenceView(
+                            evidence_id=evidence.id,
+                            source_occurred_at=evidence.occurred_at,
+                            received_at=evidence.received_at,
+                        )
+                    )
+
+                related = tuple(
+                    observation
+                    for observation in observations
+                    if observation.scope == self.scope
+                    and observation.id != source_observation.id
+                    and observation.id.startswith("reality-observation-")
+                    and observation.evidence_refs
+                    and set(observation.evidence_refs).issubset(source_refs)
+                )
+                if len(related) > MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY:
+                    raise MemorySelectionError(
+                        "selected Memory exceeds bounded temporal Observation fanout"
+                    )
+                related = tuple(sorted(related, key=lambda item: (item.observed_at, item.id)))
+                proposition_views = tuple(
+                    TemporalPropositionView(
+                        observation_id=observation.id,
+                        key=observation.key,
+                        modality=observation.modality,
+                        observed_at=observation.observed_at,
+                        evidence_refs=observation.evidence_refs,
+                        semantic_time=observation.semantic_time,
+                        effective_window=observation.effective_window,
+                    )
+                    for observation in related
+                )
+                view = TemporalMemoryView(
+                    memory_id=memory.memory_id,
+                    content=memory.content,
+                    source_refs=memory.provenance.evidence_refs,
+                    source_observation_id=source_observation.id,
+                    source_observed_at=source_observation.observed_at,
+                    source_semantic_time=source_observation.semantic_time,
+                    source_effective_window=source_observation.effective_window,
+                    evidence=tuple(evidence_views),
+                    proposition_observations=proposition_views,
+                    committed_at=memory.committed_at,
+                )
+                if cutoff is not None and view.knowledge_available_at > cutoff:
+                    raise MemorySelectionError(
+                        "selected Memory set contains knowledge unavailable at cutoff"
+                    )
+                views.append(view)
+            return tuple(views)
+        finally:
+            reader.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +382,34 @@ class LceBindingSession:
     @property
     def db_path(self) -> Path:
         return Path(self._store.db_path)
+
+    def temporal_memory_views(
+        self,
+        memory_ids: tuple[str, ...],
+        *,
+        cutoff: datetime | None = None,
+    ) -> tuple[TemporalMemoryView, ...]:
+        return self._adapter.get_temporal_by_ids(memory_ids, cutoff=cutoff)
+
+    def consolidate_temporal(
+        self,
+        region_id: str,
+        memory_ids: tuple[str, ...],
+        *,
+        cutoff: datetime | None = None,
+        context: Mapping[str, object] | None = None,
+    ) -> ConsolidationResult:
+        """Path B entry: inject MR-authoritative time into LCE consolidation."""
+        temporal_views = self.temporal_memory_views(memory_ids, cutoff=cutoff)
+        merged_context = dict(context or {})
+        if TEMPORAL_CONTEXT_KEY in merged_context:
+            raise ValueError(f"{TEMPORAL_CONTEXT_KEY} is reserved for MR authority")
+        merged_context[TEMPORAL_CONTEXT_KEY] = temporal_views
+        return self.core.consolidate(
+            region_id,
+            memory_ids,
+            context=MappingProxyType(merged_context),
+        )
 
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4

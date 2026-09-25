@@ -615,15 +615,20 @@ This section distinguishes architecture from implementation.
   summary has support beyond its origin.
 - LCE standalone V1 still owns its latent Semantic Block -> structure ->
   Worktree -> Baseline research/runtime path.
+- MR exposes a bounded read-only temporal view for LCE Path B. Evidence/source
+  chronology remains separate from proposition-valid Reality time, and multiple
+  Reality Observations remain separate rather than being collapsed.
+- Path B can inject that MR-authoritative temporal view through the existing LCE
+  consolidator context without copying canonical Memory into an LCE factual store.
 
 ### Current implementation gaps relative to this frozen design
 
-1. **MR does not yet run standalone LCE V1 latent discovery directly over canonical Memory.**  
-   LCE V1's standalone `ReferenceMemoryStore` combines source-evidence and
-   derived-storage roles. Copying MR canonical Memory into a second factual
-   store would violate the no-second-Memory-authority rule. A future external
-   source adapter must split factual reads from LCE-owned Semantic
-   Block/vector/snapshot/worktree persistence before that path is enabled.
+1. **Autonomous latent-discovery scheduling remains separate from the production read seam.**  
+   MR now supplies canonical Memory plus authoritative temporal context to the
+   LCE consolidator without a second factual store. What remains optional is
+   when/how an idle or nearline policy chooses unstructured Memory
+   neighborhoods; that scheduler is not a correctness requirement and does
+   not change factual authority.
 
 2. **Accepted cognition serving remains opt-in.**  
    `build_memory_history(..., lce_enabled=True)` prefers applicable accepted
