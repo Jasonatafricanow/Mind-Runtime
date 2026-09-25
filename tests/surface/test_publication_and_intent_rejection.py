@@ -73,6 +73,17 @@ def test_publication_rejects_ineligible_profile_and_bad_reference(tmp_path):
     assert not list(repo.root.glob(".persona-publish-*"))
 
 
+def test_publication_is_idempotent_only_for_identical_content(tmp_path):
+    repo = PersonaConfigPublicationRepository(tmp_path / "published")
+    original = _write(tmp_path / "original.json", _profile(0.2))
+    conflicting = _write(tmp_path / "conflicting.json", _profile(0.8))
+    ref = repo.publish(original)
+    assert repo.publish(original) == ref
+    with pytest.raises(PersonaRevisionConflict, match="PERSONA_REVISION_CONFLICT"):
+        repo.publish(conflicting)
+    assert repo.resolve(ref).effective_content_digest == ref.effective_content_digest
+
+
 def test_registry_persona_pin_rejects_wrong_identity_and_unknown_binding(tmp_path):
     registry = BindingRegistry(tmp_path / "bindings")
     registry.initialize()
