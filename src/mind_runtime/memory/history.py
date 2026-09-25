@@ -5,6 +5,7 @@ from datetime import datetime
 
 from mind_runtime.contracts import Observation, Scope, Situation
 from mind_runtime.contracts.historical import HistoricalContextBundle, HistoricalContextItem
+from mind_runtime.memory.product import MemoryProductStore, MemorySurfacePolicy, SurfaceMode
 from mind_runtime.memory.retrieval import (
     DEFAULT_SURFACE_BUDGET,
     MemoryRetrievalQuery,
@@ -19,9 +20,13 @@ class MemoryHistoricalContextAdapter:
         reader: MemoryRetrievalService,
         *,
         budget: MemorySurfaceBudget = DEFAULT_SURFACE_BUDGET,
+        product: MemoryProductStore | None = None,
+        surface_policy: MemorySurfacePolicy | None = None,
     ) -> None:
         self._reader = reader
         self._budget = budget
+        self._product = product
+        self._surface_policy = surface_policy or MemorySurfacePolicy()
 
     def read(
         self,
@@ -65,6 +70,15 @@ class MemoryHistoricalContextAdapter:
                 memory.provenance.evidence_refs
             ):
                 continue
+            if self._product is not None:
+                decision = self._surface_policy.evaluate(
+                    memory,
+                    self._product.attention(memory.memory_id),
+                    mode=SurfaceMode.AUTOMATIC,
+                    now=clock,
+                )
+                if not decision.allowed:
+                    continue
             items.append(
                 HistoricalContextItem(
                     item_id=f"memory:{memory.memory_id}",
