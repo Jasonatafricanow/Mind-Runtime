@@ -305,6 +305,8 @@ class MemoryProductStore:
         supporting_memory_ids: tuple[str, ...],
         at: datetime,
         importance: int = 5,
+        working_summary: str | None = None,
+        mature: bool = False,
     ) -> MemoryThread:
         self._writable()
         require_non_empty(thread_id, "thread_id")
@@ -330,6 +332,8 @@ class MemoryProductStore:
             suppressed=False,
             origin_memory_ids=supporting_memory_ids,
             current_support_ids=supporting_memory_ids,
+            working_summary=working_summary,
+            mature=mature,
         )
         existing = self.get_thread(thread_id)
         if existing is not None:
@@ -347,6 +351,36 @@ class MemoryProductStore:
             "SELECT payload FROM memory_threads WHERE thread_id=?", (thread_id,)
         ).fetchone()
         return None if row is None else _decode_thread(row[0])
+
+    def list_threads(
+        self,
+        scope: Scope,
+        *,
+        status: ThreadStatus | None = None,
+        include_suppressed: bool = True,
+    ) -> tuple[MemoryThread, ...]:
+        """List product Threads without ranking or semantic interpretation."""
+        if status is not None and not isinstance(status, ThreadStatus):
+            raise ValueError("status must be ThreadStatus or None")
+        if type(include_suppressed) is not bool:
+            raise ValueError("include_suppressed must be bool")
+        if not self._table_exists("memory_threads"):
+            return ()
+        threads: list[MemoryThread] = []
+        for (payload,) in self._conn.execute(
+            "SELECT payload FROM memory_threads ORDER BY thread_id"
+        ):
+            thread = _decode_thread(payload)
+            if thread.scope != scope:
+                continue
+            if status is not None and thread.status is not status:
+                continue
+            if not include_suppressed and thread.suppressed:
+                continue
+            if not self._thread_support_is_current(thread):
+                continue
+            threads.append(thread)
+        return tuple(threads)
 
     def update_thread(
         self,
