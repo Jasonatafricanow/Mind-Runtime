@@ -1,9 +1,7 @@
-"""C7B coverage gap tests.
+"""C7B defensive edge-path tests.
 
-The full-project gate is ``fail_under=100``. This file pins
-coverage on the defence-in-depth error paths and the daemon's
-``DO_NOT_RETRY`` / ``IN_FLIGHT`` / port-raise branches that the
-behavioural tests do not exercise directly.
+Keep only edge contracts that are not already exercised by the focused
+delivery suites. Prefer parameter matrices over one test per branch.
 """
 
 from __future__ import annotations
@@ -109,106 +107,37 @@ def test_retry_decision_predicates() -> None:
 # ----------------------------------------------------------- kill switch
 
 
-def test_kill_switch_validate_block_map_malformed(
+@pytest.mark.parametrize(
+    ("column", "raw_value", "accessor", "message"),
+    (
+        ("channel_blocks", "{not-valid", "channel_blocks", "valid JSON object"),
+        ("target_blocks", "[1, 2, 3]", "target_blocks", "must be a JSON object"),
+        ("channel_blocks", '{"x": 1}', "channel_blocks", "must be strings"),
+        ("target_blocks", '{"": "value"}', "target_blocks", "non-empty strings"),
+        ("state", "not-a-level", "state", "must be one of"),
+    ),
+)
+def test_kill_switch_corruption_fails_closed(
     tmp_path: Path,
+    column: str,
+    raw_value: str,
+    accessor: str,
+    message: str,
 ) -> None:
-    """Manually corrupt the channel_blocks JSON; the next decide()
-    must fail closed with a clear ValueError.
-    """
-
-    db_path = tmp_path / "c7b_ks_corrupt.db"
+    db_path = tmp_path / f"c7b_ks_corrupt_{column}.db"
     backend = SqliteDeliveryBackend(db_path)
     backend.close()
-    del backend
-    # Corrupt the channel_blocks JSON.
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET channel_blocks = ?"
-        " WHERE row_id = 1",
-        ("{not-valid",),
-    )
-    conn.commit()
-    conn.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE delivery_kill_switch SET {column} = ? WHERE row_id = 1",
+            (raw_value,),
+        )
 
     backend = SqliteDeliveryBackend(db_path)
     try:
-        with pytest.raises(ValueError, match="valid JSON object"):
-            backend.kill_switch().channel_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_validate_block_map_not_object(
-    tmp_path: Path,
-) -> None:
-    """A non-object JSON value in the block map fails closed."""
-
-    db_path = tmp_path / "c7b_ks_bad.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET target_blocks = ? WHERE row_id = 1",
-        ("[1, 2, 3]",),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be a JSON object"):
-            backend.kill_switch().target_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_validate_block_map_not_string(
-    tmp_path: Path,
-) -> None:
-    """A block map with non-string keys/values fails closed."""
-
-    db_path = tmp_path / "c7b_ks_bad2.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET channel_blocks = ?"
-        " WHERE row_id = 1",
-        ('{"x": 1}',),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be strings"):
-            backend.kill_switch().channel_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_block_channel_rejects_empty_reason(
-    tmp_path: Path,
-) -> None:
-    """block_channel requires a non-empty reason."""
-
-    db_path = tmp_path / "c7b_ks_reason.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="reason"):
-            backend.kill_switch().block_channel(
-                "weixin", reason="", updated_at=datetime.now(tz=UTC),
-            )
-        with pytest.raises(ValueError, match="channel"):
-            backend.kill_switch().block_channel(
-                "", reason="x", updated_at=datetime.now(tz=UTC),
-            )
-        with pytest.raises(ValueError, match="target"):
-            backend.kill_switch().block_target(
-                "", reason="x", updated_at=datetime.now(tz=UTC),
-            )
+        with pytest.raises(ValueError, match=message):
+            getattr(backend.kill_switch(), accessor)()
     finally:
         backend.close()
 
@@ -1044,56 +973,6 @@ def test_daemon_collision_when_receipt_persisted_with_different_attempt(
 # ----------------------------------------------------------- kill switch
 
 
-def test_kill_switch_block_map_non_string_keys_fails_closed(
-    tmp_path: Path,
-) -> None:
-    """A block map with non-string keys fails closed."""
-
-    db_path = tmp_path / "c7b_ks_keys.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET target_blocks = ? WHERE row_id = 1",
-        ('{"": "value"}',),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="non-empty strings"):
-            backend.kill_switch().target_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_corrupt_state_value_fails_closed(
-    tmp_path: Path,
-) -> None:
-    """A state value not in the allowed levels fails closed."""
-
-    db_path = tmp_path / "c7b_ks_state.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET state = ? WHERE row_id = 1",
-        ("not-a-level",),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be one of"):
-            backend.kill_switch().state()
-    finally:
-        backend.close()
-
-
 def test_kill_switch_block_channel_after_global_off(
     tmp_path: Path,
 ) -> None:
@@ -1296,22 +1175,6 @@ def test_persistence_reopen_fails_when_reason_codes_not_array(
 # ----------------------------------------------------------- kill switch
 
 
-def test_kill_switch_block_target_rejects_empty_reason(
-    tmp_path: Path,
-) -> None:
-    """block_target refuses empty reason."""
-
-    db_path = tmp_path / "c7b_ks_tgt_reason.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="reason"):
-            backend.kill_switch().block_target(
-                "user-1", reason="", updated_at=datetime.now(tz=UTC),
-            )
-    finally:
-        backend.close()
-
-
 def test_kill_switch_unblock_target_no_op_when_not_blocked(
     tmp_path: Path,
 ) -> None:
@@ -1323,23 +1186,6 @@ def test_kill_switch_unblock_target_no_op_when_not_blocked(
         backend.kill_switch().unblock_target(
             "user-1", updated_at=datetime.now(tz=UTC),
         )
-    finally:
-        backend.close()
-
-
-def test_kill_switch_decide_rejects_empty_channel_and_target(
-    tmp_path: Path,
-) -> None:
-    """decide() refuses empty channel or target (defense in depth)."""
-
-    db_path = tmp_path / "c7b_ks_decide.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        ks = backend.kill_switch()
-        with pytest.raises(ValueError, match="channel"):
-            ks.decide(channel="", target="user-1")
-        with pytest.raises(ValueError, match="target"):
-            ks.decide(channel="weixin", target="")
     finally:
         backend.close()
 
