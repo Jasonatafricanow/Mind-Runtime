@@ -200,6 +200,7 @@ class HostDecisionContext:
     situation_summary: str
     action_taken: str | None
     next_steps: str | None
+    cognitive_meaning: str | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.intent_summary, "intent_summary")
@@ -209,6 +210,8 @@ class HostDecisionContext:
             require_non_empty(self.action_taken, "action_taken")
         if self.next_steps is not None:
             require_non_empty(self.next_steps, "next_steps")
+        if self.cognitive_meaning is not None:
+            require_non_empty(self.cognitive_meaning, "cognitive_meaning")
 
 
 @dataclass(frozen=True, slots=True)

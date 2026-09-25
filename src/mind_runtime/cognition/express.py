@@ -31,6 +31,7 @@ from mind_runtime.contracts import (
     Situation,
 )
 from mind_runtime.contracts.common import require_non_empty
+from mind_runtime.contracts.late_projection import AcceptedAppraisal
 from mind_runtime.expression import (
     DecisionContextCompiler,
     DeterministicExpressionCoordinator,
@@ -136,6 +137,7 @@ class ProactiveExpressionPreparer:
         state_rows: tuple[RuntimeState, ...],
         persona_ref: str | None,
         now: datetime,
+        accepted_appraisals: tuple[AcceptedAppraisal, ...] = (),
     ) -> ProactiveExpressionArtifact:
         """Prepare one would-send artifact; never writes facts or lifecycle."""
 
@@ -178,6 +180,7 @@ class ProactiveExpressionPreparer:
                 prior_expression=previous,
                 attempt=0,
                 rewrite_reason_codes=(),
+                accepted_appraisals=accepted_appraisals,
             )
         )
         self._orchestrator.trace.record(

@@ -12,6 +12,7 @@ from mind_runtime.contracts.scope import Scope
 class ExpressionContextKind(StrEnum):
     ACTION = "action"
     FACT = "fact"
+    COGNITIVE_MEANING = "cognitive_meaning"
     INTERNAL_STATE = "internal_state"
     POLICY_CONSTRAINT = "policy_constraint"
     PERSONA_STYLE = "persona_style"

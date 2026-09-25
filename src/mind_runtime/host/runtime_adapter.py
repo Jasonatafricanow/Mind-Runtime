@@ -206,12 +206,17 @@ def _bounded_context(orchestrator: TurnOrchestrator) -> HostDecisionContext | No
     if slow_summary:
         emotional_state += f"; slow_state: {slow_summary}"
     situation_summary = f"situation_ref={ctx.situation_ref}"
+    renderer = orchestrator.context_renderer
+    meaning = renderer.render_cognitive_meaning(ctx) if hasattr(
+        renderer, "render_cognitive_meaning"
+    ) else None
     return HostDecisionContext(
         intent_summary=intent_summary,
         emotional_state=emotional_state,
         situation_summary=situation_summary,
         action_taken=ctx.selected_action_type,
         next_steps=None,
+        cognitive_meaning=meaning,
     )
 
 

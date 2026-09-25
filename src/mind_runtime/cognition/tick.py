@@ -683,6 +683,7 @@ class CognitiveTicker:
                 state_rows=self._load_state_rows(),
                 persona_ref=self._persona.persona_id,
                 now=now,
+                accepted_appraisals=transition_result.accepted_appraisals,
             )
         except AgentFailure:
             self._orchestrator.trace.record(

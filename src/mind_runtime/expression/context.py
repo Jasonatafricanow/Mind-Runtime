@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import Protocol, runtime_checkable
 
 from mind_runtime.contracts import (
     ActionDecision,
@@ -24,7 +25,7 @@ from mind_runtime.contracts import (
     StateDomain,
 )
 from mind_runtime.contracts.common import require_non_empty
-from typing import Protocol, runtime_checkable
+from mind_runtime.contracts.late_projection import AcceptedAppraisal
 
 
 @runtime_checkable
@@ -32,6 +33,12 @@ class StateDefinitionRegistry(Protocol):
     """Protocol for state definition lookup in expression compiler."""
 
     def get(self, key: str) -> StateDefinition | None:
+        ...
+
+
+@runtime_checkable
+class AppraisalJournalReader(Protocol):
+    def get_acceptance(self, acceptance_id: str) -> AcceptedAppraisal | None:
         ...
 
 REWRITE_GUIDANCE: dict[str, str] = {
@@ -43,6 +50,7 @@ REWRITE_GUIDANCE: dict[str, str] = {
 _SECTION_ORDER = {
     ExpressionContextKind.ACTION: 0,
     ExpressionContextKind.FACT: 1,
+    ExpressionContextKind.COGNITIVE_MEANING: 2,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
     ExpressionContextKind.PERSONA_STYLE: 4,
@@ -114,6 +122,9 @@ class DecisionContextConfig:
     max_item_chars: int
     max_items: int
     max_render_chars: int
+    meaning_policy: str = "allowed"
+    max_meaning_items: int = 2
+    max_meaning_chars: int = 512
 
     def __post_init__(self) -> None:
         _require_unique_strings(self.allowed_situation_facts, "allowed_situation_facts")
@@ -143,8 +154,12 @@ class DecisionContextConfig:
             "max_item_chars",
             "max_items",
             "max_render_chars",
+            "max_meaning_items",
+            "max_meaning_chars",
         ):
             _require_positive_integer(getattr(self, field_name), field_name)
+        if self.meaning_policy not in ("allowed", "policy_denied"):
+            raise ValueError("meaning_policy must be allowed or policy_denied")
 
 
 def _require_unique_strings(values: tuple[str, ...], field_name: str) -> None:
@@ -177,6 +192,7 @@ class DecisionContextCompilerInput:
     # registered slow dimensions are present.
     slow_state_records: SlowStateProjection = ()
     state_definitions: StateDefinitionRegistry | None = None
+    accepted_appraisals: tuple[AcceptedAppraisal, ...] = ()
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -209,6 +225,7 @@ class DecisionContextCompiler:
         config: DecisionContextConfig,
         *,
         definitions: StateDefinitionRegistry | None = None,
+        appraisal_journal: AppraisalJournalReader | None = None,
     ) -> None:
         if not isinstance(config, DecisionContextConfig):
             raise ValueError("config must be a DecisionContextConfig")
@@ -216,6 +233,7 @@ class DecisionContextCompiler:
             raise ValueError("definitions must be a StateDefinitionRegistry")
         self._config = config
         self._definitions = definitions
+        self._appraisal_journal = appraisal_journal
 
     def compile(
         self, compiler_input: DecisionContextCompilerInput
@@ -223,6 +241,8 @@ class DecisionContextCompiler:
         self._validate_authority(compiler_input)
         candidates = self._action_items(compiler_input)
         candidates += self._fact_items(compiler_input.situation)
+        meaning_items, meaning_reasons = self._meaning_items(compiler_input.accepted_appraisals)
+        candidates += meaning_items
         candidates += self._affect_items(compiler_input.projected_agent_state)
         # C10-C1: emit slow-state items from the authoritative projection.
         candidates += self._slow_state_items(compiler_input.slow_state_records)
@@ -234,7 +254,43 @@ class DecisionContextCompiler:
         candidates += self._rewrite_items(compiler_input.rewrite_reason_codes)
         included, omitted = self._fit_item_budget(candidates)
         context = self._context(compiler_input, included)
-        return context, self._trace(context, included, omitted, compiler_input.rewrite_reason_codes)
+        if any(item.kind is ExpressionContextKind.COGNITIVE_MEANING for item in omitted):
+            meaning_reasons += ("budget_exhausted",)
+        reasons = tuple(dict.fromkeys(compiler_input.rewrite_reason_codes + meaning_reasons))
+        return context, self._trace(context, included, omitted, reasons)
+
+    def _meaning_items(
+        self, appraisals: tuple[AcceptedAppraisal, ...]
+    ) -> tuple[list[ExpressionContextItem], tuple[str, ...]]:
+        if not appraisals:
+            return [], ()
+        if self._config.meaning_policy == "policy_denied":
+            return [], ("policy_denied",)
+        items: list[ExpressionContextItem] = []
+        omitted = False
+        for acceptance in appraisals:
+            meaning = "; ".join(acceptance.appraisal.meanings)
+            if (
+                len(items) >= self._config.max_meaning_items
+                or len(meaning) > self._config.max_meaning_chars
+            ):
+                omitted = True
+                continue
+            items.append(
+                ExpressionContextItem(
+                    item_id=f"meaning-{acceptance.acceptance_id}",
+                    kind=ExpressionContextKind.COGNITIVE_MEANING,
+                    key="appraisal_meaning",
+                    value=meaning,
+                    source_refs=(
+                        acceptance.appraisal.appraisal_id,
+                        acceptance.candidate.candidate_id,
+                        *acceptance.appraisal.evidence_refs,
+                    ),
+                    priority=45,
+                )
+            )
+        return items, (("budget_exhausted",) if omitted else ())
 
     def retry(
         self, context: DecisionContext, reason_codes: tuple[str, ...]
@@ -286,6 +342,21 @@ class DecisionContextCompiler:
         projected = compiler_input.projected_agent_state
         intent = compiler_input.intent
         policy = compiler_input.policy_result
+        for acceptance in compiler_input.accepted_appraisals:
+            if (
+                self._appraisal_journal is None
+                or not acceptance.valid_lineage()
+                or acceptance.status != "ACCEPTED"
+                or acceptance.interaction_id != compiler_input.interaction_id
+                or acceptance.candidate.scope != scope
+                or acceptance.candidate.origin_runtime_id != origin
+                or acceptance.persona_id != compiler_input.persona_ref
+                or acceptance.persona_id != situation.persona_id
+                or acceptance.projection_scope != projected.scope
+                or acceptance.appraisal.situation_ref != situation.situation_id
+                or self._appraisal_journal.get_acceptance(acceptance.acceptance_id) != acceptance
+            ):
+                raise ValueError("COGNITIVE_MEANING requires current journal acceptance")
         if situation.scope != scope:
             raise ValueError("Situation scope must match compiler input scope")
         if effective_state.scope != scope:

@@ -14,6 +14,8 @@ from mind_runtime.contracts.appraisal import (
     SemanticEventCandidate,
 )
 from mind_runtime.contracts.historical import HistoricalContextBundle
+from mind_runtime.contracts.late_projection import AcceptedAppraisal
+from mind_runtime.contracts.scope import Scope
 from mind_runtime.contracts.situation import Situation
 from mind_runtime.emotional_transition.provider import (
     ChatTransport,
@@ -21,7 +23,6 @@ from mind_runtime.emotional_transition.provider import (
     SchemaInvalidError,
     UrllibChatTransport,
 )
-
 
 _HISTORY_PATTERN_KEYWORDS: tuple[str, ...] = (
     "recurring",
@@ -52,8 +53,8 @@ def _extract_trusted_evidence_pool(
     situation = context.situation
     if isinstance(situation, Situation) and situation.evidence_refs:
         refs.extend(situation.evidence_refs)
-    elif hasattr(situation, "evidence_refs") and getattr(situation, "evidence_refs"):
-        refs.extend(cast(tuple[str, ...], getattr(situation, "evidence_refs")))
+    elif hasattr(situation, "evidence_refs") and situation.evidence_refs:
+        refs.extend(cast(tuple[str, ...], situation.evidence_refs))
 
     history = context.history
     if isinstance(history, HistoricalContextBundle):
@@ -108,11 +109,110 @@ class SemanticAppraisalProducer:
         self._model = model
 
     def assemble(
+        self, *, candidate: SemanticEventCandidate, context: SemanticAppraisalContext
+    ) -> SemanticAppraisal:
+        return self._evaluate(candidate=candidate, context=context)[0]
+
+    def accept(
         self,
         *,
         candidate: SemanticEventCandidate,
         context: SemanticAppraisalContext,
-    ) -> SemanticAppraisal:
+        interaction_id: str,
+        persona_id: str,
+        route_abstention_reasons: tuple[str, ...],
+        projection_scope: Scope | None = None,
+    ) -> AcceptedAppraisal:
+        from mind_runtime.contracts.late_projection import (
+            AcceptedAppraisal,
+            authorized_history,
+            digest,
+        )
+        from mind_runtime.contracts.scope import ScopeDomain
+
+        situation, history = context.situation, context.history
+        bound = (
+            context.candidate == candidate
+            and bool(interaction_id)
+            and bool(persona_id)
+            and getattr(situation, "scope", None) == candidate.scope
+            and getattr(situation, "origin_runtime_id", None) == candidate.origin_runtime_id
+            and getattr(situation, "persona_id", None) == persona_id
+            and authorized_history(history, candidate.scope, candidate.origin_runtime_id)
+            and (
+                projection_scope is None
+                or (
+                    projection_scope.domain == ScopeDomain.AGENT
+                    and projection_scope.persona_id == persona_id
+                )
+            )
+        )
+        if bound and not route_abstention_reasons:
+            appraisal, valid = self._evaluate(candidate=candidate, context=context)
+            trusted = _extract_trusted_evidence_pool(candidate=candidate, context=context)
+        else:
+            # Fail before invoking a model with foreign authority.
+            valid = False
+            trusted = candidate.evidence_refs
+            appraisal = SemanticAppraisal(
+                f"appraisal-{candidate.candidate_id}",
+                candidate.scope,
+                candidate.origin_runtime_id,
+                getattr(situation, "situation_id", "invalid"),
+                ("unappraised",),
+                "neutral",
+                "unspecified",
+                0.0,
+                (),
+                None,
+            )
+        status = (
+            "REJECTED"
+            if not bound
+            else "ABSTAINED"
+            if route_abstention_reasons
+            else "ACCEPTED"
+            if valid
+            else "ERROR"
+        )
+        reasons = (
+            ()
+            if status == "ACCEPTED"
+            else route_abstention_reasons
+            or ("invalid_lineage" if not bound else "appraisal_provider_or_validation_error",)
+        )
+        identity = digest(
+            (
+                appraisal,
+                candidate,
+                interaction_id,
+                persona_id,
+                trusted,
+                route_abstention_reasons,
+                status,
+                reasons,
+                projection_scope,
+            )
+        )
+        return AcceptedAppraisal(
+            "acceptance-" + identity,
+            status,
+            appraisal,
+            candidate,
+            interaction_id,
+            persona_id,
+            trusted,
+            route_abstention_reasons,
+            reasons,
+            projection_scope,
+        )
+
+    def _evaluate(
+        self,
+        *,
+        candidate: SemanticEventCandidate,
+        context: SemanticAppraisalContext,
+    ) -> tuple[SemanticAppraisal, bool]:
         appraisal_id = f"appraisal-{candidate.candidate_id}"
         scope = candidate.scope
         origin_runtime_id = candidate.origin_runtime_id
@@ -121,7 +221,7 @@ class SemanticAppraisalProducer:
         if isinstance(situation, Situation):
             situation_ref = situation.situation_id
         elif hasattr(situation, "situation_id"):
-            situation_ref = str(getattr(situation, "situation_id"))
+            situation_ref = str(situation.situation_id)
         else:
             situation_ref = "situation-default"
 
@@ -148,49 +248,55 @@ class SemanticAppraisalProducer:
                 trusted_evidence_pool=trusted_pool,
             )
         except Exception:
-            return default_failure
+            return (default_failure, False)
 
         if not isinstance(proposal, AppraisalModelProposal):
-            return default_failure
+            return (default_failure, False)
 
         if not proposal.meanings or any(not m.strip() for m in proposal.meanings):
-            return default_failure
+            return (default_failure, False)
 
         if not proposal.valence or not proposal.valence.strip():
-            return default_failure
+            return (default_failure, False)
 
         if not proposal.relationship_relevance or not proposal.relationship_relevance.strip():
-            return default_failure
+            return (default_failure, False)
 
         if proposal.appraisal_confidence is None:
-            return default_failure
+            return (default_failure, False)
         if (
             isinstance(proposal.appraisal_confidence, bool)
             or not 0.0 <= proposal.appraisal_confidence <= 1.0
         ):
-            return default_failure
+            return (default_failure, False)
+
+        if any(ref not in trusted_pool for ref in proposal.supporting_evidence_refs):
+            return default_failure, False
 
         if proposal.salience is None:
-            return SemanticAppraisal(
-                appraisal_id=appraisal_id,
-                scope=scope,
-                origin_runtime_id=origin_runtime_id,
-                situation_ref=situation_ref,
-                meanings=proposal.meanings,
-                valence=proposal.valence,
-                relationship_relevance=proposal.relationship_relevance,
-                confidence=proposal.appraisal_confidence,
-                evidence_refs=(),
-                salience=None,
+            return (
+                SemanticAppraisal(
+                    appraisal_id=appraisal_id,
+                    scope=scope,
+                    origin_runtime_id=origin_runtime_id,
+                    situation_ref=situation_ref,
+                    meanings=proposal.meanings,
+                    valence=proposal.valence,
+                    relationship_relevance=proposal.relationship_relevance,
+                    confidence=proposal.appraisal_confidence,
+                    evidence_refs=(),
+                    salience=None,
+                ),
+                True,
             )
 
         if isinstance(proposal.salience, bool) or not 0.0 <= proposal.salience <= 1.0:
-            return default_failure
+            return (default_failure, False)
 
         pool_set = set(trusted_pool)
         for ref in proposal.supporting_evidence_refs:
             if ref not in pool_set:
-                return default_failure
+                return (default_failure, False)
 
         combined_text = " ".join(proposal.meanings).lower()
         references_history_pattern = any(kw in combined_text for kw in _HISTORY_PATTERN_KEYWORDS)
@@ -201,22 +307,25 @@ class SemanticAppraisalProducer:
             if not has_history_ref:
                 trusted_history_in_pool = [ref for ref in trusted_history_refs if ref in pool_set]
                 if not trusted_history_in_pool:
-                    return default_failure
+                    return (default_failure, False)
                 selected_refs.append(trusted_history_in_pool[0])
 
         evidence_refs = tuple(dict.fromkeys(selected_refs))
 
-        return SemanticAppraisal(
-            appraisal_id=appraisal_id,
-            scope=scope,
-            origin_runtime_id=origin_runtime_id,
-            situation_ref=situation_ref,
-            meanings=proposal.meanings,
-            valence=proposal.valence,
-            relationship_relevance=proposal.relationship_relevance,
-            confidence=proposal.appraisal_confidence,
-            evidence_refs=evidence_refs,
-            salience=proposal.salience,
+        return (
+            SemanticAppraisal(
+                appraisal_id=appraisal_id,
+                scope=scope,
+                origin_runtime_id=origin_runtime_id,
+                situation_ref=situation_ref,
+                meanings=proposal.meanings,
+                valence=proposal.valence,
+                relationship_relevance=proposal.relationship_relevance,
+                confidence=proposal.appraisal_confidence,
+                evidence_refs=evidence_refs,
+                salience=proposal.salience,
+            ),
+            True,
         )
 
 
@@ -314,9 +423,7 @@ class ModelBackedSemanticAppraisalModel:
             raise ProviderUnavailableError(f"API key env var {self._api_key_env} is not set")
 
         situation_id = getattr(context.situation, "situation_id", str(context.situation))
-        persona_info = tuple(
-            getattr(p, "dimension", str(p)) for p in context.persona
-        )
+        persona_info = tuple(getattr(p, "dimension", str(p)) for p in context.persona)
         history_info: tuple[str, ...] = ()
         if context.history is not None:
             history_info = tuple(
@@ -331,12 +438,14 @@ class ModelBackedSemanticAppraisalModel:
                     "role": "system",
                     "content": (
                         "You are a semantic appraisal estimator for Mind Runtime. "
-                        "Evaluate the emotional and relational significance of the candidate event. "
+                        "Evaluate the emotional and relational significance "
+                        "of the candidate event. "
                         "Respond with a single JSON object with keys: "
                         "meanings (list of strings), valence (string), "
                         "relationship_relevance (string), salience (number 0.0-1.0), "
                         "appraisal_confidence (number 0.0-1.0), "
-                        "supporting_evidence_refs (list of strings strictly selected from trusted_evidence_pool)."
+                        "supporting_evidence_refs (list of strings strictly selected "
+                        "from trusted_evidence_pool)."
                     ),
                 },
                 {
