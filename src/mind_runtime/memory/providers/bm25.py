@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
 from mind_runtime.memory.retrieval import MemoryRetrievalQuery, RetrievedMemoryCandidate
