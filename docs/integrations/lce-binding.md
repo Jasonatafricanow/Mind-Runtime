@@ -113,10 +113,9 @@ belongs to LCE.
 The normal Memory composition can wire
 `LceThreadProjectionCompiler` into `ThreadAutoUpdateService`. When
 `lce_enabled=True`, a mature Thread is compiled after the canonical turn
-commit. Once LCE returns an accepted Baseline identity, MR marks the Thread
-`COMPILED` and removes it from the active Thread working set. The Baseline
-therefore supersedes the lower-level projection instead of creating a second
-live copy of the same logic.
+commit. Once LCE returns an accepted Baseline identity, MR deletes the
+temporary Thread projection. The Baseline region and supporting canonical
+Memory IDs retain lineage, so no duplicate Thread copy is needed.
 
 If compilation is disabled or fails, the Thread remains available. A derived
 projection failure never rolls back canonical Memory.
