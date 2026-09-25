@@ -1,6 +1,6 @@
 """D1.4 Situation / Appraisal / Pattern contract tests."""
 
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -189,82 +189,42 @@ def test_route_preserves_decision_025_fields() -> None:
     assert {"path", "ambiguity_score", "confidence", "reason_codes"} <= field_names
 
 
-def test_route_ambiguity_score_bounded_when_present() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="ambiguity_score"):
-        AppraisalRouteDecision(
-            route_id="route-bad",
-            scope=scope,
-            path=AppraisalPath.LLM,
-            ambiguity_score=1.5,
-            confidence=0.9,
-            reason_codes=("ambiguous",),
-        )
-    route = AppraisalRouteDecision(
-        route_id="route-1",
-        scope=scope,
-        path=AppraisalPath.DETERMINISTIC,
-        ambiguity_score=None,
-        confidence=0.9,
-        reason_codes=("computed",),
-    )
-    assert route.ambiguity_score is None
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"ambiguity_score": 1.5}, "ambiguity_score"),
+        ({"path": "nonsense"}, "path"),
+        ({"confidence": 1.1}, "confidence"),
+        ({"reason_codes": ("",)}, "non-empty"),
+    ),
+)
+def test_route_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_route(), **overrides)
+
+    assert make_route().ambiguity_score is None
 
 
-def test_route_rejects_unknown_path() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="path"):
-        AppraisalRouteDecision(
-            route_id="route-bad",
-            scope=scope,
-            path="nonsense",  # type: ignore[arg-type]
-            ambiguity_score=None,
-            confidence=0.9,
-            reason_codes=(),
-        )
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        ({"ambiguous": True, "score": 0.6, "reasons": (" ",)}, "non-empty"),
+        ({"ambiguous": "yes", "score": 0.6, "reasons": ()}, "ambiguous"),
+        ({"ambiguous": True, "score": 2.0, "reasons": ("conflict",)}, "score"),
+    ),
+)
+def test_ambiguity_assessment_rejects_invalid_fields(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        AmbiguityAssessment(**kwargs)  # type: ignore[arg-type]
 
-
-def test_route_rejects_out_of_range_confidence() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="confidence"):
-        AppraisalRouteDecision(
-            route_id="route-bad",
-            scope=scope,
-            path=AppraisalPath.DETERMINISTIC,
-            ambiguity_score=None,
-            confidence=1.1,
-            reason_codes=(),
-        )
-
-
-def test_route_rejects_empty_reason_codes_entry() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        AppraisalRouteDecision(
-            route_id="route-bad",
-            scope=scope,
-            path=AppraisalPath.DETERMINISTIC,
-            ambiguity_score=None,
-            confidence=0.9,
-            reason_codes=("",),
-        )
-
-
-def test_ambiguity_assessment_rejects_empty_reason() -> None:
-    with pytest.raises(ValueError, match="non-empty"):
-        AmbiguityAssessment(ambiguous=True, score=0.6, reasons=(" ",))
-
-
-def test_ambiguity_assessment_rejects_non_bool_flag() -> None:
-    with pytest.raises(ValueError, match="ambiguous"):
-        AmbiguityAssessment(ambiguous="yes", score=0.6, reasons=())  # type: ignore[arg-type]
-
-
-def test_ambiguity_assessment_bounds_score() -> None:
-    with pytest.raises(ValueError, match="score"):
-        AmbiguityAssessment(ambiguous=True, score=2.0, reasons=("conflict",))
-    assessment = AmbiguityAssessment(ambiguous=True, score=0.6, reasons=("conflict",))
-    assert assessment.ambiguous is True
+    valid = AmbiguityAssessment(ambiguous=True, score=0.6, reasons=("conflict",))
+    assert valid.ambiguous is True
 
 
 # --- DECISION-030 pattern ---
@@ -293,68 +253,45 @@ def test_pattern_query_accepts_valid_filters() -> None:
     assert query.time_window == "14d"
 
 
-def test_pattern_query_rejects_blank_signature_or_window() -> None:
-    scope = make_scope()
-    for field_value in ("", "  "):
-        with pytest.raises(ValueError, match="non-empty"):
-            PatternQuery(
-                query_id="pq-bad",
-                scope=scope,
-                origin_runtime_id="runtime-1",
-                signature=field_value,
-                time_window="14d",
-                filters=(),
-            )
-        with pytest.raises(ValueError, match="non-empty"):
-            PatternQuery(
-                query_id="pq-bad",
-                scope=scope,
-                origin_runtime_id="runtime-1",
-                signature="sig",
-                time_window=field_value,
-                filters=(),
-            )
-    with pytest.raises(ValueError, match="non-empty"):
-        PatternQuery(
-            query_id="pq-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            signature="sig",
-            time_window="14d",
-            filters=(("", "value"),),
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        PatternQuery(
-            query_id="pq-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            signature="sig",
-            time_window="14d",
-            filters=(("key", ""),),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"signature": ""}, "non-empty"),
+        ({"signature": "  "}, "non-empty"),
+        ({"time_window": ""}, "non-empty"),
+        ({"time_window": "  "}, "non-empty"),
+        ({"filters": (("", "value"),)}, "non-empty"),
+        ({"filters": (("key", ""),)}, "non-empty"),
+    ),
+)
+def test_pattern_query_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_pattern_query(), **overrides)
 
 
-def test_pattern_summary_rejects_blank_matched_ref() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        PatternMatchSummary(
-            summary_id="ps-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            match_count=1,
-            first_seen_at=None,
-            last_seen_at=None,
-            matched_refs=("",),
-            confidence=0.5,
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"matched_refs": ("",)}, "non-empty"),
+        ({"first_seen_at": datetime(2026, 8, 20, 11, 0)}, "aware UTC"),
+        ({"match_count": -1}, "match_count"),
+        ({"confidence": 1.5}, "confidence"),
+    ),
+)
+def test_pattern_summary_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_pattern_summary(), **overrides)
 
 
 def test_pattern_summary_accepts_null_timestamps() -> None:
-    scope = make_scope()
-    summary = PatternMatchSummary(
-        summary_id="ps-ok",
-        scope=scope,
-        origin_runtime_id="runtime-1",
+    summary = replace(
+        make_pattern_summary(),
         match_count=0,
         first_seen_at=None,
         last_seen_at=None,
@@ -363,51 +300,6 @@ def test_pattern_summary_accepts_null_timestamps() -> None:
     )
     assert summary.first_seen_at is None
     assert summary.last_seen_at is None
-
-
-def test_pattern_summary_timestamps_aware_utc_when_present() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="aware UTC"):
-        PatternMatchSummary(
-            summary_id="ps-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            match_count=1,
-            first_seen_at=datetime(2026, 8, 20, 11, 0),
-            last_seen_at=None,
-            matched_refs=(),
-            confidence=0.5,
-        )
-
-
-def test_pattern_summary_rejects_negative_match_count() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="match_count"):
-        PatternMatchSummary(
-            summary_id="ps-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            match_count=-1,
-            first_seen_at=None,
-            last_seen_at=None,
-            matched_refs=(),
-            confidence=0.5,
-        )
-
-
-def test_pattern_summary_rejects_out_of_range_confidence() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="confidence"):
-        PatternMatchSummary(
-            summary_id="ps-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            match_count=1,
-            first_seen_at=None,
-            last_seen_at=None,
-            matched_refs=(),
-            confidence=1.5,
-        )
 
 
 # --- MR-2 read contract ---
@@ -478,68 +370,35 @@ def test_history_query_accepts_valid_construction() -> None:
     assert query.pattern_queries == (make_pattern_query(),)
 
 
-def test_history_query_rejects_blank_hints() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        HistoricalContextQuery(
-            query_id="hq-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            situation_hint="   ",
-            query_text=None,
-            pattern_queries=(),
-            budget=10,
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        HistoricalContextQuery(
-            query_id="hq-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            situation_hint=None,
-            query_text="",
-            pattern_queries=(),
-            budget=10,
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"situation_hint": "   "}, "non-empty"),
+        ({"situation_hint": None, "query_text": ""}, "non-empty"),
+        ({"budget": -1}, "budget"),
+    ),
+)
+def test_history_query_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_history_query(), **overrides)
 
 
-def test_history_query_rejects_negative_budget() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="budget"):
-        HistoricalContextQuery(
-            query_id="hq-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            situation_hint=None,
-            query_text=None,
-            pattern_queries=(),
-            budget=-1,
-        )
-
-
-def test_history_item_confidence_bounded_when_present() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="confidence"):
-        HistoricalContextItem(
-            item_id="hc-bad",
-            scope=scope,
-            external_id="ext-1",
-            kind="episode",
-            proposition="p",
-            source_refs=(),
-            confidence=1.5,
-            relevance_hint=None,
-        )
-    with pytest.raises(ValueError, match="relevance_hint"):
-        HistoricalContextItem(
-            item_id="hc-bad",
-            scope=scope,
-            external_id="ext-1",
-            kind="episode",
-            proposition="p",
-            source_refs=(),
-            confidence=None,
-            relevance_hint=-0.5,
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"confidence": 1.5}, "confidence"),
+        ({"confidence": None, "relevance_hint": -0.5}, "relevance_hint"),
+    ),
+)
+def test_history_item_rejects_out_of_range_scores(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_history_item(), **overrides)
 
 
 # --- Situation ---
@@ -556,21 +415,20 @@ def test_situation_is_interpretation_not_raw_dump() -> None:
     assert "value" not in field_names
 
 
-def test_situation_observed_at_must_be_aware_utc() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="aware UTC"):
-        Situation(
-            situation_id="s-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            derived_facts=(),
-            effective_state_ref="state-1",
-            observed_at=datetime(2026, 8, 20, 11, 0),
-            historical_context=None,
-            persona_id=None,
-            relationship_ids=(),
-            evidence_refs=(),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"observed_at": datetime(2026, 8, 20, 11, 0)}, "aware UTC"),
+        ({"effective_state_ref": ""}, "non-empty"),
+        ({"derived_facts": (("", "value"),)}, "non-empty"),
+    ),
+)
+def test_situation_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_situation(), **overrides)
 
 
 def test_situation_is_immutable() -> None:
@@ -578,36 +436,3 @@ def test_situation_is_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         situation.derived_facts = ()  # type: ignore[misc]
 
-
-def test_situation_effective_state_ref_non_empty() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        Situation(
-            situation_id="s-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            derived_facts=(),
-            effective_state_ref="",
-            observed_at=NOW,
-            historical_context=None,
-            persona_id=None,
-            relationship_ids=(),
-            evidence_refs=(),
-        )
-
-
-def test_derived_fact_keys_and_values_must_be_non_empty() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        Situation(
-            situation_id="s-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            derived_facts=(("", "value"),),
-            effective_state_ref="state-1",
-            observed_at=NOW,
-            historical_context=None,
-            persona_id=None,
-            relationship_ids=(),
-            evidence_refs=(),
-        )
