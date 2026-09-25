@@ -7,7 +7,6 @@ from mind_runtime.contracts import SemanticEventCandidate
 from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.memory.threading import ThreadAutoUpdateService
-
 from tests.memory.test_contracts import memory
 
 
