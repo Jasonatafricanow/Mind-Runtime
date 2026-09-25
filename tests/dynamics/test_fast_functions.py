@@ -17,6 +17,7 @@ L. existing Surface/Intent tests remain green (checked in regression run).
 
 import ast
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from mind_runtime.dynamics.fast_functions import (
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
+    LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
     SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
     SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
@@ -40,6 +42,7 @@ from mind_runtime.dynamics.fast_functions import (
     FastStateStatus,
     validate_curiosity_anti_spam_invariant,
     validate_diligence_anti_spam_invariant,
+    validate_longing_anti_spam_invariant,
     validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.dynamics.kayla_v0 import kayla_v0_profile
@@ -122,6 +125,24 @@ def test_f_diligence_pressure_maps_to_follow_up_persistence_not_frequency() -> N
             diligence_pressure=0.9,
             base_cooldown_seconds=300.0,
             effective_cooldown_seconds=120.0,
+        )
+
+
+def test_longing_controls_contact_pressure_without_frequency_permission() -> None:
+    assert (
+        LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
+    )
+    assert validate_longing_anti_spam_invariant(
+        longing=0.9,
+        base_cooldown_seconds=1800.0,
+        effective_cooldown_seconds=1800.0,
+    ) is True
+    with pytest.raises(ValueError, match="Longing anti-spam violation"):
+        validate_longing_anti_spam_invariant(
+            longing=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
         )
 
 
@@ -354,3 +375,28 @@ def test_fast_function_v1_count_constant() -> None:
     assert len(FAST_FUNCTION_V1_SPECS) == FAST_FUNCTION_V1_COUNT
     assert len(FAST_FUNCTION_V1_REGISTRY) == FAST_FUNCTION_V1_COUNT
 
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"state_key": "user.affect.longing"}, "state_key must use"),
+        ({"semantic_label": "   "}, "semantic_label must be non-empty"),
+        ({"function_kind": "NOT_A_FUNCTION"}, "function_kind must be"),
+        ({"primary_consumer": "   "}, "primary_consumer must be non-empty"),
+    ],
+)
+def test_registry_rejects_malformed_function_specs(change, reason) -> None:
+    with pytest.raises(ValueError, match=reason):
+        replace(FAST_FUNCTION_V1_SPECS[0], **change)
+
+
+def test_registry_mapping_get_preserves_explicit_default() -> None:
+    sentinel = FAST_FUNCTION_V1_SPECS[0]
+    assert FAST_FUNCTION_V1_REGISTRY.get("agent.affect.missing", sentinel) is sentinel
+
+
+def test_registry_requires_present_function_binding() -> None:
+    empty = FastFunctionRegistry(())
+    assert empty.get_by_function(FastFunctionKind.ACTIVITY_WAKE) is None
+    with pytest.raises(KeyError, match="no fast function registered"):
+        empty.require_by_function(FastFunctionKind.ACTIVITY_WAKE)
