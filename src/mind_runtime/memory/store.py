@@ -76,6 +76,7 @@ class CanonicalMemoryStore:
                 UNIQUE(memory_id, target));
             CREATE TABLE IF NOT EXISTS thread_update_intents (
                 memory_id TEXT PRIMARY KEY REFERENCES canonical_memory(memory_id),
+                registered_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 thread_ref TEXT,
@@ -121,8 +122,9 @@ class CanonicalMemoryStore:
         )
         self.projection_queue()._enqueue(memory.memory_id, "unassigned")
         self._conn.execute(
-            "INSERT OR IGNORE INTO thread_update_intents(memory_id) VALUES(?)",
-            (memory.memory_id,),
+            "INSERT OR IGNORE INTO thread_update_intents(memory_id,registered_at) "
+            "VALUES(?,?)",
+            (memory.memory_id, memory.committed_at.isoformat()),
         )
 
     def _commit(self, memories: tuple[CommittedMemory, ...]) -> None:
