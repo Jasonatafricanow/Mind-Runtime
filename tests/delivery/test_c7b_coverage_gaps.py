@@ -76,6 +76,18 @@ def _receipt(
     )
 
 
+def _backend_with_pending_request(
+    db_path: Path,
+    request: DeliveryRequest,
+) -> SqliteDeliveryBackend:
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
+    )
+    return backend
+
+
 class _RaisingPort:
     def deliver(self, request: DeliveryRequest) -> DeliveryReceipt:
         raise RuntimeError("port implosion")
@@ -193,10 +205,7 @@ def test_daemon_pending_at_budget_skips_with_do_not_retry(
 
     db_path = tmp_path / "c7b_budget.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     # Pre-increment attempt_count beyond the budget.
     backend.increment_attempt(request.request_id, at=datetime.now(tz=UTC))
     backend.increment_attempt(request.request_id, at=datetime.now(tz=UTC))
@@ -227,10 +236,7 @@ def test_daemon_in_flight_outcome_returns_in_flight_owner(
 
     db_path = tmp_path / "c7b_inflight.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.set_lifecycle_state(
         request.request_id, DeliveryLifecycleState.IN_FLIGHT,
         at=datetime.now(tz=UTC),
@@ -270,10 +276,7 @@ def test_daemon_port_raises_falls_back_to_unknown(
 
     db_path = tmp_path / "c7b_port_raises.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
 
     with caplog.at_level(logging.INFO, logger="mind_runtime.delivery.daemon"):
         daemon = DaemonPass(backend=backend, port=_RaisingPort(), retry_budget=3)
@@ -299,10 +302,7 @@ def test_persistence_record_receipt_different_bytes_raises(
     db_path = tmp_path / "c7b_receipt_collision.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     receipt = _receipt(request)
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -412,10 +412,7 @@ def test_persistence_record_provider_receipt_ref_validation(
 
     db_path = tmp_path / "c7b_ref.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     with pytest.raises(ValueError, match="non-empty"):
         backend.record_provider_receipt_ref(
             request.request_id, provider_receipt_ref="",
@@ -433,10 +430,7 @@ def test_persistence_record_receipt_validation(
     db_path = tmp_path / "c7b_recval.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     receipt = _receipt(request)
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     with pytest.raises(ValueError, match="request_id"):
         backend.record_receipt(
             receipt, request_id="",
@@ -544,10 +538,7 @@ def test_persistence_record_attempt_idempotent(
 
     db_path = tmp_path / "c7b_att_idem.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     created = backend.record_attempt(
         attempt_id="att-1",
         request_id=request.request_id,
@@ -581,10 +572,7 @@ def test_persistence_attempts_for_request_empty(
 
     db_path = tmp_path / "c7b_att_empty.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         assert backend.attempts_for_request(request.request_id) == ()
     finally:
@@ -685,10 +673,7 @@ def test_persistence_durable_request_loads_validated(
 
     db_path = tmp_path / "c7b_full.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.set_lifecycle_state(
         request.request_id, DeliveryLifecycleState.IN_FLIGHT,
         at=datetime.now(tz=UTC),
@@ -716,10 +701,7 @@ def test_daemon_carrier_unknown_yields_unknown_state(
 
     db_path = tmp_path / "c7b_carrier_unknown.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
 
     class _UnknownPort:
         def deliver(self, request: DeliveryRequest) -> DeliveryReceipt:
@@ -755,10 +737,7 @@ def test_daemon_pending_with_live_in_flight_outcome_branch(
 
     db_path = tmp_path / "c7b_inflight2.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     # Pre-set the row to IN_FLIGHT with attempt_count > 0 so
     # compute_retry_decision returns reconcile_first, not can_retry.
     backend.set_lifecycle_state(
@@ -811,10 +790,7 @@ def test_daemon_unsent_receipt_yields_rejected(
 
     db_path = tmp_path / "c7b_unsent.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     receipt = _receipt(request, status=DeliveryStatus.UNSENT, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
@@ -839,10 +815,7 @@ def test_daemon_sent_receipt_with_collision(
 
     db_path = tmp_path / "c7b_collision.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     receipt = _receipt(request)
     # Persist once, then call _apply_receipt — the second call
     # inside _apply_receipt raises ValueError, which is caught
@@ -876,10 +849,7 @@ def test_daemon_collision_when_receipt_persisted_with_different_attempt(
 
     db_path = tmp_path / "c7b_collision2.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     receipt = _receipt(request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
@@ -959,10 +929,7 @@ def test_persistence_reopen_fails_when_receipt_status_corrupt(
     db_path = tmp_path / "c7b_bad_status.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     receipt = _receipt(request, receipt_id="recpt-bad")
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -1091,10 +1058,7 @@ def test_persistence_receipt_reopen_corrupt_sync(
     db_path = tmp_path / "c7b_corrupt_rec_sync.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     receipt = _receipt(request, receipt_id="recpt-bad-sync")
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -1123,10 +1087,7 @@ def test_persistence_attempt_reason_codes_load_failure(
 
     db_path = tmp_path / "c7b_att_bad_load.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-bad-load", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1169,10 +1130,7 @@ def test_persistence_set_lifecycle_state_at_validation(
 
     db_path = tmp_path / "c7b_at.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         with pytest.raises(ValueError, match="aware UTC"):
             backend.set_lifecycle_state(
@@ -1191,10 +1149,7 @@ def test_persistence_record_attempt_ended_at_validation(
 
     db_path = tmp_path / "c7b_ended.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         with pytest.raises(ValueError, match="aware UTC"):
             backend.record_attempt(
@@ -1245,10 +1200,7 @@ def test_persistence_load_request_corrupt_payload_type(
 
     db_path = tmp_path / "c7b_load_bad_payload.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.close()
     del backend
     # Replace the payload with a non-bytes value.
@@ -1275,10 +1227,7 @@ def test_persistence_get_attempt_corrupt_reason_codes(
 
     db_path = tmp_path / "c7b_load_bad_reasons.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-bad-r3", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1389,10 +1338,7 @@ def test_persistence_record_receipt_returns_false_on_idempotent(
     db_path = tmp_path / "c7b_rec_false.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     receipt = _receipt(request)
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         first = backend.record_receipt(
             receipt, request_id=request.request_id,
@@ -1475,10 +1421,7 @@ def test_persistence_get_attempt_returns_row(
 
     db_path = tmp_path / "c7b_get_att.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-1", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1507,10 +1450,7 @@ def test_daemon_apply_receipt_sent_no_delivered_at(
 
     db_path = tmp_path / "c7b_no_dt.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     receipt = _receipt(request, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
