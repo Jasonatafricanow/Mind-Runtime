@@ -566,7 +566,9 @@ def _decode_thread(payload: str) -> MemoryThread:
         ]
         all_ids = [str(event["memory_id"]) for event in legacy_events if event.get("memory_id")]
         unique_all = tuple(dict.fromkeys(all_ids))
-        data["origin_memory_ids"] = tuple(dict.fromkeys(opened))[:MAX_THREAD_ORIGIN_SUPPORT] or unique_all[:1]
+        data["origin_memory_ids"] = (
+            tuple(dict.fromkeys(opened))[:MAX_THREAD_ORIGIN_SUPPORT] or unique_all[:1]
+        )
         data["current_support_ids"] = unique_all[-MAX_THREAD_CURRENT_SUPPORT:]
         data["working_summary"] = None
         data["mature"] = False
