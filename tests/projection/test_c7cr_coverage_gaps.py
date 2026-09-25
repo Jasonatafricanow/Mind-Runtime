@@ -9,7 +9,6 @@ locked at 100% line + branch coverage.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,7 +28,6 @@ from mind_runtime.contracts import (
 from mind_runtime.delivery import (
     DeliveryReceipt,
     DeliveryRequest,
-    SqliteDeliveryBackend,
     make_message_id,
     make_request_id,
 )
