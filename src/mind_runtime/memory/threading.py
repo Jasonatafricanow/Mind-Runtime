@@ -181,8 +181,8 @@ class ThreadAutoUpdateService:
                 changed_by_id[updated.thread_id] = updated
 
         # Thread is a temporary projection. Once the same logical line has an
-        # accepted higher-level projection, remove it from the active working
-        # set instead of maintaining two live logical products.
+        # accepted higher-level projection, delete the lower projection instead
+        # of maintaining two copies of the same logical product.
         if self._projection_compiler is not None:
             for thread in self._product.list_threads(scope, include_suppressed=True):
                 if (
@@ -193,12 +193,14 @@ class ThreadAutoUpdateService:
                     baseline_id = self._projection_compiler.compile(thread)
                     if baseline_id is None:
                         continue
-                    compiled = self._product.compile_thread(
+                    self._product.retire_compiled_thread(
                         thread.thread_id,
                         baseline_id=baseline_id,
-                        at=at,
                     )
-                    changed_by_id[compiled.thread_id] = compiled
+                    # Keep the affected snapshot in the return value for turn
+                    # tracing; the projection itself no longer exists in the
+                    # active/product store after successful compilation.
+                    changed_by_id[thread.thread_id] = thread
 
         return tuple(changed_by_id.values())
 
