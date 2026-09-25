@@ -292,5 +292,42 @@ $$\text{expressive\_warmth} = 0.55 \times \text{bias} + 0.50 \times \text{closen
 6. **Authority Separation Invariant**:
    `SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION`. Sadness is internal affect modulation; ActionPolicy exclusively owns action permissions.
 
+## 13. Initiative Admission Gate Implementation Pattern
+
+Task: `MR-INITIATIVE-ADMISSION-GATE-V1-01`  
+ADR: `docs/adr/0030-bounded-intent-engine-initiative-admission-gate.md`  
+Base SHA: `9b46d663ae9d8595357c16b2e71b12ae6ec017d8`  
+Verdict: `INITIATIVE_ADMISSION_GATE_V1_READY_CONFIG_PENDING`
+
+### 13.1 Causal Architecture
+```text
+domain-specific Dynamics root
+→ domain Intent strength
+→ independent Surface.initiative admission gate
+→ admitted Intent candidate
+→ existing ActionPolicy
+→ existing downstream lifecycle
+```
+
+### 13.2 Key Rules and Patterns
+1. **Post-Domain Evaluation Sequence**:
+   - Compute and clamp domain score from single direct root (`agent.affect.sharing_urge` or `agent.affect.curiosity`).
+   - If domain score < `minimum_strength`, intent is not admitted due to domain threshold; gate is not evaluated.
+   - If domain score >= `minimum_strength`, evaluate independent `Surface.initiative` admission gate against `minimum_initiative`.
+   - Domain score is preserved on trace regardless of gate verdict (`trace.final_strength`).
+2. **Conditional Overlap Policy (`ROOT_OVERLAP_POLICY = "CONDITIONAL"`)**:
+   - Independent admission gate inspection (`minimum_initiative`) is allowed.
+   - Direct scoring weight (`surface_control_weights`) remains strictly forbidden and rejected.
+3. **Lineage Fail-Closed**:
+   - Surface unavailable → `surface_unavailable`
+   - Malformed/tampered surface → `surface_invalid`
+   - Stale/mismatched runtime, interaction, persona, projection, or state version → `surface_stale_or_mismatch`
+4. **Downstream Isolation**:
+   - Gate rejection results in `candidates=()`, suppressing downstream ActionPolicy, lifecycle admission, and WakeSignal emission.
+   - ActionPolicy, Ticker, Surface recipe, expression map, and certified manifest remain untouched.
+5. **Persistence Compatibility**:
+   - Legacy `ruleset_ref` byte-identical when `minimum_initiative is None`.
+   - Legacy SQLite JSON `surface_use` byte-identical when `surface_admission is None`.
+
 
 

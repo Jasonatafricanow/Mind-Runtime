@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 
 from mind_runtime.contracts.common import (
     SyncFields,
@@ -113,6 +114,61 @@ class IntentScoreContribution:
             raise ValueError("amount must be numeric")
 
 
+VALID_INITIATIVE_ADMISSION_OUTCOMES = frozenset(
+    {
+        "passed",
+        "below_minimum",
+        "surface_unavailable",
+        "surface_stale_or_mismatch",
+        "surface_invalid",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class InitiativeAdmissionTrace:
+    """Explanation for an independent Surface.initiative admission gate evaluation."""
+
+    minimum: float
+    observed: float | None
+    outcome: str
+    admission_validation_ref: str
+    control: str = "initiative"
+    comparator: str = "gte"
+
+    def __post_init__(self) -> None:
+        if self.control != "initiative":
+            raise ValueError("control must be 'initiative'")
+        if self.comparator != "gte":
+            raise ValueError("comparator must be 'gte'")
+        if (
+            isinstance(self.minimum, bool)
+            or not isinstance(self.minimum, (int, float))
+            or not isfinite(self.minimum)
+        ):
+            raise ValueError("minimum must be a finite numeric value")
+        if not 0.0 < float(self.minimum) <= 1.0:
+            raise ValueError("minimum must be in (0, 1]")
+        if self.observed is not None:
+            if (
+                isinstance(self.observed, bool)
+                or not isinstance(self.observed, (int, float))
+                or not isfinite(self.observed)
+            ):
+                raise ValueError("observed must be a finite numeric value or None")
+            if not 0.0 <= float(self.observed) <= 1.0:
+                raise ValueError("observed must be in [0, 1]")
+        if self.outcome not in VALID_INITIATIVE_ADMISSION_OUTCOMES:
+            raise ValueError(f"outcome must be one of {sorted(VALID_INITIATIVE_ADMISSION_OUTCOMES)}")
+        if self.outcome in ("passed", "below_minimum"):
+            if self.observed is None:
+                raise ValueError(f"observed must not be None when outcome is {self.outcome!r}")
+        else:
+            if self.observed is not None:
+                raise ValueError(f"observed must be None when outcome is {self.outcome!r}")
+        require_non_empty(self.admission_validation_ref, "admission_validation_ref")
+
+
 @dataclass(frozen=True, slots=True)
 class IntentScoreTrace:
     """Immutable explanation for one admitted or rejected Intent rule."""
@@ -133,6 +189,7 @@ class IntentScoreTrace:
     surface_weights: tuple[tuple[str, float], ...] = ()
     surface_recipe_ref: str | None = None
     ruleset_ref: str | None = None
+    surface_admission: InitiativeAdmissionTrace | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -158,6 +215,10 @@ class IntentScoreTrace:
             require_non_empty(self.surface_dependency_digest, "surface_dependency_digest")
         if self.overlap_validation_ref is not None:
             require_non_empty(self.overlap_validation_ref, "overlap_validation_ref")
+        if self.surface_admission is not None and not isinstance(
+            self.surface_admission, InitiativeAdmissionTrace
+        ):
+            raise ValueError("surface_admission must be an InitiativeAdmissionTrace")
 
 
 @dataclass(frozen=True, slots=True)

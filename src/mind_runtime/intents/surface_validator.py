@@ -16,7 +16,12 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from mind_runtime.surface.recipe import MANIFEST
+from mind_runtime.surface.recipe import (
+    CANDIDATE_RECIPE_DIGEST,
+    CANDIDATE_RECIPE_ID,
+    CANDIDATE_RECIPE_VERSION,
+    MANIFEST,
+)
 
 ELIGIBLE_INTENT_SURFACE_CONTROLS = frozenset(
     {"contact_seeking", "initiative", "confrontation"}
@@ -52,6 +57,114 @@ def overlap_validation_reference(rule: Any) -> str:
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
     ).encode("utf-8")).hexdigest()
     return f"overlap-valid:{digest}"
+
+
+def validate_initiative_gate_rule(rule: Any) -> None:
+    """Validate that an initiative-gated rule strictly adheres to the frozen V1 shape."""
+    min_init = (
+        rule.get("minimum_initiative")
+        if isinstance(rule, Mapping)
+        else getattr(rule, "minimum_initiative", None)
+    )
+    if min_init is None:
+        return
+
+    if isinstance(min_init, bool) or not isinstance(min_init, (int, float)) or not math.isfinite(min_init):
+        raise ValueError("minimum_initiative must be a finite numeric value, not bool")
+    min_val = float(min_init)
+    if not 0.0 < min_val <= 1.0:
+        raise ValueError("minimum_initiative must be in (0, 1]")
+
+    kind = rule.get("kind") if isinstance(rule, Mapping) else getattr(rule, "kind", None)
+    if kind not in ("spontaneous_share", "proactive_inquiry"):
+        raise ValueError(
+            f"minimum_initiative is only supported for 'spontaneous_share' and 'proactive_inquiry', got {kind!r}"
+        )
+
+    scw = (
+        rule.get("surface_control_weights", ())
+        if isinstance(rule, Mapping)
+        else getattr(rule, "surface_control_weights", ())
+    )
+    if scw and len(scw) > 0:
+        raise ValueError("surface_control_weights must be empty for initiative-gated rule")
+
+    event_kind = rule.get("event_kind") if isinstance(rule, Mapping) else getattr(rule, "event_kind", None)
+    if event_kind is not None:
+        raise ValueError("event_kind must be None for initiative-gated rule")
+
+    event_bonus = rule.get("event_bonus", 0.0) if isinstance(rule, Mapping) else getattr(rule, "event_bonus", 0.0)
+    if (
+        isinstance(event_bonus, bool)
+        or not isinstance(event_bonus, (int, float))
+        or not math.isfinite(event_bonus)
+        or float(event_bonus) != 0.0
+    ):
+        raise ValueError("event_bonus must be 0.0 for initiative-gated rule")
+
+    due_at = rule.get("due_at_attribute") if isinstance(rule, Mapping) else getattr(rule, "due_at_attribute", None)
+    if due_at is not None:
+        raise ValueError("due_at_attribute must be None for initiative-gated rule")
+
+    dw = (
+        rule.get("dimension_weights", ())
+        if isinstance(rule, Mapping)
+        else getattr(rule, "dimension_weights", ())
+    )
+    dw_items = list(dw.items()) if isinstance(dw, Mapping) else list(dw)
+
+    expected_root = (
+        "agent.affect.sharing_urge" if kind == "spontaneous_share" else "agent.affect.curiosity"
+    )
+    if len(dw_items) != 1:
+        raise ValueError(
+            f"initiative-gated rule for {kind!r} must have exactly one direct root: {expected_root!r}"
+        )
+    dim_name, dim_weight = dw_items[0]
+    if dim_name != expected_root:
+        raise ValueError(
+            f"initiative-gated rule for {kind!r} must have direct root {expected_root!r}, got {dim_name!r}"
+        )
+    if isinstance(dim_weight, bool) or not isinstance(dim_weight, (int, float)) or not math.isfinite(dim_weight):
+        raise ValueError("direct root weight must be finite numeric")
+    if float(dim_weight) <= 0:
+        raise ValueError("direct root weight must be positive")
+
+
+def admission_validation_reference(rule: Any) -> str:
+    """Bind the admitted initiative gate declaration to the exact frozen root graph and recipe."""
+    validate_initiative_gate_rule(rule)
+    rule_id = rule.get("rule_id") if isinstance(rule, Mapping) else getattr(rule, "rule_id")
+    kind = rule.get("kind") if isinstance(rule, Mapping) else getattr(rule, "kind")
+    min_init = (
+        rule.get("minimum_initiative")
+        if isinstance(rule, Mapping)
+        else getattr(rule, "minimum_initiative")
+    )
+    dw = (
+        rule.get("dimension_weights", ())
+        if isinstance(rule, Mapping)
+        else getattr(rule, "dimension_weights", ())
+    )
+    dw_items = list(dw.items()) if isinstance(dw, Mapping) else list(dw)
+    direct_roots = sorted(name for name, _ in dw_items)
+
+    payload = {
+        "rule_id": rule_id,
+        "kind": kind,
+        "direct_roots": direct_roots,
+        "control": "initiative",
+        "comparator": "gte",
+        "minimum_initiative": float(min_init),
+        "recipe_id": CANDIDATE_RECIPE_ID,
+        "recipe_version": CANDIDATE_RECIPE_VERSION,
+        "recipe_digest": CANDIDATE_RECIPE_DIGEST,
+        "initiative_transitive_roots": sorted(MANIFEST.get("initiative", {}).get("dynamics", [])),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return f"initiative-gate-valid:{digest}"
 
 
 def validate_intent_rule_surface_overlap(rule: Any) -> None:

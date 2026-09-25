@@ -47,6 +47,7 @@ from mind_runtime.contracts import (
     EmotionalTransitionResult,
     Intent,
     IntentEngineInput,
+    IntentScoreTrace,
     IntentStatus,
     PolicyResources,
     ProjectedMindState,
@@ -275,6 +276,11 @@ class CognitiveTicker:
         if intent_engine._runtime_id != runtime_id:
             raise ValueError("intent engine runtime_id must match ticker runtime_id")
         self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
+        self._last_intent_traces: tuple[IntentScoreTrace, ...] = ()
+
+    @property
+    def last_intent_traces(self) -> tuple[IntentScoreTrace, ...]:
+        return self._last_intent_traces
 
     def get_pending_wake_context(self, wake_id: str) -> dict[str, Any] | None:
         return self._pending_wake_contexts.get(wake_id)
@@ -323,6 +329,16 @@ class CognitiveTicker:
                 persona_content_digest=self._persona.persona_content_digest,
             )
         )
+        self._last_intent_traces = engine_result.traces
+        for score_trace in engine_result.traces:
+            if score_trace.surface_admission is not None and not score_trace.admitted:
+                self._orchestrator.trace.record(
+                    interaction_id,
+                    "initiative_gate_rejected",
+                    ref=score_trace.intent_id,
+                    outcome=score_trace.surface_admission.outcome,
+                    at=now,
+                )
         persisted_rows = self._persist_projection(projected)
         counters = _MutableCounters(
             interaction_id=interaction_id,

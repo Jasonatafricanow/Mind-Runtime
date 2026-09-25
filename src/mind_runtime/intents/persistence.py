@@ -168,15 +168,17 @@ def _intent_from_row(row: sqlite3.Row) -> Intent:
 def _surface_use_to_json(trace: IntentScoreTrace | None) -> str | None:
     if trace is None:
         return None
-    return json.dumps({
-        "trace_id": trace.trace_id, "rule_id": trace.rule_id,
+    payload: dict[str, object] = {
+        "trace_id": trace.trace_id,
+        "rule_id": trace.rule_id,
         "intent_id": trace.intent_id,
         "contributions": [
             [part.source_kind, part.source_ref, part.amount] for part in trace.contributions
         ],
         "unclamped_score": trace.unclamped_score,
         "final_strength": trace.final_strength,
-        "admitted": trace.admitted, "reason_codes": list(trace.reason_codes),
+        "admitted": trace.admitted,
+        "reason_codes": list(trace.reason_codes),
         "created_at": trace.created_at.isoformat(),
         "surface_controls_ref": trace.surface_controls_ref,
         "surface_dependency_digest": trace.surface_dependency_digest,
@@ -184,7 +186,17 @@ def _surface_use_to_json(trace: IntentScoreTrace | None) -> str | None:
         "surface_weights": [list(pair) for pair in trace.surface_weights],
         "surface_recipe_ref": trace.surface_recipe_ref,
         "ruleset_ref": trace.ruleset_ref,
-    }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    }
+    if trace.surface_admission is not None:
+        payload["surface_admission"] = {
+            "control": trace.surface_admission.control,
+            "comparator": trace.surface_admission.comparator,
+            "minimum": trace.surface_admission.minimum,
+            "observed": trace.surface_admission.observed,
+            "outcome": trace.surface_admission.outcome,
+            "admission_validation_ref": trace.surface_admission.admission_validation_ref,
+        }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def _surface_use_from_json(raw: str | None, scope: Scope) -> IntentScoreTrace | None:
@@ -194,18 +206,37 @@ def _surface_use_from_json(raw: str | None, scope: Scope) -> IntentScoreTrace | 
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("evidence must be an object")
+        surface_admission = None
+        if "surface_admission" in data and data["surface_admission"] is not None:
+            adm_data = data["surface_admission"]
+            from mind_runtime.contracts.intent import InitiativeAdmissionTrace
+
+            surface_admission = InitiativeAdmissionTrace(
+                control=adm_data["control"],
+                comparator=adm_data["comparator"],
+                minimum=adm_data["minimum"],
+                observed=adm_data["observed"],
+                outcome=adm_data["outcome"],
+                admission_validation_ref=adm_data["admission_validation_ref"],
+            )
         return IntentScoreTrace(
-            trace_id=data["trace_id"], scope=scope,
-            rule_id=data["rule_id"], intent_id=data["intent_id"],
+            trace_id=data["trace_id"],
+            scope=scope,
+            rule_id=data["rule_id"],
+            intent_id=data["intent_id"],
             contributions=tuple(IntentScoreContribution(*part) for part in data["contributions"]),
-            unclamped_score=data["unclamped_score"], final_strength=data["final_strength"],
-            admitted=data["admitted"], reason_codes=tuple(data["reason_codes"]),
+            unclamped_score=data["unclamped_score"],
+            final_strength=data["final_strength"],
+            admitted=data["admitted"],
+            reason_codes=tuple(data["reason_codes"]),
             created_at=datetime.fromisoformat(data["created_at"]),
             surface_controls_ref=data["surface_controls_ref"],
             surface_dependency_digest=data["surface_dependency_digest"],
             overlap_validation_ref=data["overlap_validation_ref"],
             surface_weights=tuple(tuple(pair) for pair in data["surface_weights"]),
-            surface_recipe_ref=data["surface_recipe_ref"], ruleset_ref=data["ruleset_ref"],
+            surface_recipe_ref=data["surface_recipe_ref"],
+            ruleset_ref=data["ruleset_ref"],
+            surface_admission=surface_admission,
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("invalid durable Intent Surface-use evidence") from exc

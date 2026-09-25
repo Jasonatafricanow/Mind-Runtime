@@ -277,6 +277,41 @@ Expression warmth branch is fully verified and marked `CLOSED`.
 - **Authority Separation Invariant**:
   `SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT = "SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION"`. Sadness is internal affect modulation, not an inaction policy verdict. ActionPolicy exclusively owns action permission.
 
+### Initiative Admission Gate V1 closure boundary
 
+Implemented at task `MR-INITIATIVE-ADMISSION-GATE-V1-01` (Base SHA: `9b46d663ae9d8595357c16b2e71b12ae6ec017d8`, ADR-0030: `docs/adr/0030-bounded-intent-engine-initiative-admission-gate.md`).
 
+#### 1. Causal Pipeline
+```text
+domain-specific Dynamics root
+→ domain Intent strength
+→ independent Surface.initiative admission gate
+→ admitted Intent candidate
+→ existing ActionPolicy
+→ existing downstream lifecycle
+```
 
+#### 2. Key Architecture Invariants
+1. **Separation of Motivation and Behavioral Threshold**:
+   Domain strength continues to answer "How strongly does the agent want to perform this specific action?" (`agent.affect.sharing_urge` for `spontaneous_share`, `agent.affect.curiosity` for `proactive_inquiry`).
+   `Surface.initiative` answers "Does the agent currently possess enough overall initiative to self-start this turn?"
+2. **Domain Score Preservation**:
+   Gated rules evaluate and clamp domain score first. The domain strength is preserved identically across gate pass, below-threshold, and lineage failures. Initiative never alters or multiplies domain strength, nor adds score contributions (`contributions` contain zero `surface` or `initiative` entries).
+3. **Motive Gating Scope**:
+   Strictly restricted to `spontaneous_share` and `proactive_inquiry`. `reach_out` (longing root) remains ungated by initiative. Reactive and scheduled intents (`respond`, `scheduled_follow_up`, `assert_boundary`) remain ungated.
+4. **Conditional Overlap Policy (`ROOT_OVERLAP_POLICY = "CONDITIONAL"`)**:
+   Independent admission gate inspection is permitted (`minimum_initiative`), while direct score contribution (`surface_control_weights`) continues to be rejected by `ROOT_OVERLAP`.
+5. **Fail-Closed Lineage Validation**:
+   Admission gate fails closed if `Surface` is unavailable, malformed/tampered (`surface_invalid`), or stale/mismatched across runtime, interaction, persona, projection, or state versions (`surface_stale_or_mismatch`).
+6. **Persistence & Wire Compatibility**:
+   - `ruleset_ref` byte-identical to legacy calculation when `minimum_initiative is None`.
+   - SQLite JSON `surface_use` byte-identical to legacy serialization when `surface_admission is None`.
+7. **Downstream Isolation**:
+   Gate rejection suppresses candidate emission (`candidates=()`), lifecycle admission, policy evaluation, and WakeSignal generation.
+   ActionPolicy, Ticker, Surface recipe, expression map, and certified manifest remain untouched.
+8. **Audit & Activation Status**:
+   - `ROOT_OVERLAP_POLICY = "CONDITIONAL"`
+   - `REJECTED_TRACE_AUDIT_SEAM = "REUSED"`
+   - `INITIATIVE_GATE_CALIBRATION_STATUS = "PROVISIONAL"`
+   - `INITIATIVE_GATE_PRODUCTION_ACTIVATION = "BLOCKED_BY_CONFIG"`
+   - `FINAL_VERDICT = "INITIATIVE_ADMISSION_GATE_V1_READY_CONFIG_PENDING"`
