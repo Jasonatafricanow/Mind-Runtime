@@ -5,8 +5,11 @@ Status: production binding contract
 ## Purpose
 
 LCE may consume MR temporal authority, but it may not reconstruct or invent time
-that MR already owns. The transport is read-only and grants no write authority
-over MR Memory, Evidence, Observation, State, or Thread.
+that MR already owns. Temporal metadata is a read-only extension of the same
+existing LCE consolidation call and the same selected canonical Memory IDs. It
+is not an independently addressable MR-to-LCE transport, factual substrate, or
+selection seam, and it grants no write authority over MR Memory, Evidence,
+Observation, State, or Thread.
 
 ## Two time axes
 
