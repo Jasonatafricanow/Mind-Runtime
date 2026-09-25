@@ -14,6 +14,7 @@ from lce.contracts.external_memory import MemorySubstratePort
 from lce.testing.fake_consolidator import ScriptableFakeConsolidator
 
 from mind_runtime.integrations.lce import (
+    LceThreadProjectionCompiler,
     MemorySelectionError,
     MrMemorySubstrateAdapter,
     open_lce_binding,
@@ -227,6 +228,35 @@ def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
         views = reader.accepted_understandings("performance", limit=3)
         assert len(views) == 1
         assert views[0].region_id == "mr-thread:computer-replacement"
+
+
+def test_projection_compiler_returns_accepted_baseline_identity(plane):
+    binding, roots, _, memories = plane
+    support = tuple(item.memory_id for item in memories[:2])
+    thread = MemoryThread(
+        thread_id="compiler-line",
+        scope=make_scope(),
+        open_question="Will the line compile?",
+        status=ThreadStatus.OPEN,
+        importance=5,
+        created_at=datetime(2026, 9, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
+        touch_count=1,
+        suppressed=False,
+        origin_memory_ids=(support[0],),
+        current_support_ids=support,
+        working_summary="The online line has enough support to become compiled cognition.",
+        mature=True,
+    )
+    compiler = LceThreadProjectionCompiler(binding, enabled=True, **roots)
+    baseline_id = compiler.compile(thread)
+    assert baseline_id is not None
+
+    reader = open_lce_read_binding(binding, make_scope(), enabled=True, **roots)
+    assert reader is not None
+    with reader:
+        views = reader.accepted_understandings("compiled cognition", limit=3)
+        assert views[0].baseline_id == baseline_id
 
 
 def test_thread_handoff_requires_mature_non_abandoned_structure(plane):
