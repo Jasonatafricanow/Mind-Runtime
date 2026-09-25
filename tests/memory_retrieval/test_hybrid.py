@@ -91,7 +91,7 @@ def test_bm25_chinese_query_and_deterministic_limit():
             make_memory("m3", "今天吃了午饭"),
         )
     )
-    hits = provider.search(MemoryRetrievalQuery(memory().scope, "电脑卡", limit=1))
+    hits = provider.search(MemoryRetrievalQuery(memory().scope, "越来越卡", limit=1))
     assert len(hits) == 1
     assert hits[0].memory_id == "m1"
     assert provider.search(MemoryRetrievalQuery(memory().scope, "!!!", limit=5)) == ()
