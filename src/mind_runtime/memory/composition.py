@@ -2,6 +2,7 @@
 
 from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
+from mind_runtime.integrations.lce import LceThreadProjectionCompiler
 from mind_runtime.memory.admission import MemoryAdmissionService
 from mind_runtime.memory.extraction import MemoryExtractor
 from mind_runtime.memory.product import MemoryProductStore
@@ -39,13 +40,30 @@ def build_bound_thread_updates(
     binding: RuntimeBinding,
     *,
     enabled: bool = False,
+    lce_enabled: bool = False,
 ) -> ThreadAutoUpdateService | None:
-    """Compose automatic Thread maintenance over the bound canonical Memory."""
+    """Compose Thread projection maintenance over the bound Memory authority.
+
+    Thread remains useful without LCE. When LCE is enabled, a mature Thread is
+    compiled through the optional adapter and leaves the active Thread set only
+    after LCE returns an accepted Baseline identity.
+    """
     if type(enabled) is not bool:
         raise ValueError("enabled must be bool")
+    if type(lce_enabled) is not bool:
+        raise ValueError("lce_enabled must be bool")
     if not enabled:
         return None
     paths = bind_storage(binding)
     canonical = CanonicalMemoryStore(paths.memory_db)
     product = MemoryProductStore(paths.memory_db, canonical)
-    return ThreadAutoUpdateService(canonical=canonical, product=product)
+    compiler = (
+        LceThreadProjectionCompiler(binding=binding, enabled=True)
+        if lce_enabled
+        else None
+    )
+    return ThreadAutoUpdateService(
+        canonical=canonical,
+        product=product,
+        projection_compiler=compiler,
+    )
