@@ -56,7 +56,7 @@ class ThreadUpdateQueue:
         rows = self.__conn.execute(
             "SELECT memory_id,status,attempts,thread_ref,last_error "
             "FROM thread_update_intents WHERE status != 'succeeded' "
-            "ORDER BY memory_id LIMIT ?",
+            "ORDER BY registered_at,memory_id LIMIT ?",
             (limit,),
         ).fetchall()
         return tuple(ThreadUpdateIntent(*row) for row in rows)
@@ -97,8 +97,9 @@ class ThreadUpdateQueue:
         with self.__conn:
             for memory in memories:
                 self.__conn.execute(
-                    "INSERT OR IGNORE INTO thread_update_intents(memory_id) VALUES(?)",
-                    (memory.memory_id,),
+                    "INSERT OR IGNORE INTO thread_update_intents(memory_id,registered_at) "
+                    "VALUES(?,?)",
+                    (memory.memory_id, memory.committed_at.isoformat()),
                 )
         return self.__conn.total_changes - before
 
