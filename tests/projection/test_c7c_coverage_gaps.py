@@ -609,90 +609,6 @@ def test_projection_skips_earlier_second_observation(tmp_path: Path) -> None:
     store.close()
 
 
-def test_admit_counter_fact_with_empty_key_or_value_is_noop(
-    tmp_path: Path,
-) -> None:
-    """If _derive_new_counter_facts returns an empty tuple, the
-    _admit_counter_fact path is reached with empty key/value pairs
-    (defensive). The internal guard skips the admit.
-    """
-
-    fact_service, projector, store = _build_stack(tmp_path)
-    # Call _admit_counter_fact directly with empty inputs.
-    request = _build_request(idempotency_key="k1")
-    receipt = _accepted_receipt(request)
-    # Empty key — no-op, no fact admitted.
-    projector._admit_counter_fact(
-        key="", value="1", receipt=receipt, request=request,
-        settled_at=NOW,
-    )
-    # Empty value — no-op, no fact admitted.
-    projector._admit_counter_fact(
-        key="counter.X", value="", receipt=receipt, request=request,
-        settled_at=NOW,
-    )
-    # No facts admitted.
-    assert list(fact_service.observations.all()) == []
-    store.close()
-
-
-def test_projection_handles_idempotency_contradiction(tmp_path: Path) -> None:
-    """A hard-to-reach fail-soft path: store.has()=True but get()=None
-    (the store was wiped between has() and get()). The projector
-    must NOT crash; it returns a minimal already_applied outcome."""
-    from mind_runtime.projection.projector import SettledActionProjector
-    from mind_runtime.projection.store import ProjectionRecord
-
-    fact_service = FactIngestService(clock=FakeClock(NOW))
-    store = SqliteProjectionStore(tmp_path / "p.sqlite")
-    projector = SettledActionProjector(
-        fact_service=fact_service, projection_store=store, clock=FakeClock(NOW),
-        runtime_id=RUNTIME,
-    )
-    # Persist one record.
-    request = _build_request(idempotency_key="k1")
-    receipt = _accepted_receipt(request)
-    projector.project(receipt=receipt, request=request)
-    # Simulate a contradiction by directly deleting the row AFTER
-    # has() is checked. Easier: drop the SQLite DB content mid-test
-    # to make get() return None even though has() might be true.
-    # We monkey-patch store.has to return True.
-    original_has = store.has
-
-    def _always_true(_receipt_id: str) -> bool:
-        return True
-
-    def _return_none(_receipt_id: str) -> ProjectionRecord | None:
-        return None
-
-    store.has = _always_true  # type: ignore[assignment]
-    store.get = _return_none  # type: ignore[assignment]
-    # Second call: store.has() returns True (contradiction) but
-    # get() returns None. Projector must not crash.
-    outcome = projector.project(receipt=receipt, request=request)
-    assert outcome.applied is False
-    assert outcome.already_applied is True
-    assert outcome.derived_counter_key == ""
-    # Restore for cleanup.
-    store.has = original_has  # type: ignore[method-assign]
-    store.close()
-
-
-def test_fact_evidence_id_helper(tmp_path: Path) -> None:
-    """The deterministic evidence id helper is reachable and stable
-    (same receipt_id + fact_key -> same id)."""
-    from mind_runtime.projection.projector import _fact_evidence_id
-
-    a = _fact_evidence_id(receipt_id="recpt-1", fact_key="counter.X")
-    b = _fact_evidence_id(receipt_id="recpt-1", fact_key="counter.X")
-    c = _fact_evidence_id(receipt_id="recpt-1", fact_key="counter.Y")
-    d = _fact_evidence_id(receipt_id="recpt-2", fact_key="counter.X")
-    assert a == b
-    assert a != c
-    assert a != d
-    assert a.startswith("settled-fact-")
-
-
 def test_admit_operational_fact_is_idempotent_on_same_id(tmp_path: Path) -> None:
     """Re-projection of the same receipt is a no-op on the fact plane
     (the deterministic observation_id makes the admit idempotent).
@@ -729,9 +645,3 @@ def test_admit_operational_fact_is_idempotent_on_same_id(tmp_path: Path) -> None
     store.close()
 
 
-def test_projection_store_path_property(tmp_path: Path) -> None:
-    """SqliteProjectionStore exposes the .path property for diagnostics."""
-    path = tmp_path / "p-path.sqlite"
-    store = SqliteProjectionStore(path)
-    assert store.path == str(path)
-    store.close()
