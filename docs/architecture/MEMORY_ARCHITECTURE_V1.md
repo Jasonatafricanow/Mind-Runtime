@@ -227,12 +227,14 @@ open_question
 status
 origin support
 current bounded support
+working_summary (optional, already reasoned online)
+mature
 updated_at
 ```
 
-The full history stays in canonical Memory.
-
-If the implementation stores an ever-growing event log inside Thread, that is implementation debt relative to this architecture, not the target model.
+The full history stays in canonical Memory. Thread support is bounded and replaceable;
+legacy append-only event histories are collapsed on read rather than becoming a second
+trajectory store.
 
 ---
 
@@ -266,7 +268,14 @@ The architecture rule is:
 
 Direct handoff still preserves provenance. "Skip duplicate reasoning" does not mean "skip authority checks".
 
-The structure must retain support links to canonical Memory and still follow LCE's Worktree/Baseline acceptance rules.
+For this explicit online path, the mature Thread is already the bounded working
+structure. MR hands its current summary plus stable canonical Memory support to
+LCE without asking another model to rediscover the same relation. LCE revalidates
+the support and advances the immutable Baseline lineage. A second LCE Worktree
+would only duplicate the Thread's already-completed working-state role.
+
+LCE Worktrees remain the draft/confirmation mechanism for the latent-discovery
+path, where the structure was not already formed online.
 
 ### 6.2 Path B — latent discovery from unstructured history
 
@@ -411,13 +420,12 @@ what is current now             what happened
         |                    v                  v
         |           already reasoned       still unstructured
         |                    |                  |
-        |                    v                  |
-        |              direct LCE input         |
+        |                    v                  v
+        |              direct LCE input    LCE discovery
+        |                    |                  |
+        |                    |              LCE Worktree
         |                    |                  |
         |                    +--------+---------+
-        |                             v
-        |                       LCE Worktree
-        |                             |
         |                             v
         |                         Baseline
         |                             |
@@ -587,26 +595,43 @@ This section distinguishes architecture from implementation.
 - vector/embedding projections are rebuildable and non-authoritative.
 - retrieval resolves provider hits back through canonical Memory.
 - retrieval does not itself create factual authority.
-- MR has an optional LCE binding over canonical Memory IDs.
-- LCE has Semantic Blocks, CognitionWorktree, Baseline revisions, invalidation and read-only accepted Understanding.
-- MR now has initial product-attention and Thread primitives.
+- MR has an optional current-LCE binding over canonical Memory IDs.
+- Thread is now a bounded working structure with origin/current support, optional
+  already-reasoned summary, and explicit maturity; it no longer owns
+  PROGRESS/REVERSAL trajectory semantics or an append-only history.
+- a mature Thread can be handed to LCE without another semantic-model call; LCE
+  revalidates every supporting canonical Memory ID before Baseline revision.
+- accepted LCE Baselines can be read back into HistoricalContext without
+  reasoning; when enabled, compiled cognition is placed ahead of raw Memory
+  retrieval inside the shared bounded context budget.
+- LCE standalone V1 still owns its latent Semantic Block -> structure ->
+  Worktree -> Baseline research/runtime path.
 
 ### Current implementation gaps relative to this frozen design
 
-1. **Direct explicit-structure -> LCE handoff is not implemented.**  
-   Current LCE can compile from Memory/evidence, but MR does not yet provide a first-class path that says: "this relation was already reasoned online; continue from it rather than rediscovering it."
+1. **Automatic Thread formation and maturity policy are not yet wired into the turn path.**  
+   The runtime has the bounded Thread primitives and handoff seam, but normal
+   turns do not yet automatically decide when to open/update/mature a Thread.
 
-2. **Thread is currently richer than the target architecture.**  
-   `memory/product.py` currently carries an appendable event history with PROGRESS/REVERSAL semantics. The frozen architecture says Thread should stay a bounded open-line/current-support object; longitudinal interpretation belongs to LCE.
+2. **MR does not yet run standalone LCE V1 latent discovery directly over canonical Memory.**  
+   LCE V1's standalone `ReferenceMemoryStore` combines source-evidence and
+   derived-storage roles. Copying MR canonical Memory into a second factual
+   store would violate the no-second-Memory-authority rule. A future external
+   source adapter must split factual reads from LCE-owned Semantic
+   Block/vector/snapshot/worktree persistence before that path is enabled.
 
-3. **Compiled cognition is not yet the primary historical context path.**  
-   MR's ordinary HistoricalContext path still centers Memory retrieval. The target architecture prefers an accepted LCE Baseline when an applicable compiled understanding already exists.
+3. **Accepted cognition serving remains opt-in.**  
+   `build_memory_history(..., lce_enabled=True)` prefers applicable accepted
+   Baselines, but production composition keeps LCE disabled unless explicitly
+   configured and the current LCE package is installed.
 
 4. **Sleep/idle scheduling is not a correctness requirement.**  
-   It remains a useful discovery mode for unstructured history, not a required pass over all Memory.
+   It remains a useful discovery mode for unstructured history, not a required
+   pass over all Memory.
 
 5. **Memory attention ranking is secondary.**  
-   Attention/surfacing governs foreground visibility of ordinary Memory. It must not replace or flatten an already-compiled longitudinal logic line.
+   Attention/surfacing governs foreground visibility of ordinary Memory. It
+   must not replace or flatten an already-compiled longitudinal logic line.
 
 These are implementation tasks, not reasons to redesign the architecture.
 
