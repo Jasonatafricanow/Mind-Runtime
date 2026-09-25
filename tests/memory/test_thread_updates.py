@@ -8,7 +8,6 @@ from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.memory.thread_updates import DeterministicThreadUpdater, ThreadUpdateWorker
 
-
 BASE = datetime(2026, 9, 25, 8, 0, tzinfo=UTC)
 SCOPE = Scope(ScopeDomain.USER, user_id="u")
 
