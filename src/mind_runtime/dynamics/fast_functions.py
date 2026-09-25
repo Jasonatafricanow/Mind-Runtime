@@ -88,6 +88,13 @@ ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION: Final[str] = (
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
 )
 
+SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT: Final[str] = (
+    "SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION"
+)
+SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION: Final[str] = (
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
+)
+
 
 def validate_diligence_anti_spam_invariant(
     *,
@@ -227,10 +234,15 @@ FAST_FUNCTION_V1_SPECS: Final[tuple[FastStateFunctionSpec, ...]] = (
         state_key="agent.affect.sadness",
         semantic_label="sadness / low mood",
         function_kind=FastFunctionKind.INITIATIVE_SUPPRESSION,
-        primary_consumer="existing initiative / expression path",
+        primary_consumer="Surface initiative / expression warmth path",
         external_action_capable=False,
         status=FastStateStatus.ACTIVE,
-        notes="Suppresses initiative and dampens expressive spontaneity; does not initiate outbound action.",
+        notes=(
+            "Invariant: SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION. "
+            "Surface projection exists (Δinitiative = -0.25 * Δsadness); warmth expression branch "
+            "exists (Δexpressive_warmth = -0.20 * Δsadness -> qualitative warmth); effective "
+            "initiative consumer remains unbound (SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP=FOUND)."
+        ),
     ),
     FastStateFunctionSpec(
         state_key="agent.affect.restlessness",

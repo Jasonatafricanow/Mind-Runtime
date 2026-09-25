@@ -117,7 +117,7 @@ A test that merely obtains both a wake and generated prose in one function call 
 | `sharing_urge` | proactive share | **Architecture closed & verified under MR-SHARING-URGE-PROACTIVE-SHARE-V1-01**: Bound directly via `dimension_weights=(("agent.affect.sharing_urge", 1.0),)` with `surface_control_weights=()`. `Surface.initiative` was rejected because it is a composite control ($0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$), inducing cross-talk from curiosity and sadness. Anti-spam invariant verified: `SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
 | `curiosity` | inquiry/exploration | **Architecture closed & verified under MR-CURIOSITY-PROACTIVE-INQUIRY-V1-01**: Question branch closed via direct binding `dimension_weights=(("agent.affect.curiosity", 1.0),)` and `surface_control_weights=()`. Autonomous retrieval branch remains explicitly deferred (`CURIOSITY_RETRIEVAL_BRANCH=DEFERRED`, `RETRIEVAL_IS_ACTION_AUTHORITY=NO`). Anti-spam invariant verified: `CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY`. Production activation blocked by frozen candidate manifest; calibration provisional. |
 | `anger` | boundary/confrontation | **Audited & closed under MR-ANGER-BOUNDARY-CONFRONTATION-AUDIT-V1-01**: Primary consumer is `Surface confrontation / expression directness path`. Surface/expression branch closed via `agent.affect.anger` → `Surface.confrontation` → Candidate Expression Map v2 (`directness`) → provider envelope. Intent capability exists structurally because confrontation is Intent-eligible, but concrete boundary Intent branch is deferred because no authoritative boundary-event-to-Intent binding exists (`ANGER_INTENT_BRANCH=DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY`, `BOUNDARY_EVENT_TO_INTENT_AUTHORITY=NONE`). Core authority invariant: `ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION`. Final verdict: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`. |
-| `sadness` | initiative suppression | Audit existing initiative/expression coverage; prefer suppression over new action types. |
+| `sadness` | initiative suppression | **Audited under MR-SADNESS-INITIATIVE-SUPPRESSION-AUDIT-V1-01**: Primary consumer is `Surface initiative / expression warmth path`. Surface initiative projection verified ($\Delta\text{initiative} = -0.25 \times \Delta\text{sadness}$). Secondary warmth expression branch closed via `expressive_warmth` ($\Delta = -0.20 \times \Delta\text{sadness}$) → qualitative `warmth` guidance. **Primary function runtime gap found**: No configured or certified IntentRule consumes `Surface.initiative`; ActionPolicy and CognitiveTicker do not gate on initiative; dedicated proactive intents (`spontaneous_share`, `proactive_inquiry`, `reach_out`) use direct Dynamics roots to prevent cross-talk, so sadness produces zero suppression on proactive dispatch (`SADNESS_EFFECTIVE_INITIATIVE_CONSUMER=NONE`, `SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP=FOUND`). Semantic invariant: `SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION`. Final verdict: `SADNESS_SURFACE_CLOSED_PRIMARY_CONSUMER_GAP_FOUND`. |
 | `restlessness` | activity wake | Define activity/wake consumer separately from proactive contact. |
 | `diligence_pressure` | follow-up persistence | Preserve unresolved-item relevance; never shorten reminder cooldown. |
 | `fatigue` | cognitive rest pressure | Remains registered-only until sleep/daydream/offline-consolidation scheduling is explicitly designed and calibrated. |
@@ -255,5 +255,42 @@ Verdict: `ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED`
 - However, `confrontation` shares transitive roots with other controls:
   - Shares `agent.affect.anger` and `persona.behavioral_disposition.expressive_restraint` with `contact_seeking`.
 - `validate_intent_rule_surface_overlap` strictly rejects any Intent rule attempting to combine `contact_seeking` and `confrontation` (`ROOT_OVERLAP`).
+
+## 12. Sadness Implementation and Boundary Choices
+
+Task: `MR-SADNESS-INITIATIVE-SUPPRESSION-AUDIT-V1-01`  
+Base SHA: `1edd62e4e3a97e469c4c8229229950476e86861b`  
+Verdict: `SADNESS_SURFACE_CLOSED_PRIMARY_CONSUMER_GAP_FOUND`
+
+### 12.1 Surface Initiative Branch (Mathematical Projection Verified)
+$$\text{initiative} = 0.60 \times \text{sharing\_urge} + 0.50 \times \text{curiosity} - 0.25 \times \text{sadness}$$
+- Monotonically decreases with rising sadness ($\Delta\text{initiative} = -0.25 \times \Delta\text{sadness}$).
+- Exactly 5 surface controls preserved (`contact_seeking`, `initiative`, `confrontation`, `expressive_warmth`, `expressive_restraint`).
+- Candidate Recipe v2 digest preserved: `4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55`.
+
+### 12.2 Expression Warmth Branch (Closed)
+$$\text{expressive\_warmth} = 0.55 \times \text{bias} + 0.50 \times \text{closeness} - 0.25 \times \text{anger} - 0.20 \times \text{sadness}$$
+- Monotonically decreases with rising sadness ($\Delta\text{expressive\_warmth} = -0.20 \times \Delta\text{sadness}$).
+- Candidate Expression Map v2 maps `expressive_warmth` to qualitative `warmth` (`low` | `moderate` | `high`).
+- `DecisionContextCompiler` compiles `surface_guidance` with `key="warmth"`.
+- `DeterministicContextRenderer` renders `[SURFACE_GUIDANCE] - warmth: <band>` and strictly verifies provider information isolation (zero raw sadness keys or floats).
+- Expression Map v2 digest preserved: `bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3`.
+
+### 12.3 Effective Consumer Gap (`SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP = FOUND`)
+1. **Unbound Intermediate Control**: While `initiative` is declared Intent-eligible in `ELIGIBLE_INTENT_SURFACE_CONTROLS`, zero configured or certified Intent rules consume it (`INITIATIVE_INTENT_RULE = "NONE"`).
+2. **ActionPolicy and Ticker Independence**: Neither `DeterministicActionPolicy` nor `CognitiveTicker` gates or modulates on `initiative` (`ACTION_POLICY_CONSUMES_INITIATIVE = "NO"`, `TICKER_CONSUMES_INITIATIVE_AS_GATE = "NO"`).
+3. **Expression Map Independence**: Expression Map does not consume `initiative`.
+4. **Dedicated Intent Cross-Talk Protection**:
+   `spontaneous_share` and `proactive_inquiry` intentionally score from direct Dynamics roots (`agent.affect.sharing_urge` and `agent.affect.curiosity`) without consuming `initiative` to avoid cross-talk. Counterfactual tests confirm:
+   - `SADNESS_SUPPRESSES_SPONTANEOUS_SHARE = NO`
+   - `SADNESS_SUPPRESSES_PROACTIVE_INQUIRY = NO`
+   - `SADNESS_SUPPRESSES_REACH_OUT = NO`
+   - `DEDICATED_INTENT_CROSS_TALK_PROTECTION = PASS`
+   - `INITIATIVE_SUPPRESSION_EFFECTIVE_ON_DEDICATED_INTENTS = NO`
+5. **No Invented Global Inhibition**:
+   The runtime does not invent uncoordinated ad-hoc inhibition mechanisms (ActionPolicy sadness gates, global candidate multipliers, negative WakeSignals, or synthetic "withdraw" actions). Any future primary consumer binding requires a dedicated ADR.
+6. **Authority Separation Invariant**:
+   `SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION`. Sadness is internal affect modulation; ActionPolicy exclusively owns action permissions.
+
 
 
