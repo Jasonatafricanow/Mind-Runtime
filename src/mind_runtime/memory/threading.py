@@ -124,7 +124,7 @@ class ThreadAutoUpdateService:
         *,
         canonical: CanonicalMemoryStore,
         product: MemoryProductStore,
-        minimum_match: float = 0.45,
+        minimum_match: float = 0.30,
     ) -> None:
         if (
             isinstance(minimum_match, bool)
@@ -158,6 +158,7 @@ class ThreadAutoUpdateService:
             support = self._supporting_memories(scope, event.evidence_refs)
             if not support:
                 continue
+            updated: MemoryThread | None
             if signal.action is ThreadSignalAction.TRACK:
                 updated = self._track(scope, signal, support, at)
             else:
