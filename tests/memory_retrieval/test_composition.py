@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -190,7 +191,6 @@ def test_lce_only_history_path_does_not_require_raw_retrieval_provider(tmp_path,
 
 
 def test_history_composer_empty_and_mismatch_paths_are_bounded(tmp_path, monkeypatch):
-    from dataclasses import replace
 
     from mind_runtime.memory import retrieval_composition
 
