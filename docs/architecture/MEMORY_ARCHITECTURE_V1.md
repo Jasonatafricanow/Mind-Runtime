@@ -604,32 +604,37 @@ This section distinguishes architecture from implementation.
 - accepted LCE Baselines can be read back into HistoricalContext without
   reasoning; when enabled, compiled cognition is placed ahead of raw Memory
   retrieval inside the shared bounded context budget.
+- automatic Thread maintenance is wired into the committed turn path. It reuses
+  the already-accepted semantic event from the turn; there is no second Thread
+  classifier/model call. Explicit `thread_action/thread_question/thread_summary`
+  attributes are resolved back to ACTIVE canonical Memory support before a
+  Thread may open, update, mature, or resolve.
+- Thread identity/update is deterministic and bounded: exact/open-question and
+  lexical overlap are used only to choose an existing open Thread; they do not
+  create factual authority. A Thread matures only after an explicit working
+  summary has support beyond its origin.
 - LCE standalone V1 still owns its latent Semantic Block -> structure ->
   Worktree -> Baseline research/runtime path.
 
 ### Current implementation gaps relative to this frozen design
 
-1. **Automatic Thread formation and maturity policy are not yet wired into the turn path.**  
-   The runtime has the bounded Thread primitives and handoff seam, but normal
-   turns do not yet automatically decide when to open/update/mature a Thread.
-
-2. **MR does not yet run standalone LCE V1 latent discovery directly over canonical Memory.**  
+1. **MR does not yet run standalone LCE V1 latent discovery directly over canonical Memory.**  
    LCE V1's standalone `ReferenceMemoryStore` combines source-evidence and
    derived-storage roles. Copying MR canonical Memory into a second factual
    store would violate the no-second-Memory-authority rule. A future external
    source adapter must split factual reads from LCE-owned Semantic
    Block/vector/snapshot/worktree persistence before that path is enabled.
 
-3. **Accepted cognition serving remains opt-in.**  
+2. **Accepted cognition serving remains opt-in.**  
    `build_memory_history(..., lce_enabled=True)` prefers applicable accepted
    Baselines, but production composition keeps LCE disabled unless explicitly
    configured and the current LCE package is installed.
 
-4. **Sleep/idle scheduling is not a correctness requirement.**  
+3. **Sleep/idle scheduling is not a correctness requirement.**  
    It remains a useful discovery mode for unstructured history, not a required
    pass over all Memory.
 
-5. **Memory attention ranking is secondary.**  
+4. **Memory attention ranking is secondary.**  
    Attention/surfacing governs foreground visibility of ordinary Memory. It
    must not replace or flatten an already-compiled longitudinal logic line.
 
