@@ -2137,6 +2137,16 @@ def test_proactive_turn_lifecycle_boundary_and_validation_coverage(tmp_path: Pat
 
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
 
+    # 0. Invalid input to consume_wake
+    with pytest.raises(ValueError, match="wake must be a WakeSignal"):
+        adapter.consume_wake(None)  # type: ignore[arg-type]
+
+    # 0b. Runtime ID mismatch in consume_wake
+    mismatch_wake = replace(wake, wake_id="mismatch-wake", runtime_id="wrong-runtime-id")
+    notif_mismatch = adapter.consume_wake(mismatch_wake)
+    assert notif_mismatch.eligible is False
+    assert notif_mismatch.reason == "rejected:runtime_id_mismatch"
+
     # 1. Invalid input types to begin_proactive_turn
     with pytest.raises(ValueError, match="wake must be a WakeSignal"):
         adapter.begin_proactive_turn(None)  # type: ignore[arg-type]
@@ -2161,6 +2171,13 @@ def test_proactive_turn_lifecycle_boundary_and_validation_coverage(tmp_path: Pat
     assert commit_unknown.status == HostTurnStatus.FAILED
     assert "unknown_wake_id" in commit_unknown.reason_codes
 
+    # 5b. commit_proactive_turn for consumed wake without exec context
+    adapter._consumed_wakes["no-exec-wake"] = wake
+    commit_no_exec = adapter.commit_proactive_turn("no-exec-wake")
+    assert commit_no_exec.status == HostTurnStatus.FAILED
+    assert "missing_authoritative_wake_context" in commit_no_exec.reason_codes
+    adapter._consumed_wakes.pop("no-exec-wake", None)
+
     # 6. Invalid input types to abort_proactive_turn
     with pytest.raises(ValueError, match="wake_id must be a non-empty string"):
         adapter.abort_proactive_turn("")
@@ -2173,6 +2190,19 @@ def test_proactive_turn_lifecycle_boundary_and_validation_coverage(tmp_path: Pat
     # 8. Legitimate turn lifecycle: begin -> guard -> commit -> duplicate commit
     turn_res = adapter.begin_proactive_turn(wake)
     assert turn_res.status == HostTurnStatus.PROCESSING
+
+    # 8b. Guard unavailable branch
+    adapter._expression_preparer = None
+    orig_guard = orchestrator.expression_guard
+    orchestrator.expression_guard = None
+    adapter._pending_exec_contexts["fake-wake"] = adapter._pending_exec_contexts[wake.wake_id]
+    adapter._consumed_wakes["fake-wake"] = wake
+    guard_none = adapter.guard_proactive_prose("fake-wake", "prose")
+    assert guard_none.status == HostTurnStatus.FAILED
+    assert "guard_unavailable" in guard_none.reason_codes
+    adapter._pending_exec_contexts.pop("fake-wake", None)
+    adapter._consumed_wakes.pop("fake-wake", None)
+    orchestrator.expression_guard = orig_guard
 
     guard_res = adapter.guard_proactive_prose(wake.wake_id, "Hey, how are you?")
     assert guard_res.status == HostTurnStatus.PROCESSING
