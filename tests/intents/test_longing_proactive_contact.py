@@ -2120,3 +2120,92 @@ def test_abort_proactive_turn_without_lifecycle_fails_closed(tmp_path: Path):
     assert abort_res_no_exec.outcome == HostStatus.FAILED
     assert "intent_authority_unavailable" in abort_res_no_exec.reason_codes
     assert abort_res_no_exec.decision_context_ref is None
+
+
+def test_proactive_turn_lifecycle_boundary_and_validation_coverage(tmp_path: Path) -> None:
+    """Verify input validation, unknown wake handling, and duplicate replay handling in proactive turn adapter."""
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="fixture-user")
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+
+    # 1. Invalid input types to begin_proactive_turn
+    with pytest.raises(ValueError, match="wake must be a WakeSignal"):
+        adapter.begin_proactive_turn(None)  # type: ignore[arg-type]
+
+    # 2. Invalid input types to guard_proactive_prose
+    with pytest.raises(ValueError, match="wake_id must be a non-empty string"):
+        adapter.guard_proactive_prose("", "some prose")
+    with pytest.raises(ValueError, match="prose must be a string"):
+        adapter.guard_proactive_prose("wake-1", None)  # type: ignore[arg-type]
+
+    # 3. guard_proactive_prose for unknown wake
+    guard_unknown = adapter.guard_proactive_prose("unknown-wake", "prose")
+    assert guard_unknown.status == HostTurnStatus.FAILED
+    assert "missing_authoritative_wake_context" in guard_unknown.reason_codes
+
+    # 4. Invalid input types to commit_proactive_turn
+    with pytest.raises(ValueError, match="wake_id must be a non-empty string"):
+        adapter.commit_proactive_turn("")
+
+    # 5. commit_proactive_turn for unknown wake
+    commit_unknown = adapter.commit_proactive_turn("unknown-wake")
+    assert commit_unknown.status == HostTurnStatus.FAILED
+    assert "unknown_wake_id" in commit_unknown.reason_codes
+
+    # 6. Invalid input types to abort_proactive_turn
+    with pytest.raises(ValueError, match="wake_id must be a non-empty string"):
+        adapter.abort_proactive_turn("")
+
+    # 7. abort_proactive_turn for unknown wake
+    abort_unknown = adapter.abort_proactive_turn("unknown-wake")
+    assert abort_unknown.status == HostTurnStatus.FAILED
+    assert "unknown_wake_id" in abort_unknown.reason_codes
+
+    # 8. Legitimate turn lifecycle: begin -> guard -> commit -> duplicate commit
+    turn_res = adapter.begin_proactive_turn(wake)
+    assert turn_res.status == HostTurnStatus.PROCESSING
+
+    guard_res = adapter.guard_proactive_prose(wake.wake_id, "Hey, how are you?")
+    assert guard_res.status == HostTurnStatus.PROCESSING
+
+    commit_res = adapter.commit_proactive_turn(wake.wake_id)
+    assert commit_res.status == HostTurnStatus.COMMITTED
+
+    # Replay commit: ALREADY_PROCESSED
+    replay_commit = adapter.commit_proactive_turn(wake.wake_id)
+    assert replay_commit.status == HostTurnStatus.ALREADY_PROCESSED
+
+    # Replay abort after commit: ALREADY_PROCESSED
+    replay_abort = adapter.abort_proactive_turn(wake.wake_id, reason="late_abort")
+    assert replay_abort.status == HostTurnStatus.ALREADY_PROCESSED
+
+
+def test_wake_notification_scope_mismatch_rejected(tmp_path: Path) -> None:
+    """Verify that notify_wake returns rejected:scope_mismatch when intent exists in another scope."""
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
+    user1_scope = Scope(domain=ScopeDomain.USER, user_id="user-1")
+    user2_scope = Scope(domain=ScopeDomain.USER, user_id="user-2")
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+
+    report = run_cognitive_tick(orchestrator, scope=user1_scope, now=now)
+    wake1 = report.wake_signal
+    assert wake1 is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+
+    cross_wake = replace(wake1, wake_id="cross-wake-1", scope=user2_scope)
+    notif = adapter.consume_wake(cross_wake)
+    assert notif.eligible is False
+    assert notif.reason == "rejected:scope_mismatch"
