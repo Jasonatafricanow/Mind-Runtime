@@ -83,7 +83,7 @@ MR now freezes three memory timescales:
 - **MR Memory** owns durable remembered events plus product attention/surfacing and optional unresolved Threads;
 - **LCE** owns latent longitudinal structure and hypotheses over the same canonical Memory substrate.
 
-Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread/open-structure state cannot create new factual authority. The frozen architecture also requires incremental cognition: explicit logic already reasoned online should be handed forward to LCE rather than rediscovered later from raw Memory; sleep/idle discovery is for structure that was not already formed. See `docs/architecture/MEMORY_ARCHITECTURE_V1.md` and ADR-0028.
+Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread/open-structure state cannot create new factual authority. With Memory enabled, the post-commit Thread updater reuses the turn's already-accepted semantic event to open, update, mature, or resolve bounded Threads against canonical Memory support; it does not add a second model call. The frozen architecture also requires incremental cognition: explicit logic already reasoned online should be handed forward to LCE rather than rediscovered later from raw Memory; sleep/idle discovery is for structure that was not already formed. See `docs/architecture/MEMORY_ARCHITECTURE_V1.md` and ADR-0028.
 
 ### Turn admission and commit
 

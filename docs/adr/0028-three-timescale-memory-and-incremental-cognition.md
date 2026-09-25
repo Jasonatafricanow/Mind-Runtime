@@ -122,10 +122,20 @@ The architecture is frozen and the explicit online loop is now wired:
 - accepted LCE Baselines can be preferred in MR HistoricalContext, with raw Memory filling the remaining bounded budget;
 - LCE standalone V1 still owns Semantic Blocks, local structure discovery, Worktrees, invalidation and accepted reads for its latent-discovery path.
 
-Two runtime tasks remain intentionally separate: automatic Thread
-formation/maturity policy, and a full latent-discovery adapter that keeps MR as
-the sole factual source instead of copying canonical Memory into LCE's
-standalone ReferenceMemoryStore.
+Automatic Thread maintenance is now part of the committed turn path. It
+reuses the accepted semantic event already produced for that turn, resolves its
+references back to ACTIVE canonical Memory, and updates the bounded Thread only
+after successful turn commit. No second model call is introduced for Thread
+classification, and an aborted/replayed turn does not create a second update.
+
+The production latent-discovery seam now keeps MR as the sole factual source:
+LCE receives canonical Memory views plus a bounded MR-owned temporal context.
+Evidence/source chronology is kept distinct from proposition-valid
+semantic/effective time, and historical cutoffs are based on when MR could know
+the Memory rather than whether a proposition was PAST or FUTURE.
+
+Autonomous idle/nearline neighborhood discovery remains an optional scheduling
+policy, not a missing factual or temporal authority path.
 
 ## Consequence
 

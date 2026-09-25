@@ -4,7 +4,9 @@ from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
 from mind_runtime.memory.admission import MemoryAdmissionService
 from mind_runtime.memory.extraction import MemoryExtractor
+from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
+from mind_runtime.memory.threading import ThreadAutoUpdateService
 from mind_runtime.providers.clock import Clock
 from mind_runtime.runtime_binding import RuntimeBinding, bind_storage
 
@@ -31,3 +33,19 @@ def build_bound_fact_service(
             extractor=extractor,
         )
     return FactIngestService(clock=clock, backend=backend, after_admission=hook)
+
+
+def build_bound_thread_updates(
+    binding: RuntimeBinding,
+    *,
+    enabled: bool = False,
+) -> ThreadAutoUpdateService | None:
+    """Compose automatic Thread maintenance over the bound canonical Memory."""
+    if type(enabled) is not bool:
+        raise ValueError("enabled must be bool")
+    if not enabled:
+        return None
+    paths = bind_storage(binding)
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    return ThreadAutoUpdateService(canonical=canonical, product=product)
