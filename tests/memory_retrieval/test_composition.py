@@ -189,6 +189,152 @@ def test_lce_only_history_path_does_not_require_raw_retrieval_provider(tmp_path,
     assert bundle.episodes[0].external_id == "base-only"
 
 
+def test_history_composer_empty_and_mismatch_paths_are_bounded(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from mind_runtime.memory import retrieval_composition
+
+    roots = dict(production_root=tmp_path / "prod", lab_root=tmp_path / "lab")
+    binding = lab_binding("projection-empty")
+    paths = bind_storage(binding, **roots)
+    db = CanonicalMemoryStore(paths.memory_db)
+    db._commit((memory(),))
+    product = retrieval_composition.MemoryProductStore(paths.memory_db, db)
+    product.open_thread(
+        thread_id="other-line",
+        scope=memory().scope,
+        open_question="Will an unrelated purchase happen?",
+        supporting_memory_ids=("memory-1",),
+        at=memory().committed_at,
+    )
+    product.close()
+    db.close()
+
+    port = retrieval_composition.build_memory_history(
+        binding,
+        thread_enabled=True,
+        lce_enabled=True,
+        **roots,
+    )
+
+    # Wrong Scope fails before opening any derived read path.
+    values = inputs()
+    values["scope"] = replace(memory().scope, user_id="other")
+    assert port.read(**values) is None
+
+    # No usable current message produces neither Thread nor LCE context.
+    values = inputs()
+    values["observations"] = ()
+    assert port.read(**values) is None
+
+    # A lexical miss does not dump an unrelated active Thread into context.
+    values = inputs()
+    observation = values["observations"][0]
+    values["observations"] = (
+        replace(observation, value={"text": "completely different topic"}),
+    )
+    monkeypatch.setattr(
+        retrieval_composition,
+        "open_lce_read_binding",
+        lambda *args, **kwargs: None,
+    )
+    assert port.read(**values) is None
+
+
+def test_lce_empty_read_paths_do_not_create_context(tmp_path, monkeypatch):
+    from mind_runtime.memory import retrieval_composition
+
+    roots = dict(production_root=tmp_path / "prod", lab_root=tmp_path / "lab")
+    binding = lab_binding("lce-empty")
+    paths = bind_storage(binding, **roots)
+    db = CanonicalMemoryStore(paths.memory_db)
+    db._commit((memory(),))
+    db.close()
+
+    class EmptyReader:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def accepted_understandings(self, current_context, *, limit):
+            return ()
+
+    monkeypatch.setattr(
+        retrieval_composition,
+        "open_lce_read_binding",
+        lambda *args, **kwargs: EmptyReader(),
+    )
+    port = retrieval_composition.build_memory_history(
+        binding,
+        lce_enabled=True,
+        **roots,
+    )
+    assert port.read(**inputs()) is None
+
+    with pytest.raises(TypeError, match="lce_enabled"):
+        retrieval_composition.build_memory_history(binding, lce_enabled=1, **roots)
+
+
+def test_merge_projection_budget_skips_duplicate_and_oversized_items():
+    from mind_runtime.contracts.historical import HistoricalContextBundle, HistoricalContextItem
+    from mind_runtime.memory import retrieval_composition
+
+    scope = memory().scope
+    short = HistoricalContextItem(
+        item_id="same",
+        scope=scope,
+        external_id="same",
+        kind="lce.accepted_understanding",
+        proposition="ok",
+        source_refs=("a",),
+        confidence=None,
+        relevance_hint=1.0,
+    )
+    duplicate = replace(short, proposition="duplicate")
+    oversized = replace(short, item_id="big", external_id="big", proposition="x" * 50)
+    lce = HistoricalContextBundle(
+        bundle_id="lce",
+        scope=scope,
+        origin_runtime_id="runtime-1",
+        episodes=(short,),
+        stable_facts=(),
+        relationship_events=(),
+        pattern_summaries=(),
+        source_refs=("a",),
+        provider_trace="lce",
+    )
+    thread = replace(
+        lce,
+        bundle_id="thread",
+        episodes=(duplicate, oversized),
+        provider_trace="thread",
+    )
+    merged = retrieval_composition._merge_bundles(
+        interaction_id="i",
+        scope=scope,
+        origin_runtime_id="runtime-1",
+        budget=MemorySurfaceBudget(max_items=2, max_characters=4),
+        lce=lce,
+        thread=thread,
+        memory=None,
+    )
+    assert merged is not None
+    assert [item.item_id for item in merged.episodes] == ["same"]
+    assert merged.provider_trace == "lce+thread"
+
+    assert retrieval_composition._merge_bundles(
+        interaction_id="i",
+        scope=scope,
+        origin_runtime_id="runtime-1",
+        budget=MemorySurfaceBudget(max_items=1, max_characters=1),
+        lce=lce,
+        thread=None,
+        memory=None,
+    ) is None
+
+
 def test_enabled_missing_or_mismatched_manifest_fails_closed(tmp_path):
     from mind_runtime.memory.retrieval_composition import build_memory_history
     from mind_runtime.runtime_binding import BindingManifestMismatchError
