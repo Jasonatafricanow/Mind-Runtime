@@ -376,6 +376,7 @@ def default_adapter(
             binding,
             provider=retrieval_provider,
             lce_enabled=lce_enabled,
+            thread_enabled=memory_enabled,
         ),
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)
