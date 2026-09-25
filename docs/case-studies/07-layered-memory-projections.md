@@ -51,9 +51,9 @@ Thread is a temporary cache for already-reasoned online structure that may
 still develop. It is allowed to disappear without deleting history.
 
 LCE Baseline is the stable compiled representation. Once a mature Thread is
-successfully compiled into an accepted Baseline, the higher-level projection
-supersedes the active Thread. MR keeps lineage but does not keep both logical
-products active.
+successfully compiled into an accepted Baseline, MR deletes the temporary
+Thread projection. LCE's stable region identity and supporting Memory IDs keep
+lineage, so the same logical product is not stored twice.
 
 Unstructured history follows a separate path:
 
