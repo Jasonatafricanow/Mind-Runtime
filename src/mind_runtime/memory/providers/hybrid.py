@@ -151,6 +151,79 @@ class PromptHyDEExpander:
         return result.strip()[: self._max_characters]
 
 
+class HyDEFallbackProvider:
+    """Escalate to HyDE only when the primary retrieval result set is sparse.
+
+    A successful primary search remains usable if optional HyDE expansion or
+    its supplemental search fails. HyDE therefore adds recall capacity without
+    turning every search into an LLM call or making the cheaper path less
+    available.
+    """
+
+    def __init__(
+        self,
+        provider: RetrievalProvider,
+        expander: QueryExpander,
+        *,
+        min_results: int = 3,
+        rrf_k: int = 60,
+        candidate_multiplier: int = 4,
+    ) -> None:
+        if type(min_results) is not int or not 1 <= min_results <= 100:
+            raise ValueError("min_results must be an integer in [1, 100]")
+        if type(rrf_k) is not int or rrf_k < 1:
+            raise ValueError("rrf_k must be a positive integer")
+        if type(candidate_multiplier) is not int or not 1 <= candidate_multiplier <= 20:
+            raise ValueError("candidate_multiplier must be an integer in [1, 20]")
+        self._provider = provider
+        self._expander = expander
+        self._min_results = min_results
+        self._rrf_k = rrf_k
+        self._candidate_multiplier = candidate_multiplier
+
+    def search(self, query: MemoryRetrievalQuery) -> tuple[RetrievedMemoryCandidate, ...]:
+        if query.limit == 0:
+            return ()
+        try:
+            original = self._provider.search(query)
+        except Exception as exc:
+            raise RetrievalProviderUnavailable("primary retrieval unavailable before HyDE") from exc
+
+        required = min(query.limit, self._min_results)
+        unique_original = tuple(
+            dict.fromkeys(
+                hit.memory_id
+                for hit in original
+                if isinstance(hit, RetrievedMemoryCandidate)
+            )
+        )
+        if len(unique_original) >= required:
+            return original[: query.limit]
+
+        try:
+            expansion = self._expander.expand(query.text)
+            if not isinstance(expansion, str) or not expansion.strip():
+                raise ValueError("HyDE expander returned empty text")
+            if expansion.strip() == query.text.strip():
+                return original[: query.limit]
+            expanded_limit = _candidate_limit(query.limit, self._candidate_multiplier)
+            hypothetical = self._provider.search(
+                MemoryRetrievalQuery(query.scope, expansion, expanded_limit)
+            )
+        except Exception:
+            return original[: query.limit]
+
+        return _fuse(
+            (
+                ("original", 1.0, original),
+                ("hyde", 1.0, hypothetical),
+            ),
+            limit=query.limit,
+            rrf_k=self._rrf_k,
+            provider_name="hyde-fallback+rrf",
+        )
+
+
 class HyDEAugmentedProvider:
     """Fuse original-query and HyDE-query ranks from the same base provider."""
 
