@@ -217,7 +217,9 @@ class _BoundMemoryHistory:
         scope: Scope,
         clock: datetime,
     ) -> HistoricalContextBundle | None:
-        if context.scope != scope or any(observation.scope != scope for observation in observations):
+        if context.scope != scope or any(
+            observation.scope != scope for observation in observations
+        ):
             return None
         self._verify_manifest()
         lce = self._lce_bundle(
