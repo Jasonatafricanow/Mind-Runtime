@@ -29,12 +29,19 @@ from typing import Protocol, cast, runtime_checkable
 from mind_runtime.contracts import (
     Authority,
     AuthorityLevel,
+    EffectiveWindow,
+    EffectiveWindowKind,
     Evidence,
     Interaction,
     InteractionStatus,
     Observation,
+    ObservationModality,
     Scope,
     ScopeDomain,
+    SemanticDaypart,
+    SemanticPrecision,
+    SemanticRelation,
+    SemanticTime,
     SyncFields,
 )
 from mind_runtime.contracts.common import FrozenMapping
@@ -118,6 +125,13 @@ CREATE TABLE IF NOT EXISTS observations (
     evidence_refs TEXT NOT NULL,
     sync_version INTEGER NOT NULL,
     sync_idem_key TEXT NOT NULL,
+    modality TEXT NOT NULL DEFAULT 'asserted',
+    semantic_relation TEXT NOT NULL DEFAULT 'unresolved',
+    semantic_precision TEXT NOT NULL DEFAULT 'unresolved',
+    semantic_daypart TEXT NOT NULL DEFAULT '',
+    effective_window_kind TEXT NOT NULL DEFAULT 'unresolved',
+    effective_start_at TEXT NULL,
+    effective_end_at TEXT NULL,
     PRIMARY KEY (
         scope_domain, scope_user_id, scope_agent_id, scope_persona_id,
         scope_relationship_id, scope_world_id, scope_interaction_id, id
@@ -220,8 +234,104 @@ def _evidence_from_row(row: sqlite3.Row) -> tuple[Evidence, str]:
     return evidence, row["interaction_id"]
 
 
+def _observation_columns() -> tuple[str, ...]:
+    return (
+        *_SCOPE_COLUMNS,
+        "id",
+        "interaction_id",
+        "origin_runtime_id",
+        "type",
+        "key",
+        "value",
+        "confidence",
+        "observed_at",
+        "evidence_refs",
+        "sync_version",
+        "sync_idem_key",
+        "modality",
+        "semantic_relation",
+        "semantic_precision",
+        "semantic_daypart",
+        "effective_window_kind",
+        "effective_start_at",
+        "effective_end_at",
+    )
+
+
+def _observation_values(observation: Observation) -> tuple[object, ...]:
+    modality_val = observation.modality.value
+    rel_val = observation.semantic_time.relation.value
+    prec_val = observation.semantic_time.precision.value
+    daypart_val = (
+        observation.semantic_time.daypart.value
+        if observation.semantic_time.daypart is not None
+        else ""
+    )
+    if observation.effective_window is None:
+        window_kind_val = "unresolved"
+        start_at_val = None
+        end_at_val = None
+    else:
+        window_kind_val = observation.effective_window.kind.value
+        start_at_val = _format_dt(observation.effective_window.start_at)
+        end_at_val = (
+            _format_dt(observation.effective_window.end_at)
+            if observation.effective_window.end_at is not None
+            else None
+        )
+
+    return (
+        *_scope_values(observation.scope),
+        observation.id,
+        observation.interaction_id,
+        observation.origin_runtime_id,
+        observation.type,
+        observation.key,
+        _to_json(observation.value),
+        observation.confidence,
+        _format_dt(observation.observed_at),
+        _to_json(observation.evidence_refs),
+        observation.sync.version,
+        observation.sync.idempotency_key,
+        modality_val,
+        rel_val,
+        prec_val,
+        daypart_val,
+        window_kind_val,
+        start_at_val,
+        end_at_val,
+    )
+
+
 def _observation_from_row(row: sqlite3.Row) -> Observation:
     scope = _scope_from_row(row)
+    keys = row.keys() if hasattr(row, "keys") else ()
+    modality_val = row["modality"] if "modality" in keys else "asserted"
+    rel_val = row["semantic_relation"] if "semantic_relation" in keys else "unresolved"
+    prec_val = row["semantic_precision"] if "semantic_precision" in keys else "unresolved"
+    daypart_val = row["semantic_daypart"] if "semantic_daypart" in keys else ""
+    window_kind_val = (
+        row["effective_window_kind"] if "effective_window_kind" in keys else "unresolved"
+    )
+    start_at_val = row["effective_start_at"] if "effective_start_at" in keys else None
+    end_at_val = row["effective_end_at"] if "effective_end_at" in keys else None
+
+    modality = ObservationModality(modality_val)
+    daypart = SemanticDaypart(daypart_val) if daypart_val else None
+    semantic_time = SemanticTime(
+        relation=SemanticRelation(rel_val),
+        precision=SemanticPrecision(prec_val),
+        daypart=daypart,
+    )
+    if window_kind_val == "unresolved" or not window_kind_val:
+        effective_window = None
+    else:
+        effective_window = EffectiveWindow(
+            kind=EffectiveWindowKind(window_kind_val),
+            start_at=_parse_dt(start_at_val) if start_at_val else _parse_dt(row["observed_at"]),
+            end_at=_parse_dt(end_at_val) if end_at_val else None,
+        )
+
     return Observation(
         id=row["id"],
         interaction_id=row["interaction_id"],
@@ -232,10 +342,11 @@ def _observation_from_row(row: sqlite3.Row) -> Observation:
         value=_from_json(row["value"]),
         confidence=row["confidence"],
         observed_at=_parse_dt(row["observed_at"]),
-        # The writer always stores a JSON array of string refs; the
-        # Observation contract re-validates them on construction.
         evidence_refs=tuple(cast(list[str], _from_json(row["evidence_refs"]))),
         sync=_sync_from_row(row, scope, row["id"]),
+        modality=modality,
+        semantic_time=semantic_time,
+        effective_window=effective_window,
     )
 
 
@@ -315,6 +426,25 @@ class SqliteFactBackend:
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate_observations()
+
+    def _migrate_observations(self) -> None:
+        """Additive non-destructive migration for observations columns."""
+        rows = self._conn.execute("PRAGMA table_info(observations)").fetchall()
+        existing_cols = {row["name"] for row in rows}
+        new_cols = [
+            ("modality", "TEXT NOT NULL DEFAULT 'asserted'"),
+            ("semantic_relation", "TEXT NOT NULL DEFAULT 'unresolved'"),
+            ("semantic_precision", "TEXT NOT NULL DEFAULT 'unresolved'"),
+            ("semantic_daypart", "TEXT NOT NULL DEFAULT ''"),
+            ("effective_window_kind", "TEXT NOT NULL DEFAULT 'unresolved'"),
+            ("effective_start_at", "TEXT NULL"),
+            ("effective_end_at", "TEXT NULL"),
+        ]
+        with self._conn:
+            for col_name, col_def in new_cols:
+                if col_name not in existing_cols:
+                    self._conn.execute(f"ALTER TABLE observations ADD COLUMN {col_name} {col_def}")
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -401,30 +531,13 @@ class SqliteFactBackend:
         return tuple(_observation_from_row(row) for row in rows)
 
     def save_observation(self, observation: Observation) -> bool:
+        cols = _observation_columns()
+        placeholders = ", ".join("?" * len(cols))
         try:
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO observations ("
-                    f"{', '.join(_SCOPE_COLUMNS)}, id, interaction_id, origin_runtime_id,"
-                    " type, key, value, confidence, observed_at, evidence_refs,"
-                    " sync_version, sync_idem_key"
-                    ") VALUES ("
-                    f"{', '.join('?' * 7)}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-                    ")",
-                    (
-                        *_scope_values(observation.scope),
-                        observation.id,
-                        observation.interaction_id,
-                        observation.origin_runtime_id,
-                        observation.type,
-                        observation.key,
-                        _to_json(observation.value),
-                        observation.confidence,
-                        _format_dt(observation.observed_at),
-                        _to_json(observation.evidence_refs),
-                        observation.sync.version,
-                        observation.sync.idempotency_key,
-                    ),
+                    f"INSERT INTO observations ({', '.join(cols)}) VALUES ({placeholders})",
+                    _observation_values(observation),
                 )
             return True
         except sqlite3.IntegrityError:
@@ -455,6 +568,8 @@ class SqliteFactBackend:
         interaction_id: str,
         observation: Observation,
     ) -> bool:
+        cols = _observation_columns()
+        placeholders = ", ".join("?" * len(cols))
         try:
             with self._conn:
                 self._conn.execute(
@@ -481,27 +596,8 @@ class SqliteFactBackend:
                     ),
                 )
                 self._conn.execute(
-                    "INSERT INTO observations ("
-                    f"{', '.join(_SCOPE_COLUMNS)}, id, interaction_id, origin_runtime_id,"
-                    " type, key, value, confidence, observed_at, evidence_refs,"
-                    " sync_version, sync_idem_key"
-                    ") VALUES ("
-                    f"{', '.join('?' * 7)}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-                    ")",
-                    (
-                        *_scope_values(observation.scope),
-                        observation.id,
-                        observation.interaction_id,
-                        observation.origin_runtime_id,
-                        observation.type,
-                        observation.key,
-                        _to_json(observation.value),
-                        observation.confidence,
-                        _format_dt(observation.observed_at),
-                        _to_json(observation.evidence_refs),
-                        observation.sync.version,
-                        observation.sync.idempotency_key,
-                    ),
+                    f"INSERT INTO observations ({', '.join(cols)}) VALUES ({placeholders})",
+                    _observation_values(observation),
                 )
             return True
         except sqlite3.IntegrityError:

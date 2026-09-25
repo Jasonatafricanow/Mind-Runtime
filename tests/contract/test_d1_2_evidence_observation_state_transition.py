@@ -162,6 +162,9 @@ def test_d1_2_schemas_preserve_frozen_baseline_fields() -> None:
         "evidence_refs",
         "origin_runtime_id",
         "sync",
+        "modality",
+        "semantic_time",
+        "effective_window",
     ]
     assert [field.name for field in fields(StateDefinition)] == [
         "key",

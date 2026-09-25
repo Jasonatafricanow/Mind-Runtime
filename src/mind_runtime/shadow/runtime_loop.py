@@ -71,6 +71,7 @@ from mind_runtime.pipeline.orchestrator import TurnOrchestrator
 from mind_runtime.pipeline.ports import HistoricalContextPort
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.providers.clock import Clock
+from mind_runtime.reality import RealityInputService, build_reality_input
 from mind_runtime.runtime_admission import NamespaceAdmissionAuthority
 from mind_runtime.runtime_binding import RuntimeBinding, resolve_storage_paths
 from mind_runtime.shadow.production_wiring import ProductionShadowTap, ShadowTapReport
@@ -235,6 +236,7 @@ def build_runtime_stack(
     appraisal_producer: SemanticAppraisalProducer | None = None,
     homeostasis_gate: HomeostasisGate | None = None,
     telemetry_sink: TelemetrySinkProtocol | None = None,
+    reality_input: RealityInputService | None = None,
 ) -> tuple[TurnOrchestrator, HermesProductionBridge]:
     """Assemble ONE durable production stack bound to SQLite backends.
 
@@ -336,6 +338,7 @@ def build_runtime_stack(
         historical_context=historical_context,
         slow_plasticity_writer=slow_plasticity_writer,
         telemetry_sink=telemetry_sink,
+        reality_input=reality_input if reality_input is not None else build_reality_input(),
         # MR-RUNTIME-05: enroll the stack in the process-local, per-namespace
         # canonical admission authority — whole turns on this namespace are
         # serialized and each admitted turn refreshes from the durable base.

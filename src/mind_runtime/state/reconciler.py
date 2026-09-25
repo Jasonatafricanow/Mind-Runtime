@@ -105,6 +105,11 @@ def interpret_observation(observation: Observation) -> StateIntent | None:
     )
 
 
+def has_legal_terminal_target(state: RuntimeState, operation: str) -> bool:
+    """Whether a current state accepts the named terminal operation."""
+    return is_current_like(state.status) or state.status == operation
+
+
 @dataclass(frozen=True)
 class ReconcileResult:
     """The outcome of one reconcile pass over the canonical snapshot."""

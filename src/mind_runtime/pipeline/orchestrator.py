@@ -6,7 +6,7 @@ import os
 import threading
 import traceback
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import replace as _replace
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -58,7 +58,11 @@ from mind_runtime.emotional_transition.semantic import (
 )
 from mind_runtime.expression.context import DecisionContextCompiler, DecisionContextCompilerInput
 from mind_runtime.expression.history import NullPreviousExpressionPort
-from mind_runtime.facts.ports import FactAdmissionDisposition, FactIngestPort
+from mind_runtime.facts.ports import (
+    FactAdmissionDisposition,
+    FactIngestPort,
+    RealityAdmissionPort,
+)
 from mind_runtime.facts.service import FactIngestService
 from mind_runtime.homeostasis.contracts import HomeostasisDecision
 from mind_runtime.intents.lifecycle import IntentLifecycleService
@@ -99,6 +103,11 @@ from mind_runtime.pipeline.stubs import (
 )
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.providers.clock import Clock
+from mind_runtime.reality import RealityInputService
+from mind_runtime.reality.eligibility import (
+    StateEligibility,
+    evaluate_state_eligibility,
+)
 from mind_runtime.runtime_admission import AdmissionLease, RuntimeTurnAdmission
 from mind_runtime.situation.builder import SituationBuilder
 from mind_runtime.slow_plasticity.writer import SlowPlasticityWriter
@@ -112,7 +121,11 @@ from mind_runtime.state.persistence import (
     canonical_state_rows_equal,
 )
 from mind_runtime.state.ports import ResolverEffectiveStatePort
-from mind_runtime.state.reconciler import FactualReconciler, interpret_observation
+from mind_runtime.state.reconciler import (
+    FactualReconciler,
+    has_legal_terminal_target,
+    interpret_observation,
+)
 from mind_runtime.state.resolver import EffectiveStateResolver
 
 
@@ -191,6 +204,7 @@ class _Turn:
     decision_context: DecisionContext | None
     expression_outcome: ExpressionOutcome | None
     action_receipt: ActionReceipt | None
+    reality_eligibilities: dict[str, StateEligibility] = field(default_factory=dict)
 
 
 def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None:
@@ -218,6 +232,8 @@ def _mr_thread_trace(phase: str, orchestrator, interaction_id: str = "") -> None
 
 class TurnOrchestrator:
     """Wires the full Product Slice lifecycle with injectable typed ports."""
+
+    _REALITY_TERMINAL_SUFFIXES = frozenset({"cancelled", "completed", "resolved"})
 
     def __init__(
         self,
@@ -253,6 +269,8 @@ class TurnOrchestrator:
         external_memory_authority: object | None = None,
         external_memory_reference_store: object | None = None,
         pending_overlay: PendingWorkingOverlay | None = None,
+        reality_input: RealityInputService | None = None,
+        reality_admission: RealityAdmissionPort | None = None,
         slow_plasticity_writer: SlowPlasticityWriter | None = None,
         telemetry_sink: TelemetrySinkProtocol | None = None,
         turn_admission: RuntimeTurnAdmission | None = None,
@@ -268,6 +286,16 @@ class TurnOrchestrator:
         # When provided, ingest(..., defer_admission=True) routes evidence here
         # instead of directly to fact_ingest.admit().
         self._pending_overlay = pending_overlay
+        # Optional raw-text Reality/Input seam.  When present it produces
+        # typed proposals and delegates their admission back to the factual
+        # plane; it never owns canonical state or cognitive projections.
+        self._reality_input = reality_input
+        if reality_admission is not None:
+            self._reality_admission: RealityAdmissionPort | None = reality_admission
+        elif isinstance(self.fact_ingest, RealityAdmissionPort):
+            self._reality_admission = self.fact_ingest
+        else:
+            self._reality_admission = None
         self._persona = persona
         # D4.7: the default effective state comes from the authoritative
         # EffectiveStateResolver — raw status filtering by consumers is
@@ -522,6 +550,18 @@ class TurnOrchestrator:
         if self._turn is None:
             raise RuntimeError("begin_turn must be called first")
         return self._turn
+
+    def _has_exact_reality_terminal_target(self, observation: Observation) -> bool:
+        """Check only the concrete dimension named by a terminal Observation."""
+        dimension, separator, suffix = observation.key.rpartition(".")
+        if not separator or suffix not in self._REALITY_TERMINAL_SUFFIXES:
+            return False
+        return any(
+            state.scope == observation.scope
+            and state.dimension == dimension
+            and has_legal_terminal_target(state, suffix)
+            for state in self._canonical.values()
+        )
 
     def _derive_slow_scope(self, turn: _Turn) -> Scope:
         """Derive the scope for slow-state writes.
@@ -786,10 +826,84 @@ class TurnOrchestrator:
         )
         observation = result.observation
         if result.disposition is FactAdmissionDisposition.REPLAY:
-            # The audit Interaction is retained and the turn continues, but
-            # no Observation, evidence ref, or overlay entry enters this
-            # turn: injected-Clock recovery, Intent lifecycle, Policy, and
-            # other no-new-fact behavior still execute in run().
+            reality_store = getattr(self._reality_admission, "observations", None) or getattr(
+                self.fact_ingest, "observations", None
+            )
+            reality_records = (
+                reality_store.all() if reality_store is not None else ()
+            )
+            known_reality = tuple(
+                item
+                for item in reality_records
+                if item.id.startswith("reality-observation-")
+                and evidence.id in item.evidence_refs
+            )
+            def _is_reality_item_satisfied(item: Observation) -> bool:
+                dimension = item.key.rpartition(".")[0]
+                eligibility = evaluate_state_eligibility(
+                    item,
+                    admission_anchor=item.observed_at,
+                    has_exact_target=self._has_exact_reality_terminal_target(item),
+                    is_valid_definition=True,
+                )
+                turn.reality_eligibilities[item.id] = eligibility
+                if eligibility is StateEligibility.OBSERVATION_ONLY:
+                    return True
+                return any(
+                    state.scope == item.scope
+                    and state.dimension == dimension
+                    and evidence.id in state.evidence_refs
+                    for state in self._canonical.values()
+                )
+
+            reality_is_current = known_reality and all(
+                _is_reality_item_satisfied(item) for item in known_reality
+            )
+            if self._reality_input is not None and not reality_is_current:
+                # A crash can leave the typed Observation durable while the
+                # canonical state write has not happened yet. Recover only
+                # typed observations whose dimension is still absent;
+                # ordinary replays remain non-causal.
+                replay_reality = known_reality
+                if not replay_reality:
+                    replay_reality = self._reality_input.extract_and_admit(
+                        evidence,
+                        reality_admission=self._reality_admission,
+                        fact_ingest=self.fact_ingest,
+                        interaction_id=turn.interaction.interaction_id,
+                        writing_runtime=self._runtime_id,
+                        writing_persona_id=self._writing_persona_id_for(evidence),
+                        include_replays=True,
+                    )
+                for replay_observation in replay_reality:
+                    dimension = replay_observation.key.rpartition(".")[0]
+                    eligibility = evaluate_state_eligibility(
+                        replay_observation,
+                        admission_anchor=replay_observation.observed_at,
+                        has_exact_target=self._has_exact_reality_terminal_target(
+                            replay_observation
+                        ),
+                        is_valid_definition=True,
+                    )
+                    turn.reality_eligibilities[replay_observation.id] = eligibility
+                    if eligibility in (
+                        StateEligibility.ELIGIBLE_CURRENT,
+                        StateEligibility.ELIGIBLE_TERMINAL,
+                    ):
+                        if not any(
+                            state.scope == replay_observation.scope
+                            and state.dimension == dimension
+                            and evidence.id in state.evidence_refs
+                            for state in self._canonical.values()
+                        ):
+                            turn.observations = turn.observations + (replay_observation,)
+                            turn.evidence_refs = turn.evidence_refs + (evidence.id,)
+                            self.factual_overlay[replay_observation.key] = replay_observation.value
+            # The audit Interaction is retained and ordinary replays add no
+            # new base Observation or causal input; the narrow crash-window
+            # recovery above may restore missing typed reality only. Injected-
+            # Clock recovery, Intent lifecycle, Policy, and other no-new-fact
+            # behavior still execute in run().
             self.state = TurnState.INGESTING
             self._trace.record(
                 turn.interaction.interaction_id,
@@ -802,6 +916,31 @@ class TurnOrchestrator:
         turn.observations = turn.observations + (observation,)
         turn.evidence_refs = turn.evidence_refs + (evidence.id,)
         self.factual_overlay[f"{evidence.source_type}.observed"] = evidence.payload
+        if self._reality_input is not None:
+            reality_observations = self._reality_input.extract_and_admit(
+                evidence,
+                reality_admission=self._reality_admission,
+                fact_ingest=self.fact_ingest,
+                interaction_id=turn.interaction.interaction_id,
+                writing_runtime=self._runtime_id,
+                writing_persona_id=self._writing_persona_id_for(evidence),
+            )
+            for reality_observation in reality_observations:
+                eligibility = evaluate_state_eligibility(
+                    reality_observation,
+                    admission_anchor=reality_observation.observed_at,
+                    has_exact_target=self._has_exact_reality_terminal_target(
+                        reality_observation
+                    ),
+                    is_valid_definition=True,
+                )
+                turn.reality_eligibilities[reality_observation.id] = eligibility
+                if eligibility in (
+                    StateEligibility.ELIGIBLE_CURRENT,
+                    StateEligibility.ELIGIBLE_TERMINAL,
+                ):
+                    turn.observations = turn.observations + (reality_observation,)
+                    self.factual_overlay[reality_observation.key] = reality_observation.value
         self.state = TurnState.INGESTING
         self._trace.record(
             turn.interaction.interaction_id,
@@ -1257,7 +1396,10 @@ class TurnOrchestrator:
                 # 2. Atomic durable transaction
                 tx_context = (
                     self._state_backend.transaction()
-                    if self._state_backend is not None and hasattr(self._state_backend, "transaction")
+                    if (
+                        self._state_backend is not None
+                        and hasattr(self._state_backend, "transaction")
+                    )
                     else nullcontext()
                 )
                 with tx_context:
@@ -1316,9 +1458,11 @@ class TurnOrchestrator:
                     if hasattr(self._slow_writer, "discard_pending"):
                         self._slow_writer.discard_pending(slow_scope)
                 if not isinstance(exc, CanonicalPersistenceError):
-                    raise CanonicalPersistenceError(
-                        f"atomic cognitive admission failed for {turn.interaction.interaction_id}: {exc}"
-                    ) from exc
+                    msg = (
+                        f"atomic cognitive admission failed for "
+                        f"{turn.interaction.interaction_id}: {exc}"
+                    )
+                    raise CanonicalPersistenceError(msg) from exc
                 raise
 
             # 3. Post-commit memory advance (ONLY reached if transaction committed!)
