@@ -23,9 +23,9 @@ from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.ports import FactAdmissionResult, RealityAdmissionRequest
 from mind_runtime.facts.service import FactIngestService
 from mind_runtime.integrations.lce import (
+    TEMPORAL_CONTEXT_KEY,
     MemorySelectionError,
     MrMemorySubstrateAdapter,
-    TEMPORAL_CONTEXT_KEY,
     TemporalMemoryView,
     open_lce_binding,
 )
