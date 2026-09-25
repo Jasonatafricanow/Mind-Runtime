@@ -6,10 +6,7 @@ from mind_runtime.contracts import Scope, ScopeDomain, SyncFields
 from mind_runtime.memory.contracts import CommittedMemory, MemoryProvenance
 from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
 from mind_runtime.memory.store import CanonicalMemoryStore
-from mind_runtime.memory.thread_updates import (
-    DeterministicThreadUpdater,
-    ThreadUpdateWorker,
-)
+from mind_runtime.memory.thread_updates import DeterministicThreadUpdater, ThreadUpdateWorker
 
 
 BASE = datetime(2026, 9, 25, 8, 0, tzinfo=UTC)
