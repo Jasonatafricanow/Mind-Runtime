@@ -199,6 +199,35 @@ def _seed(stack: dict[str, object], value: float, at: datetime) -> None:
 # ── decision paths: DENY and supersede ──────────────────────────────────────
 
 
+def _affect_state(
+    scope: Scope,
+    *,
+    state_id: str,
+    value: object,
+    version: int = 1,
+):
+    """Build the minimal RuntimeState used by current-affect contract tests."""
+    from mind_runtime.contracts import RuntimeState, SyncFields
+
+    return RuntimeState(
+        state_id=state_id,
+        scope=scope,
+        dimension="agent.affect.missing",
+        value=value,
+        status="active",
+        valid_from=BASE,
+        valid_until=None,
+        relevant_until=None,
+        last_observed_at=BASE,
+        evidence_refs=(),
+        transition_refs=(),
+        updated_at=BASE,
+        origin_runtime_id="runtime-1",
+        version=version,
+        sync=SyncFields(scope, "runtime-1", state_id, version, f"idem-{state_id}"),
+    )
+
+
 def test_policy_deny_blocks_candidate(tmp_path: Path) -> None:
     """A kind without a policy rule is DENYed (fail-closed), not executed."""
     stack = _stack(tmp_path, policy_config=_policy_config(with_rule=False))
@@ -975,13 +1004,16 @@ def test_run_cognitive_tick_rejects_wrong_wiring_type(tmp_path: Path) -> None:
         )
 
 
-def test_ticker_rejects_unexpected_state_value_shape(tmp_path: Path) -> None:
-    """_current_affect filters non-numeric rows before _as_float ever runs."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "shape"
-    subdir.mkdir()
-    stack = _stack(subdir)
+@pytest.mark.parametrize(
+    "bad_value",
+    [True, "seventy-percent", "0.75-but-text"],
+    ids=["bool", "text", "numeric-looking-text"],
+)
+def test_current_affect_skips_non_numeric_values(
+    tmp_path: Path, bad_value: object
+) -> None:
+    """Only real numeric affect values are eligible for the current projection."""
+    stack = _stack(tmp_path)
     persona = stack["persona"]
     assert isinstance(persona, PersonaProfile)
     backend = stack["state_backend"]
@@ -992,37 +1024,18 @@ def test_ticker_rejects_unexpected_state_value_shape(tmp_path: Path) -> None:
         persona_id=persona.persona_id,
     )
     backend.save_state(
-        RuntimeState(
-            state_id="agent.affect.missing:1:texty",
-            scope=scope,
-            dimension="agent.affect.missing",
-            value="seventy-percent",
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=1,
-            sync=SyncFields(
-                scope, "runtime-1", "agent.affect.missing:1:texty", 1, "idem-texty"
-            ),
+        _affect_state(
+            scope,
+            state_id="agent.affect.missing:1:invalid",
+            value=bad_value,
         )
     )
-    affect = _ticker(stack)._current_affect(scope=scope)
-    assert affect == ()
+    assert _ticker(stack)._current_affect(scope=scope) == ()
 
 
-def test_current_affect_prefers_higher_version_rows(tmp_path: Path) -> None:
-    """The > branch of the version comparison runs on same-dimension rows."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "vcmp"
-    subdir.mkdir()
-    stack = _stack(subdir)
+def test_current_affect_prefers_highest_version(tmp_path: Path) -> None:
+    """Current affect is independent of insertion order and keeps the highest version."""
+    stack = _stack(tmp_path)
     persona = stack["persona"]
     assert isinstance(persona, PersonaProfile)
     backend = stack["state_backend"]
@@ -1032,31 +1045,16 @@ def test_current_affect_prefers_higher_version_rows(tmp_path: Path) -> None:
         agent_id=persona.persona_id,
         persona_id=persona.persona_id,
     )
-
-    def _row(state_id: str, value: float, version: int) -> RuntimeState:
-        return RuntimeState(
-            state_id=state_id,
-            scope=scope,
-            dimension="agent.affect.missing",
-            value=value,
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=version,
-            sync=SyncFields(scope, "runtime-1", state_id, version, f"idem-{state_id}"),
+    for state_id, value, version in (
+        ("a:v1", 0.6, 1),
+        ("a:v3", 0.8, 3),
+        ("a:v2", 0.7, 2),
+    ):
+        backend.save_state(
+            _affect_state(scope, state_id=state_id, value=value, version=version)
         )
-
-    backend.save_state(_row("a:v1", 0.6, 1))
-    backend.save_state(_row("a:v3", 0.8, 3))
-    backend.save_state(_row("a:v2", 0.7, 2))
     affect = _ticker(stack)._current_affect(scope=scope)
-    assert len(affect) == 1 and affect[0].version == 3 and affect[0].value == 0.8
+    assert [(row.version, row.value) for row in affect] == [(3, 0.8)]
 
 
 def test_build_components_personaless_orchestrator_raises(tmp_path: Path) -> None:
@@ -1083,86 +1081,8 @@ def test_build_components_personaless_orchestrator_raises(tmp_path: Path) -> Non
         )
 
 
-def test_current_affect_skips_bool_true_row(tmp_path: Path) -> None:
-    """A bool-valued affect row (True passes int check) is explicitly skipped."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "boolskip"
-    subdir.mkdir()
-    stack = _stack(subdir)
-    persona = stack["persona"]
-    assert isinstance(persona, PersonaProfile)
-    backend = stack["state_backend"]
-    assert isinstance(backend, SqliteStateBackend)
-    scope = Scope(
-        domain=ScopeDomain.AGENT,
-        agent_id=persona.persona_id,
-        persona_id=persona.persona_id,
-    )
-    backend.save_state(
-        RuntimeState(
-            state_id="agent.affect.missing:1:booly",
-            scope=scope,
-            dimension="agent.affect.missing",
-            value=True,
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=1,
-            sync=SyncFields(
-                scope, "runtime-1", "agent.affect.missing:1:booly", 1, "idem-booly"
-            ),
-        )
-    )
-    affect = _ticker(stack)._current_affect(scope=scope)
-    assert affect == ()
 
 
-def test_current_affect_skips_nonnumeric_text_value(tmp_path: Path) -> None:
-    """A string-valued row hits the non-numeric continue (line 269)."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "textskip"
-    subdir.mkdir()
-    stack = _stack(subdir)
-    persona = stack["persona"]
-    assert isinstance(persona, PersonaProfile)
-    backend = stack["state_backend"]
-    assert isinstance(backend, SqliteStateBackend)
-    scope = Scope(
-        domain=ScopeDomain.AGENT,
-        agent_id=persona.persona_id,
-        persona_id=persona.persona_id,
-    )
-    backend.save_state(
-        RuntimeState(
-            state_id="agent.affect.missing:1:texty",
-            scope=scope,
-            dimension="agent.affect.missing",
-            value="0.75-but-text",
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=1,
-            sync=SyncFields(
-                scope, "runtime-1", "agent.affect.missing:1:texty", 1, "idem-texty"
-            ),
-        )
-    )
-    affect = _ticker(stack)._current_affect(scope=scope)
-    assert affect == ()
 
 
 def test_current_affect_ignores_foreign_scope_rows(tmp_path: Path) -> None:
@@ -1306,13 +1226,8 @@ def test_reader_first_observation_skips_rank_compare(tmp_path: Path) -> None:
     assert reader.facts(scope) == (("counter.solo", "7"),)
 
 
-def test_current_affect_first_row_skips_version_compare(tmp_path: Path) -> None:
-    """The 273->267 branch: first row assigns without a version comparison."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "firstrow"
-    subdir.mkdir()
-    stack = _stack(subdir)
+def test_current_affect_accepts_first_eligible_row(tmp_path: Path) -> None:
+    stack = _stack(tmp_path)
     persona = stack["persona"]
     assert isinstance(persona, PersonaProfile)
     backend = stack["state_backend"]
@@ -1323,28 +1238,14 @@ def test_current_affect_first_row_skips_version_compare(tmp_path: Path) -> None:
         persona_id=persona.persona_id,
     )
     backend.save_state(
-        RuntimeState(
+        _affect_state(
+            scope,
             state_id="agent.affect.missing:1:first",
-            scope=scope,
-            dimension="agent.affect.missing",
             value=0.75,
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=1,
-            sync=SyncFields(
-                scope, "runtime-1", "agent.affect.missing:1:first", 1, "idem-first"
-            ),
         )
     )
     affect = _ticker(stack)._current_affect(scope=scope)
-    assert len(affect) == 1 and affect[0].value == 0.75
+    assert [(row.version, row.value) for row in affect] == [(1, 0.75)]
 
 
 def test_reader_lower_rank_does_not_replace(tmp_path: Path) -> None:
@@ -1383,46 +1284,6 @@ def test_reader_lower_rank_does_not_replace(tmp_path: Path) -> None:
     assert reader.facts(scope) == (("counter.rank", "3"),)
 
 
-def test_current_affect_lower_version_row_loses(tmp_path: Path) -> None:
-    """A later-loaded row with a LOWER version must not replace the winner."""
-    from mind_runtime.contracts import RuntimeState, SyncFields
-
-    subdir = tmp_path / "vloser"
-    subdir.mkdir()
-    stack = _stack(subdir)
-    persona = stack["persona"]
-    assert isinstance(persona, PersonaProfile)
-    backend = stack["state_backend"]
-    assert isinstance(backend, SqliteStateBackend)
-    scope = Scope(
-        domain=ScopeDomain.AGENT,
-        agent_id=persona.persona_id,
-        persona_id=persona.persona_id,
-    )
-
-    def _row(state_id: str, value: float, version: int) -> RuntimeState:
-        return RuntimeState(
-            state_id=state_id,
-            scope=scope,
-            dimension="agent.affect.missing",
-            value=value,
-            status="active",
-            valid_from=BASE,
-            valid_until=None,
-            relevant_until=None,
-            last_observed_at=BASE,
-            evidence_refs=(),
-            transition_refs=(),
-            updated_at=BASE,
-            origin_runtime_id="runtime-1",
-            version=version,
-            sync=SyncFields(scope, "runtime-1", state_id, version, f"idem-{state_id}"),
-        )
-
-    backend.save_state(_row("a:v2", 0.8, 2))
-    backend.save_state(_row("a:v1", 0.5, 1))  # lower version, loaded later
-    affect = _ticker(stack)._current_affect(scope=scope)
-    assert len(affect) == 1 and affect[0].version == 2 and affect[0].value == 0.8
 
 
 def test_reader_lower_ref_row_does_not_replace(tmp_path: Path) -> None:
