@@ -75,8 +75,12 @@ def main() -> int:
 
     if regressions:
         print("Ruff baseline regressions:", file=sys.stderr)
+        regression_keys = {key for key, _, _ in regressions}
         for key, count, limit in regressions:
             print(f"  {key}: current={count}, allowed={limit}", file=sys.stderr)
+        for item in findings:
+            if _key(item) in regression_keys:
+                print(json.dumps(item, sort_keys=True), file=sys.stderr)
 
     if forbidden or regressions:
         return 1
