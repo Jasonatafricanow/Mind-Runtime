@@ -199,6 +199,54 @@ def test_open_update_resolve_thread_is_bounded_durable_and_handoff_ready(tmp_pat
     canonical.close()
 
 
+def test_compiled_thread_leaves_active_projection_but_keeps_lineage(tmp_path):
+    path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    product.open_thread(
+        thread_id="thread-upgrade",
+        scope=memory().scope,
+        open_question="Will the computer replacement happen?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+    )
+    product.update_thread(
+        "thread-upgrade",
+        supporting_memory_ids=("memory-1", "memory-2"),
+        at=at + timedelta(days=1),
+        working_summary="Price became the blocker, so replacement was postponed.",
+        mature=True,
+    )
+
+    compiled = product.compile_thread(
+        "thread-upgrade",
+        baseline_id="baseline-1",
+        at=at + timedelta(days=2),
+    )
+    assert compiled.status is ThreadStatus.COMPILED
+    assert compiled.compiled_baseline_id == "baseline-1"
+    assert product.list_threads(memory().scope, status=ThreadStatus.OPEN) == ()
+    assert product.surface_threads(memory().scope, now=at + timedelta(days=2)) == ()
+    assert product.compile_thread(
+        "thread-upgrade",
+        baseline_id="baseline-1",
+        at=at + timedelta(days=3),
+    ) == compiled
+    with pytest.raises(MemoryProductConflict):
+        product.compile_thread(
+            "thread-upgrade",
+            baseline_id="different",
+            at=at + timedelta(days=3),
+        )
+    with pytest.raises(ValueError, match="compiled Thread cannot be handed off"):
+        product.thread_handoff("thread-upgrade")
+
+    product.close()
+    product = MemoryProductStore(path, canonical)
+    assert product.get_thread("thread-upgrade") == compiled
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
