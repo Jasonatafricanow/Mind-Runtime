@@ -10,6 +10,7 @@ import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -306,88 +307,44 @@ def test_persistence_record_receipt_different_bytes_raises(
     backend.close()
 
 
-def test_persistence_record_attempt_validation_errors(
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"attempt_id": ""}, "attempt_id"),
+        ({"request_id": ""}, "request_id"),
+        ({"attempt": 0}, "attempt"),
+        ({"attempt": True}, "attempt"),
+        ({"outcome": "not-an-enum"}, "outcome"),
+        ({"reason_codes": ("",)}, "non-empty strings"),
+        ({"reason_codes": (1,)}, "non-empty strings"),
+        ({"attempt_id": "att-x", "request_id": "ghost"}, "unknown delivery request"),
+    ),
+)
+def test_persistence_record_attempt_rejects_invalid_fields(
     tmp_path: Path,
+    overrides: dict[str, Any],
+    message: str,
 ) -> None:
-    """record_attempt refuses bad input combinations."""
-
     db_path = tmp_path / "c7b_attempt_bad.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    # Empty attempt_id
-    with pytest.raises(ValueError, match="attempt_id"):
-        backend.record_attempt(
-            attempt_id="", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Empty request_id
-    with pytest.raises(ValueError, match="request_id"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id="",
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad attempt
-    with pytest.raises(ValueError, match="attempt"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=0, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    with pytest.raises(ValueError, match="attempt"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=True,
-            started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad outcome
-    with pytest.raises(ValueError, match="outcome"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome="not-an-enum",  # type: ignore[arg-type]
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad reason_codes entry
-    with pytest.raises(ValueError, match="non-empty strings"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("",),
-        )
-    with pytest.raises(ValueError, match="non-empty strings"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=(1,),  # type: ignore[arg-type]
-        )
-    # Unknown request_id
-    with pytest.raises(ValueError, match="unknown delivery request"):
-        backend.record_attempt(
-            attempt_id="att-x", request_id="ghost",
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
+    kwargs: dict[str, Any] = {
+        "attempt_id": "att-1",
+        "request_id": request.request_id,
+        "attempt": 1,
+        "started_at": NOW,
+        "ended_at": None,
+        "outcome": DeliveryLifecycleState.FAILED_RETRYABLE,
+        "provider_receipt_ref": None,
+        "reason_codes": ("x",),
+    }
+    kwargs.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        backend.record_attempt(**kwargs)
     backend.close()
 
 
