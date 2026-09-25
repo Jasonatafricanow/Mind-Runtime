@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 
 from mind_runtime.contracts import Scope, SemanticEventCandidate
 from mind_runtime.facts.service import FactIngestService
-from tests.pipeline.test_fact_admission_turn import make_interaction, make_orchestrator
+from mind_runtime.memory.product import MemoryThread
+
 from tests.golden.fixtures.common import make_evidence
+from tests.pipeline.test_fact_admission_turn import make_interaction, make_orchestrator
 from tests.support.fake_clock import FakeClock
 
 
@@ -22,7 +24,7 @@ class RecordingThreadUpdates:
         scope: Scope,
         accepted_events: tuple[SemanticEventCandidate, ...],
         at: datetime,
-    ) -> tuple[object, ...]:
+    ) -> tuple[MemoryThread, ...]:
         assert at.tzinfo is UTC
         self.calls.append((scope, accepted_events))
         return ()
