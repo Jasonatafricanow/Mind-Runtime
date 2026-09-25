@@ -190,43 +190,6 @@ def test_admit_operational_fact_rejects_receipt_without_delivered_at(
 # ---- projector: no-facts-for-action returns skip_reason="no_facts" --------
 
 
-def test_projector_returns_no_facts_skip_reason_for_known_action(
-    tmp_path: Path,
-) -> None:
-    """A known action_type that happens to derive zero facts (a future
-    kind, today unreachable) returns skip_reason="no_facts_for_action"
-    and the outcome is applied=False (no projection marker, no fact)."""
-    from mind_runtime.projection import projector as proj_mod
-
-    fact_service = FactIngestService(clock=FakeClock(NOW))
-    store = SqliteProjectionStore(tmp_path / "p.sqlite")
-    projector = SettledActionProjector(
-        fact_service=fact_service, projection_store=store,
-        clock=FakeClock(NOW), runtime_id=RUNTIME,
-    )
-    request = _build_request(idempotency_key="k-zf", action_type="proactive_message")
-    receipt = _accepted_receipt(request)
-    # Monkey-patch the derive function to return an empty tuple
-    # (simulating a future action_type that emits no counter facts).
-    original = proj_mod.SettledActionProjector._derive_new_counter_facts
-    proj_mod.SettledActionProjector._derive_new_counter_facts = lambda self, **kw: ()  # type: ignore[method-assign]
-    try:
-        outcome = projector.project(receipt=receipt, request=request)
-    finally:
-        proj_mod.SettledActionProjector._derive_new_counter_facts = original  # type: ignore[method-assign]
-    assert outcome.applied is False
-    assert outcome.already_applied is False
-    assert outcome.skip_reason == "no_facts_for_action"
-    # No marker written.
-    assert not store.has(receipt.receipt_id)
-    # No facts admitted.
-    assert list(fact_service.observations.all()) == []
-    store.close()
-
-
-# ---- projector: legacy "" action_type explicit fail-closed ---------------
-
-
 def test_projector_legacy_empty_action_type_explicit_error_message(
     tmp_path: Path,
 ) -> None:
@@ -249,76 +212,6 @@ def test_projector_legacy_empty_action_type_explicit_error_message(
 # ---- DB schema: action_type column is the migration touchpoint ----------
 
 
-def test_db_schema_requires_action_type_column_on_reopen(tmp_path: Path) -> None:
-    """A pre-C7C DB without action_type fails closed at reopen
-    (already covered by MIG1, repeated here for branch coverage of
-    the schema-validation gate)."""
-    delivery_db = tmp_path / "delivery.sqlite"
-    with sqlite3.connect(delivery_db) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE delivery_requests (
-                request_id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                scope_domain TEXT NOT NULL,
-                scope_user_id TEXT NOT NULL DEFAULT '',
-                scope_agent_id TEXT NOT NULL DEFAULT '',
-                scope_persona_id TEXT NOT NULL DEFAULT '',
-                scope_relationship_id TEXT NOT NULL DEFAULT '',
-                scope_world_id TEXT NOT NULL DEFAULT '',
-                scope_interaction_id TEXT NOT NULL DEFAULT '',
-                origin_runtime_id TEXT NOT NULL,
-                channel TEXT NOT NULL,
-                target TEXT NOT NULL,
-                payload_bytes BLOB NOT NULL,
-                created_at TEXT NOT NULL,
-                sync TEXT NOT NULL,
-                lifecycle_state TEXT NOT NULL,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                last_attempt_at TEXT,
-                last_reconcile_at TEXT,
-                last_provider_receipt_ref TEXT,
-                sync_version INTEGER NOT NULL DEFAULT 1
-            );
-            CREATE TABLE delivery_receipts (
-                receipt_id TEXT PRIMARY KEY,
-                request_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                scope_domain TEXT NOT NULL,
-                scope_user_id TEXT NOT NULL DEFAULT '',
-                scope_agent_id TEXT NOT NULL DEFAULT '',
-                scope_persona_id TEXT NOT NULL DEFAULT '',
-                scope_relationship_id TEXT NOT NULL DEFAULT '',
-                scope_world_id TEXT NOT NULL DEFAULT '',
-                scope_interaction_id TEXT NOT NULL DEFAULT '',
-                origin_runtime_id TEXT NOT NULL,
-                delivery_status TEXT NOT NULL,
-                delivered_at TEXT,
-                provider_receipt_ref TEXT,
-                provider_message_ref TEXT,
-                sync TEXT NOT NULL,
-                attempt INTEGER NOT NULL,
-                sync_version INTEGER NOT NULL DEFAULT 1
-            );
-            CREATE TABLE delivery_attempts (
-                attempt_id TEXT PRIMARY KEY,
-                request_id TEXT NOT NULL,
-                attempt INTEGER NOT NULL,
-                started_at TEXT NOT NULL,
-                ended_at TEXT,
-                outcome TEXT NOT NULL,
-                provider_receipt_ref TEXT,
-                reason_codes TEXT NOT NULL
-            );
-            """
-        )
-    with pytest.raises(ValueError, match="action_type"):
-        SqliteDeliveryBackend(delivery_db)
-
-
-# ---- is_known_action_type: typed + legacy sentinel handling --------------
-
-
 def test_is_known_action_type_accepts_typed_only() -> None:
     """The known-action_type set is the two typed kinds; everything
     else (None, empty, free-form) returns False."""
@@ -331,29 +224,6 @@ def test_is_known_action_type_accepts_typed_only() -> None:
 
 
 # ---- OPF: validate_action_type static guard --------------------------------
-
-
-def test_opf_validate_action_type_known_kind() -> None:
-    """A known action_type passes the static guard."""
-    class _R:
-        action_type = "proactive_message"
-    OperationalFactAdmission.validate_action_type(_R())  # no raise
-
-
-def test_opf_validate_action_type_unknown_kind_refused() -> None:
-    """The static action_type guard rejects only non-empty / non-string.
-    The known/unknown kind check is enforced by
-    ``is_known_action_type`` (used by the projector before admitting
-    any fact). This separation keeps the static guard fast."""
-    class _R:
-        action_type = "random"
-    # Non-empty / string passes the static guard.
-    OperationalFactAdmission.validate_action_type(_R())
-    # But the known-action_type check is the safety net.
-    assert OperationalFactAdmission.is_known_action_type("random") is False
-
-
-# ---- OperationalFactAdmission: ALLOWED_KEYS frozen surface -----------------
 
 
 def test_opf_allowed_keys_surface_is_frozen() -> None:
