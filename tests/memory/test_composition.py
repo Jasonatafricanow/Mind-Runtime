@@ -55,6 +55,42 @@ def test_stack_enabled_requires_matching_binding_paths(tmp_path):
         )
 
 
+def test_runtime_composition_injects_lce_compiler_above_memory_core(tmp_path, monkeypatch):
+    from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+    from mind_runtime.runtime_binding import production_binding
+    from mind_runtime.shadow.runtime_loop import build_runtime_stack
+
+    monkeypatch.setenv("MR_FACTS_DB", str(tmp_path / "facts.sqlite"))
+    monkeypatch.setenv("MR_STATE_DB", str(tmp_path / "state.sqlite"))
+    binding = production_binding("p", runtime_id="runtime-1")
+
+    orchestrator, _ = build_runtime_stack(
+        clock=FakeClock(NOW),
+        facts_db=tmp_path / "facts.sqlite",
+        state_db=tmp_path / "state.sqlite",
+        origin_runtime_id="runtime-1",
+        user_id="user",
+        memory_enabled=True,
+        memory_binding=binding,
+        lce_enabled=True,
+    )
+    assert orchestrator._thread_updates is not None
+    assert isinstance(
+        orchestrator._thread_updates._projection_compiler,
+        LceThreadProjectionCompiler,
+    )
+
+    with pytest.raises(ValueError, match="lce_enabled"):
+        build_runtime_stack(
+            clock=FakeClock(NOW),
+            facts_db=tmp_path / "facts.sqlite",
+            state_db=tmp_path / "state.sqlite",
+            origin_runtime_id="runtime-1",
+            user_id="user",
+            lce_enabled=1,
+        )
+
+
 def test_xiyue_enabled_new_fact_commits_in_bound_memory_db(tmp_path, monkeypatch):
     from mind_runtime.host.xiyue_adapter import default_adapter
     from mind_runtime.memory.store import CanonicalMemoryStore
