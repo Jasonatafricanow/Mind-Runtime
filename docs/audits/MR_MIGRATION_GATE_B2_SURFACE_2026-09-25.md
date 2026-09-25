@@ -20,8 +20,10 @@
   its tree equals GitHub's PR auto-merge tree at `00f9ff522b6f96f5d58d1604ecfab6cb8c8a85b7`.
   Additional Host/consumer/Expression boundary tests: `6481bc0ea5c3568de5d6c2d98bee8b354da621fc`.
 - Pull request: [#15](https://github.com/Jasonatafricanow/Mind-Runtime/pull/15),
-  draft until PR quality and current-main verification pass. No historical
-  branch merge or historical ref deletion was performed.
+  merged at `e64d46ac7d42ada36b345e4abceb93226bce87a0` (parents
+  `478860257fa494c4801a9c565fa9b578fa315d82` and
+  `c1fe0ef4af5cf95ae7cce8fb995fd8525a7e21bf`). No historical branch
+  merge or historical ref deletion was performed.
 
 ## Reconciliation
 
@@ -68,7 +70,7 @@ production calibration or real-agent activation.
 | Ruff no-regression | 752 current / 801 baseline; pass |
 | mypy no-regression | 108 current / 125 baseline on Windows; pass |
 | GitHub Actions quality on `b53c3bd` push | [run #239](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36114717517): success |
-| GitHub Actions quality on PR #15 | [run #240](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36114723446): failed; diagnosis and correction required before gate acceptance |
+| Early GitHub Actions quality on PR #15 | [run #240](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36114723446): failed aggregate coverage before current-main reconciliation |
 | Current-main merge tree at `8afc0fe` | 3541 passed, 7 skipped, 4 deselected, 1 xfailed in 497.28 s; coverage 93.06513568212796% exact, displayed 93, below threshold |
 | New boundary tests at `6481bc0` | 43 passed |
 | Fixed-HEAD full suite at `6481bc0` on the merged current-main tree | 3584 passed, 7 skipped, 4 deselected, 1 xfailed in 512.83 s |
@@ -76,6 +78,8 @@ production calibration or real-agent activation.
 | Ruff / mypy after current-main merge | 752 / 801 Ruff and 107 / 125 mypy errors; both no-regression gates pass |
 | GitHub Actions on `8afc0fe` | [PR run #242](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36117041960) failed aggregate coverage, while tests and static/clean-install/LCE integration passed |
 | GitHub Actions on `6481bc0` | [PR quality #243](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36119240527) and [push quality #244](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36119246166) both succeeded, including tests, Python static, clean-install, and LCE integration |
+| GitHub Actions on evidence commit `c1fe0ef` | [PR quality #245](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36119970149) and [push quality #246](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36119974177) both succeeded |
+| Merged main quality at `e64d46a` | [run #247](https://github.com/Jasonatafricanow/Mind-Runtime/actions/runs/36120503830) succeeded, including tests, Python static, clean-install, and LCE integration |
 
 The first full local run crossed a Git HEAD change during its long-horizon
 replay and failed its pinned source-head check. A fixed-HEAD rerun passed all
@@ -168,8 +172,9 @@ A tests/surface/test_turn_tick_surface_boundary.py
 
 ## Gate disposition
 
-**GATE B2 READY TO MERGE, NOT YET CLOSED.** Current main was checked at
+**GATE B2 CLOSED.** Current main was checked at
 `478860257fa494c4801a9c565fa9b578fa315d82`; PR and push quality at
-`6481bc0` both passed. Require merge of PR #15, merged-main quality run, and
-final target commit record before Gate B3 Fast Function begins. Historical W3
-branches/worktrees remain preserved for Issue #11's final disposition matrix.
+`6481bc0` and `c1fe0ef` passed. PR #15 merged at
+`e64d46ac7d42ada36b345e4abceb93226bce87a0`, and merged-main quality
+#247 passed. Gate B3 Fast Function may begin. Historical W3 branches/worktrees
+remain preserved for Issue #11's final disposition matrix.
