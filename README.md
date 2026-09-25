@@ -100,9 +100,11 @@ Failed or disabled compilation leaves the Thread intact and never rolls back
 canonical Memory.
 
 Unstructured history remains available for future idle/sleep/dream LCE
-discovery. Normal historical-context composition prefers accepted cognition and
-canonical Memory detail; raw Evidence/source text is retained primarily for
-provenance, falsification, rebuild, and retrieval fallback. See
+discovery. The same historical-context composition is the single outward read
+boundary: it prefers accepted Baselines, may expose at most a bounded relevant
+active Thread projection, then fills remaining budget with canonical Memory
+detail. Raw Evidence/source text is retained primarily for provenance,
+falsification, rebuild, and retrieval fallback. See
 `docs/architecture/MEMORY_ARCHITECTURE_V1.md`, ADR-0028, and ADR-0033.
 
 ### Turn admission and commit
