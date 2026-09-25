@@ -848,15 +848,19 @@ def test_h6_production_does_not_rely_on_fixed_threshold_config_defaults(
         composition.close()
 
 
-def test_h7_salience_at_slow_floor_qualifies_boundary(tmp_path: Path) -> None:
-    """H7: salience == 0.60 with confidence >= 0.80 qualifies for slow threshold boundary."""
+@pytest.mark.parametrize(
+    ("field", "below"),
+    [("salience", 0.599), ("confidence", 0.799)],
+)
+def test_slow_accept_threshold_boundaries(
+    tmp_path: Path, field: str, below: float
+) -> None:
+    """Both configured slow-accept thresholds are inclusive and fail below the floor."""
     composition = subject.build_composition(make_runtime_config(tmp_path))
     try:
         gate = getattr(composition.orchestrator.emotional_transition, "_homeostasis_gate", None)
         assert gate is not None
-
-        # At boundary: salience == 0.60, confidence == 0.80 -> SLOW_ACCEPT
-        cand_boundary = CandidateStateDelta(
+        candidate = CandidateStateDelta(
             target_dimension="agent.longitudinal.relationship_security",
             proposed_value=0.80,
             scope=Scope(ScopeDomain.AGENT, agent_id="kayla_v0", persona_id="kayla_v0"),
@@ -866,43 +870,13 @@ def test_h7_salience_at_slow_floor_qualifies_boundary(tmp_path: Path) -> None:
             confidence=0.80,
             observed_at=NOW,
         )
-        dec_boundary = gate.decide(cand_boundary, prior_value=None)
-        assert dec_boundary.decision is HomeostasisDisposition.SLOW_ACCEPT
+        assert gate.decide(candidate, prior_value=None).decision is HomeostasisDisposition.SLOW_ACCEPT
 
-        # Just below boundary: salience == 0.599 -> NOT SLOW_ACCEPT
-        cand_below = replace(cand_boundary, salience=0.599)
-        dec_below = gate.decide(cand_below, prior_value=None)
-        assert dec_below.decision is not HomeostasisDisposition.SLOW_ACCEPT
-    finally:
-        composition.close()
-
-
-def test_h8_confidence_at_slow_floor_qualifies_boundary(tmp_path: Path) -> None:
-    """H8: confidence == 0.80 with salience >= 0.60 qualifies for slow threshold boundary."""
-    composition = subject.build_composition(make_runtime_config(tmp_path))
-    try:
-        gate = getattr(composition.orchestrator.emotional_transition, "_homeostasis_gate", None)
-        assert gate is not None
-
-        # At boundary: confidence == 0.80, salience == 0.60 -> SLOW_ACCEPT
-        cand_boundary = CandidateStateDelta(
-            target_dimension="agent.longitudinal.relationship_security",
-            proposed_value=0.80,
-            scope=Scope(ScopeDomain.AGENT, agent_id="kayla_v0", persona_id="kayla_v0"),
-            evidence_refs=("ev-1",),
-            source_event_ref="evt-1",
-            salience=0.60,
-            confidence=0.80,
-            observed_at=NOW,
+        below_candidate = replace(candidate, **{field: below})
+        assert (
+            gate.decide(below_candidate, prior_value=None).decision
+            is not HomeostasisDisposition.SLOW_ACCEPT
         )
-        dec_boundary = gate.decide(cand_boundary, prior_value=None)
-        assert dec_boundary.decision is HomeostasisDisposition.SLOW_ACCEPT
-
-        # Just below boundary: confidence == 0.799 -> NOT SLOW_ACCEPT (FAST_ONLY)
-        cand_below = replace(cand_boundary, confidence=0.799)
-        dec_below = gate.decide(cand_below, prior_value=None)
-        assert dec_below.decision is not HomeostasisDisposition.SLOW_ACCEPT
-        assert dec_below.decision is HomeostasisDisposition.FAST_ONLY
     finally:
         composition.close()
 
