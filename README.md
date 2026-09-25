@@ -81,7 +81,7 @@ MR now freezes three memory timescales:
 - **MR Memory** owns durable remembered events plus product attention/surfacing and optional unresolved Threads;
 - **LCE** owns latent longitudinal structure and hypotheses over the same canonical Memory substrate.
 
-Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread records reference canonical Memory IDs and cannot create new factual authority. See `docs/adr/0027-three-timescale-memory-product-governance.md`.
+Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread/open-structure state cannot create new factual authority. The frozen architecture also requires incremental cognition: explicit logic already reasoned online should be handed forward to LCE rather than rediscovered later from raw Memory; sleep/idle discovery is for structure that was not already formed. See `docs/architecture/MEMORY_ARCHITECTURE_V1.md` and ADR-0028.
 
 ### Turn admission and commit
 
