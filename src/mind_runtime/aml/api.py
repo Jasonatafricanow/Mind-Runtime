@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from mind_runtime.aml.contracts import (
@@ -212,7 +212,7 @@ def create_app(
     @app.post("/aml/add")
     def add(
         body: _AddModel,
-        _: Annotated[None, require_auth],
+        _: Annotated[None, Depends(require_auth)],
     ) -> dict[str, object]:
         request = AmlAddRequest(
             request_id=body.request_id,
