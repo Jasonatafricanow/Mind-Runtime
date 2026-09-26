@@ -498,7 +498,9 @@ class DeterministicIntentEngine:
                 version=1,
                 idempotency_key=f"idem-{intent_id}-v1",
             ),
-            surface_use=trace if (is_surface_aware or rule.minimum_initiative is not None) else None,
+            surface_use=(
+                trace if is_surface_aware or rule.minimum_initiative is not None else None
+            ),
         )
         return candidate, trace
 
