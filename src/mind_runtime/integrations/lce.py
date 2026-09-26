@@ -31,13 +31,13 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
+    from lce.cognition.promotion import BoundedInterpreter, PromotionPolicy
     from lce.contracts.baseline import Baseline
     from lce.contracts.consolidation import (
         CandidateBaseline,
         ConsolidationResult,
         SemanticConsolidatorPort,
     )
-    from lce.cognition.promotion import BoundedInterpreter, PromotionPolicy
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
     from lce.core.projection import LceProjectionCore
