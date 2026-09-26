@@ -180,7 +180,7 @@ class TypeSafeDecisionBackend:
         if not isinstance(probabilities, Mapping):
             raise ValueError
         if question.kind is DecisionKind.CHOICE:
-            mapped = {option: _probability(probabilities.get(option)) for option in question.options}
+            mapped = {\n                option: _probability(probabilities.get(option))\n                for option in question.options\n            }
             selected = raw.get("choice")
             confidence = _probability(raw.get("confidence"))
             if not isinstance(selected, str):
