@@ -171,7 +171,11 @@ def _body_semantics_from_request(
     appraisal_proposals = tuple(
         (
             candidate_id,
-            replace(proposal, supporting_evidence_refs=(evidence.id,)),
+            (
+                proposal
+                if proposal.supporting_evidence_refs
+                else replace(proposal, supporting_evidence_refs=(evidence.id,))
+            ),
         )
         for candidate_id, proposal in request.appraisal_proposals
     )
