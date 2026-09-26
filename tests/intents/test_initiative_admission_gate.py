@@ -1,7 +1,9 @@
 """Focused tests for the optional Surface.initiative admission gate."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from hashlib import sha256
+import json
 
 import pytest
 
@@ -210,26 +212,47 @@ def test_high_sadness_does_not_gate_reach_out() -> None:
 
 
 @pytest.mark.parametrize(
-    "rule",
+    ("kind", "root", "surface_weights", "event_kind", "direct_weight"),
     [
-        _rule(kind="reach_out"),
-        replace(_rule(), surface_control_weights=(("initiative", 0.1),)),
-        replace(_rule(), event_kind="event"),
-        replace(_rule(), dimension_weights=(("agent.affect.sharing_urge", 0.5),)),
+        ("reach_out", "agent.affect.sharing_urge", (), None, 1.0),
+        (
+            "spontaneous_share",
+            "agent.affect.sharing_urge",
+            (("initiative", 0.1),),
+            None,
+            1.0,
+        ),
+        ("spontaneous_share", "agent.affect.sharing_urge", (), "event", 1.0),
+        ("spontaneous_share", "agent.affect.sharing_urge", (), None, 0.5),
     ],
 )
-def test_gate_rejects_shapes_that_mix_authorities(rule: IntentRule) -> None:
+def test_gate_rejects_shapes_that_mix_authorities(
+    kind: str,
+    root: str,
+    surface_weights: tuple[tuple[str, float], ...],
+    event_kind: str | None,
+    direct_weight: float,
+) -> None:
     with pytest.raises(ValueError):
-        replace(rule, minimum_initiative=0.5)
+        IntentRule(
+            rule_id="invalid-gate",
+            kind=kind,
+            base_strength=0.0,
+            dimension_weights=((root, direct_weight),),
+            event_kind=event_kind,
+            event_bonus=0.0,
+            minimum_strength=0.3,
+            due_at_attribute=None,
+            expires_after=None,
+            reconsideration_policy=ReconsiderationPolicy.NEVER,
+            surface_control_weights=surface_weights,
+            minimum_initiative=0.5,
+        )
 
 
 def test_legacy_ruleset_hash_shape_omits_absent_gate() -> None:
     legacy = _rule(minimum_initiative=None)
     engine = DeterministicIntentEngine((legacy,), RUNTIME)
-    from hashlib import sha256
-    import json
-    from dataclasses import asdict
-
     wire = asdict(legacy)
     wire.pop("minimum_initiative")
     expected = "ruleset:" + sha256(
