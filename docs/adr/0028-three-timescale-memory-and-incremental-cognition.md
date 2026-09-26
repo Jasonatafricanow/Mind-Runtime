@@ -4,6 +4,7 @@
 - Date: 2026-09-25
 - Canonical explanation: `docs/architecture/MEMORY_ARCHITECTURE_V1.md`
 - Base decisions: ADR-0023 through ADR-0026 remain in force.
+- Projection ownership clarification: ADR-0033.
 
 ## Decision
 
@@ -35,7 +36,11 @@ Memory decay changes foreground attention, not historical truth.
 
 Retrieval is read-only and is not reinforcement.
 
-An explicit open structure/Thread is a bounded product object over canonical Memory support. It is not a second history store and it is not the longitudinal interpretation engine.
+An explicit open structure/Thread is a bounded, temporary projection over
+canonical Memory support. It is not a second history store and it is not the
+longitudinal interpretation engine. Once an accepted LCE Baseline represents
+the same mature online relation, that Baseline supersedes the active Thread
+projection.
 
 The target Thread model is therefore bounded: stable identity, open question, status, origin/current bounded support, optional already-reasoned working summary, explicit maturity, and update time. Full longitudinal history remains in canonical Memory.
 
@@ -83,7 +88,9 @@ Baseline HEAD + new evidence
 -> future cognition
 ```
 
-A later branch starts from the current accepted understanding. Settled history does not need to be semantically rebuilt on every turn.
+A later branch starts from the current accepted understanding. Settled history
+does not need to be semantically rebuilt on every turn, and a compiled Thread
+does not remain active beside the Baseline that superseded it.
 
 ## Surfacing
 
@@ -110,7 +117,11 @@ MR canonical Memory remains the shared durable asset substrate.
 
 LCE may persist derived Semantic Blocks, Worktrees, Baseline revisions and indexes, but those are cognition artifacts rather than a second factual Memory authority.
 
-Thread does not require a parallel MR-to-LCE transport ontology. Stable canonical Memory identities and provenance remain the support seam.
+Thread does not require a parallel MR-to-LCE transport ontology. Stable
+canonical Memory identities and provenance remain the support seam. Temporal
+metadata carried in the reserved LCE consolidation context is an extension of
+that same call and same selected Memory IDs; it is not independently
+addressable factual transport.
 
 ## Current implementation note
 
@@ -127,6 +138,13 @@ reuses the accepted semantic event already produced for that turn, resolves its
 references back to ACTIVE canonical Memory, and updates the bounded Thread only
 after successful turn commit. No second model call is introduced for Thread
 classification, and an aborted/replayed turn does not create a second update.
+
+When LCE composition is enabled, the same post-commit projection path compiles
+mature Threads through Path A. LCE acceptance returns the Baseline identity;
+MR then deletes the temporary Thread projection. The accepted Baseline region
+and its supporting canonical Memory IDs retain lineage. If LCE is disabled or
+compilation fails, the Thread remains available and canonical Memory is
+affected by neither outcome.
 
 The production latent-discovery seam now keeps MR as the sole factual source:
 LCE receives canonical Memory views plus a bounded MR-owned temporal context.

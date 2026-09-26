@@ -77,13 +77,36 @@ The default implementation works without a vector database. Qdrant/FastEmbed ada
 
 The retrieval seam also supports a dependency-free BM25 arm, Reciprocal Rank Fusion across lexical/semantic providers, and optional HyDE query expansion. The preferred policy keeps HyDE off the normal path and invokes it only when primary hybrid recall is sparse. These mechanisms only rank stable Memory IDs; canonical Scope/lifecycle/content are still revalidated by MR before anything reaches context. See ADR-0029.
 
-MR now freezes three memory timescales:
+MR treats durable memory as one authority with layered projections:
 
-- **StateBar** owns short-lived current state and semantic expiry;
-- **MR Memory** owns durable remembered events plus product attention/surfacing and optional unresolved Threads;
-- **LCE** owns latent longitudinal structure and hypotheses over the same canonical Memory substrate.
+```text
+raw text / Evidence / Observation
+        -> canonical Memory
+        -> temporary Thread projection
+        -> accepted LCE Baseline projection
+```
 
-Product attention is derived state: decay changes visibility, not truth. Retrieval never reinforces a Memory; reinforcement is explicit. Thread/open-structure state cannot create new factual authority. With Memory enabled, the post-commit Thread updater reuses the turn's already-accepted semantic event to open, update, mature, or resolve bounded Threads against canonical Memory support; it does not add a second model call. The frozen architecture also requires incremental cognition: explicit logic already reasoned online should be handed forward to LCE rather than rediscovered later from raw Memory; sleep/idle discovery is for structure that was not already formed. See `docs/architecture/MEMORY_ARCHITECTURE_V1.md` and ADR-0028.
+StateBar remains a separate short-lived current-state authority. Inside the
+Memory subsystem, canonical Memory is the factual substrate; Thread and LCE are
+derived views over the same stable Memory identities. Retrieval/vector state is
+also derived and never becomes authority.
+
+The post-commit Thread updater reuses semantic work already performed for the
+turn. A Thread is a temporary cache for an online line that may still develop,
+not a second history. When LCE is enabled and a mature Thread is successfully
+compiled into an accepted Baseline, MR deletes that temporary Thread
+projection instead of maintaining the same logic twice. The Baseline lineage
+and canonical Memory support retain the durable trace.
+Failed or disabled compilation leaves the Thread intact and never rolls back
+canonical Memory.
+
+Unstructured history remains available for future idle/sleep/dream LCE
+discovery. The same historical-context composition is the single outward read
+boundary: it prefers accepted Baselines, may expose at most a bounded relevant
+active Thread projection, then fills remaining budget with canonical Memory
+detail. Raw Evidence/source text is retained primarily for provenance,
+falsification, rebuild, and retrieval fallback. See
+`docs/architecture/MEMORY_ARCHITECTURE_V1.md`, ADR-0028, and ADR-0033.
 
 ### Turn admission and commit
 
@@ -115,11 +138,16 @@ MR has an optional LCE integration under `src/mind_runtime/integrations/lce.py`.
 LCE remains a separate repository and is not vendored into MR Core.
 
 The integration keeps canonical Memory authority in MR while supporting three
-bounded operations: explicit-ID LCE Core consolidation, no-model handoff of a
-mature Thread's already-reasoned working structure, and readback of accepted
-Baseline cognition into HistoricalContext. Accepted cognition is preferred over
-raw Memory when both compete for the same bounded history budget, so previously
-compiled longitudinal logic does not need to be reconstructed every turn.
+bounded operations: explicit-ID LCE Core consolidation, no-model compilation of
+a mature Thread's already-reasoned working structure, and readback of accepted
+Baseline cognition into HistoricalContext. When production LCE composition is
+enabled, the normal post-commit Thread path performs that compilation
+automatically and retires the lower-level Thread projection after Baseline
+acceptance.
+
+Accepted cognition is preferred over ordinary Memory retrieval inside the same
+bounded history budget, so previously compiled longitudinal logic does not need
+to be reconstructed every turn.
 
 The full standalone LCE V1 discovery runtime is not copied into MR because its
 standalone Reference Memory owns source evidence as well as derived cognition.
@@ -135,7 +163,7 @@ The current public repository separates deterministic/local verification from cl
 | Persistent state, bindings, commit/abort, restart recovery | Implemented and regression-tested | `src/mind_runtime/`, `tests/`, restart validation |
 | Deterministic certification | Implemented | `certification/`, validation tests, current CI |
 | Observation Window | Implemented as a read-only inspection surface | `src/observation_window/` |
-| LCE integration | Optional canonical-Memory binding, mature-Thread handoff, accepted-cognition readback | `src/mind_runtime/integrations/lce.py`, architecture records |
+| Layered Memory projections / LCE integration | Canonical-Memory binding, automatic mature-Thread projection upgrade when enabled, accepted-cognition readback | `src/mind_runtime/memory/`, `src/mind_runtime/integrations/lce.py`, ADR-0033 |
 | Live shadow validation | Incomplete / externally blocked | certification and architecture records |
 | General-purpose longitudinal cognition inside MR | Not a product claim | longitudinal research remains separate or bounded |
 
@@ -174,7 +202,7 @@ The repository contains code for:
 
 - persistent facts and state;
 - binding/namespace isolation;
-- memory storage, bounded retrieval, attention/surfacing governance, and unresolved Threads;
+- canonical memory storage, bounded retrieval, attention/surfacing governance, and temporary Thread projections;
 - optional semantic vector retrieval;
 - intent lifecycle and scheduling;
 - expression/context guards;

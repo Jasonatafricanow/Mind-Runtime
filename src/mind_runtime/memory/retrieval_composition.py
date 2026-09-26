@@ -13,7 +13,8 @@ from mind_runtime.contracts.historical import HistoricalContextBundle, Historica
 from mind_runtime.emotional_transition.history import NullHistoricalContext
 from mind_runtime.integrations.lce import open_lce_read_binding
 from mind_runtime.memory.history import MemoryHistoricalContextAdapter
-from mind_runtime.memory.product import MemoryProductStore
+from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
+from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.retrieval import (
     DEFAULT_SURFACE_BUDGET,
     MemoryRetrievalService,
@@ -57,16 +58,17 @@ def _merge_bundles(
     origin_runtime_id: str,
     budget: MemorySurfaceBudget,
     lce: HistoricalContextBundle | None,
+    thread: HistoricalContextBundle | None,
     memory: HistoricalContextBundle | None,
 ) -> HistoricalContextBundle | None:
-    if lce is None and memory is None:
+    if lce is None and thread is None and memory is None:
         return None
 
-    # Compiled cognition is preferred. Raw Memory fills the remaining bounded
-    # budget instead of forcing the model to reconstruct an already accepted
-    # longitudinal line again.
+    # Prefer the highest available logical projection. A relevant active
+    # Thread can carry not-yet-compiled online reasoning; canonical Memory
+    # fills the remaining budget rather than reconstructing accepted logic.
     candidates: list[HistoricalContextItem] = []
-    for bundle in (lce, memory):
+    for bundle in (lce, thread, memory):
         if bundle is None:
             continue
         candidates.extend(bundle.episodes)
@@ -90,7 +92,7 @@ def _merge_bundles(
     source_refs = tuple(sorted({ref for item in selected for ref in item.source_refs}))
     traces = tuple(
         bundle.provider_trace
-        for bundle in (lce, memory)
+        for bundle in (lce, thread, memory)
         if bundle is not None
     )
     return HistoricalContextBundle(
@@ -113,6 +115,7 @@ class _BoundMemoryHistory:
     provider: RetrievalProvider | None
     budget: MemorySurfaceBudget
     lce_enabled: bool
+    thread_enabled: bool
     production_root: Path | str | None
     lab_root: Path | str | None
 
@@ -156,6 +159,90 @@ class _BoundMemoryHistory:
         finally:
             product.close()
             store.close()
+
+    def _thread_bundle(
+        self,
+        *,
+        interaction_id: str,
+        context: Situation,
+        observations: tuple[Observation, ...],
+        scope: Scope,
+    ) -> HistoricalContextBundle | None:
+        """Read at most one relevant active Thread projection.
+
+        The initial selector is intentionally small and replaceable. It reuses
+        lexical tokens only to avoid exposing the full active Thread set to the
+        model; retrieval quality/TTL/capacity remain separate refinement work.
+        """
+        if not self.thread_enabled:
+            return None
+        text = _query_text(interaction_id, observations)
+        query_tokens = set(lexical_tokens(text))
+        if not query_tokens:
+            return None
+
+        store = CanonicalMemoryStore(self.paths.memory_db, read_only=True)
+        product = MemoryProductStore(self.paths.memory_db, store, read_only=True)
+        try:
+            ranked: list[tuple[float, datetime, str, MemoryThread]] = []
+            for thread in product.list_threads(
+                scope,
+                status=ThreadStatus.OPEN,
+                include_suppressed=False,
+            ):
+                projection_text = " ".join(
+                    value
+                    for value in (thread.open_question, thread.working_summary)
+                    if value
+                )
+                tokens = set(lexical_tokens(projection_text))
+                overlap = len(query_tokens & tokens)
+                if overlap == 0:
+                    continue
+                relevance = overlap / max(1, len(query_tokens))
+                ranked.append(
+                    (relevance, thread.updated_at, thread.thread_id, thread)
+                )
+            if not ranked:
+                return None
+            ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+            thread = ranked[0][3]
+            proposition = thread.working_summary or thread.open_question
+            source_refs = tuple(
+                sorted(
+                    {
+                        ref
+                        for memory_id in thread.handoff_memory_ids
+                        if (memory := store.get(memory_id)) is not None
+                        for ref in memory.provenance.evidence_refs
+                    }
+                )
+            )
+        finally:
+            product.close()
+            store.close()
+
+        item = HistoricalContextItem(
+            item_id=f"thread:{thread.thread_id}",
+            scope=thread.scope,
+            external_id=thread.thread_id,
+            kind="memory.thread_projection",
+            proposition=proposition,
+            source_refs=source_refs,
+            confidence=None,
+            relevance_hint=ranked[0][0],
+        )
+        return HistoricalContextBundle(
+            bundle_id=f"thread-history:{interaction_id}",
+            scope=scope,
+            origin_runtime_id=context.origin_runtime_id,
+            episodes=(item,),
+            stable_facts=(),
+            relationship_events=(),
+            pattern_summaries=(),
+            source_refs=source_refs,
+            provider_trace="active-thread-projection",
+        )
 
     def _lce_bundle(
         self,
@@ -228,6 +315,12 @@ class _BoundMemoryHistory:
             observations=observations,
             scope=scope,
         )
+        thread = self._thread_bundle(
+            interaction_id=interaction_id,
+            context=context,
+            observations=observations,
+            scope=scope,
+        )
         memory = self._memory_bundle(
             interaction_id=interaction_id,
             context=context,
@@ -241,6 +334,7 @@ class _BoundMemoryHistory:
             origin_runtime_id=context.origin_runtime_id,
             budget=self.budget,
             lce=lce,
+            thread=thread,
             memory=memory,
         )
 
@@ -251,13 +345,25 @@ def build_memory_history(
     provider: RetrievalProvider | None = None,
     budget: MemorySurfaceBudget = DEFAULT_SURFACE_BUDGET,
     lce_enabled: bool = False,
+    thread_enabled: bool = False,
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
 ) -> HistoricalContextPort:
-    """Compose raw Memory retrieval and accepted LCE cognition independently."""
+    """Expose the Memory subsystem's single outward historical-context boundary.
+
+    Accepted compiled cognition is preferred; canonical Memory retrieval fills
+    the remaining bounded budget. Thread remains an internal temporary
+    projection and is not dumped wholesale into model context.
+    """
     if type(lce_enabled) is not bool:
         raise TypeError("lce_enabled must be bool")
-    if (provider is None or isinstance(provider, NullRetrievalProvider)) and not lce_enabled:
+    if type(thread_enabled) is not bool:
+        raise TypeError("thread_enabled must be bool")
+    if (
+        (provider is None or isinstance(provider, NullRetrievalProvider))
+        and not lce_enabled
+        and not thread_enabled
+    ):
         return NullHistoricalContext()
     paths = resolve_storage_paths(binding, production_root=production_root, lab_root=lab_root)
     return _BoundMemoryHistory(
@@ -266,6 +372,7 @@ def build_memory_history(
         provider,
         budget,
         lce_enabled,
+        thread_enabled,
         production_root,
         lab_root,
     )

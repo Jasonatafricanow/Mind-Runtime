@@ -30,6 +30,18 @@ def test_bound_fact_composition_default_off_and_explicit_on(tmp_path, monkeypatc
     store.close()
 
 
+def test_thread_projection_composition_keeps_compiler_behind_port():
+    from mind_runtime.memory.composition import build_bound_thread_updates
+    from mind_runtime.runtime_binding import production_binding
+
+    binding = production_binding("p")
+    assert build_bound_thread_updates(binding) is None
+    with pytest.raises(ValueError, match="enabled"):
+        build_bound_thread_updates(binding, enabled=1)
+    with pytest.raises(ValueError, match="projection_compiler"):
+        build_bound_thread_updates(binding, projection_compiler=object())
+
+
 def test_stack_enabled_requires_matching_binding_paths(tmp_path):
     from mind_runtime.shadow.runtime_loop import build_runtime_stack
 
@@ -41,6 +53,42 @@ def test_stack_enabled_requires_matching_binding_paths(tmp_path):
             memory_enabled=True,
             origin_runtime_id="runtime-1",
             user_id="user",
+        )
+
+
+def test_runtime_composition_injects_lce_compiler_above_memory_core(tmp_path, monkeypatch):
+    from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+    from mind_runtime.runtime_binding import production_binding
+    from mind_runtime.shadow.runtime_loop import build_runtime_stack
+
+    monkeypatch.setenv("MR_FACTS_DB", str(tmp_path / "facts.sqlite"))
+    monkeypatch.setenv("MR_STATE_DB", str(tmp_path / "state.sqlite"))
+    binding = production_binding("p", runtime_id="runtime-1")
+
+    orchestrator, _ = build_runtime_stack(
+        clock=FakeClock(NOW),
+        facts_db=tmp_path / "facts.sqlite",
+        state_db=tmp_path / "state.sqlite",
+        origin_runtime_id="runtime-1",
+        user_id="user",
+        memory_enabled=True,
+        memory_binding=binding,
+        lce_enabled=True,
+    )
+    assert orchestrator._thread_updates is not None
+    assert isinstance(
+        orchestrator._thread_updates._projection_compiler,
+        LceThreadProjectionCompiler,
+    )
+
+    with pytest.raises(ValueError, match="lce_enabled"):
+        build_runtime_stack(
+            clock=FakeClock(NOW),
+            facts_db=tmp_path / "facts.sqlite",
+            state_db=tmp_path / "state.sqlite",
+            origin_runtime_id="runtime-1",
+            user_id="user",
+            lce_enabled=1,
         )
 
 

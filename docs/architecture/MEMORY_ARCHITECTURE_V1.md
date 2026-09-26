@@ -95,24 +95,34 @@ MR          -> who owns canonical truth, scope, provenance, admission and author
 
 ---
 
-## 3. One closed-loop memory architecture, three cognitive timescales
+## 3. One Memory authority, layered projections, three cognitive timescales
 
-The three layers are best understood as:
+The system has three cognitive timescales, but it must not be implemented as
+three competing memory databases.
 
 ```text
-显性短期 / explicit short-term
-        StateBar
+current state
+    StateBar
 
-显性中期 / explicit medium-term
-        MR Memory + open structures
-
-潜意识 / latent longitudinal cognition
-        LCE
+durable Memory subsystem
+    raw text / Evidence / Observation
+        -> canonical Memory
+        -> temporary Thread projection
+        -> accepted LCE Baseline projection
 ```
 
-They are not three competing databases.
+StateBar remains a separate current-state authority. Inside the durable Memory
+subsystem, canonical Memory is the factual substrate while Thread and LCE are
+different logical projections over the same historical assets.
 
-They answer different questions and use different expiry/revision semantics.
+Logical unification does not require physical co-location. LCE may keep its own
+derived Baseline/Worktree persistence and vector indexes may live elsewhere.
+Those stores remain projections or indexes because stable canonical Memory IDs
+and provenance are the factual seam.
+
+The normal read direction prefers the most processed valid representation.
+Lower layers remain available for detail, provenance, contradiction checking,
+rebuild, and fallback.
 
 ---
 
@@ -205,9 +215,13 @@ It is an explicit medium-term structure:
 
 > "Replacing the computer is still an open line, and this is the current understood direction."
 
-A Thread/open structure therefore exists only to represent that an explicit line is **still open** and to point at the currently relevant canonical Memory support.
+A Thread/open structure therefore exists only to cache an explicit line that
+normal online reasoning has already noticed but has not yet compiled into a
+stable longitudinal understanding.
 
-It must not become a second history database.
+It is short-lived derived state. It must not become a second history database
+or remain active after a higher-level LCE Baseline represents the same
+already-reasoned relation.
 
 ### 5.4 What a Thread is not
 
@@ -235,6 +249,21 @@ updated_at
 The full history stays in canonical Memory. Thread support is bounded and replaceable;
 legacy append-only event histories are collapsed on read rather than becoming a second
 trajectory store.
+
+A Thread therefore has two architectural exit paths:
+
+```text
+no useful continuation
+-> expire / leave the active working set
+
+relation becomes sufficiently explicit
+-> compile to accepted LCE Baseline
+-> delete the temporary Thread projection
+-> keep lineage in the accepted Baseline + canonical support
+```
+
+The exact wake-up algorithm, active-set capacity and inactivity TTL are deferred
+implementation policy. They do not change the projection boundary.
 
 ---
 
@@ -271,11 +300,13 @@ Direct handoff still preserves provenance. "Skip duplicate reasoning" does not m
 For this explicit online path, the mature Thread is already the bounded working
 structure. MR hands its current summary plus stable canonical Memory support to
 LCE without asking another model to rediscover the same relation. LCE revalidates
-the support and advances the immutable Baseline lineage. A second LCE Worktree
-would only duplicate the Thread's already-completed working-state role.
+the support and advances the immutable Baseline lineage. Once an accepted
+Baseline identity exists, MR retires the active Thread projection instead of
+maintaining two live copies of the same logic.
 
-LCE Worktrees remain the draft/confirmation mechanism for the latent-discovery
-path, where the structure was not already formed online.
+A second LCE Worktree would only duplicate the Thread's already-completed
+working-state role. LCE Worktrees remain the draft/confirmation mechanism for
+the latent-discovery path, where the structure was not already formed online.
 
 ### 6.2 Path B — latent discovery from unstructured history
 
@@ -406,40 +437,49 @@ The full architecture is:
 ```text
 interaction / evidence
         |
-        +-----------------------------+
-        |                             |
-        v                             v
-StateBar                        MR canonical Memory
-what is current now             what happened
-        |                             |
-        |                       explicit open line
-        |                       / medium structure
-        |                             |
-        |                    +--------+---------+
-        |                    |                  |
-        |                    v                  v
-        |           already reasoned       still unstructured
-        |                    |                  |
-        |                    v                  v
-        |              direct LCE input    LCE discovery
-        |                    |                  |
-        |                    |              LCE Worktree
-        |                    |                  |
-        |                    +--------+---------+
-        |                             v
-        |                         Baseline
-        |                             |
-        +-----------------------------+
-                                      |
-                                      v
-                         next cognition starts here
+        +-----------------------> StateBar
+        |                         current-state authority
+        |
+        v
+raw text / Evidence / Observation
+        |
+        v
+canonical Memory
+        |
+        +--------------------+----------------------+
+        |                    |                      |
+        |                    |                      |
+online reasoning sees     still unstructured     ordinary retrieval
+a possible line              history               / detail
+        |                    |
+        v                    v
+Thread projection      idle / sleep / dream LCE
+temporary cache          topology discovery
+        |                    |
+        | relation clear     v
+        +---------------> LCE Worktree
+        |                    |
+        +--------------------+
+                 |
+                 v
+          accepted Baseline
+                 |
+      supersedes active Thread
+                 |
+                 v
+      next cognition starts here
 ```
 
-Each layer consumes **new information or unresolved structure**, not the entire history again.
+Each layer consumes new information or unresolved structure, not the entire
+history again. Thread reuses inference already paid for during the online turn;
+idle LCE discovery is reserved for structure the online path did not form.
 
 ---
 
-## 9. Surfacing after compiled cognition
+## 9. One outward read authority
+
+Outside consumers should not independently coordinate Thread, LCE and raw
+Memory stores. The Memory composition boundary owns historical-context output.
 
 Ordinary semantic retrieval remains useful, but it is not the highest-level continuity mechanism.
 
@@ -476,7 +516,21 @@ This supports a natural response such as:
 
 The continuity comes from the existing logic line, not from pretending that one old Memory became irrelevant merely because time passed.
 
-Memory attention/surfacing still matters for ordinary supporting detail and for material not represented in compiled cognition. It must not replace longitudinal state with a single ranking formula.
+Memory attention/surfacing still matters for ordinary supporting detail and for
+material not represented in compiled cognition. It must not replace
+longitudinal state with a single ranking formula.
+
+The intended read hierarchy is conceptually:
+
+```text
+accepted Baseline cognition
+-> active relevant Thread projection when needed
+-> canonical Memory detail
+-> Evidence/raw source only for provenance, falsification, rebuild or fallback
+```
+
+This is a composition policy, not four independent authorities. The exact
+ranking and context-budget policy may evolve without changing ownership.
 
 ---
 
@@ -534,27 +588,35 @@ The underlying event can remain historically true while the derived interpretati
 
 ---
 
-## 11. Why there is no second Memory store
+## 11. Logical unification, physical separation
 
-MR Memory is the shared durable asset substrate.
+MR canonical Memory is the shared durable factual substrate.
 
-LCE can maintain its own derived research/runtime artifacts such as Semantic Blocks, Worktrees, Baseline revisions and indexes, but that does not create a second factual Memory authority.
+Thread, LCE and retrieval are projections or indexes over that substrate. They
+may be physically stored separately when operationally useful, but physical
+separation must not create duplicated factual ownership.
 
-The production binding uses stable MR Memory identities and provenance.
+LCE can maintain derived research/runtime artifacts such as Semantic Blocks,
+Worktrees, Baseline revisions and indexes. Embedded LCE resolves factual
+support through stable MR Memory IDs rather than copying an authoritative
+Reference Memory into MR.
 
-Likewise, Threads do not require a parallel MR-to-LCE bus.
-
-Conceptually:
+Likewise, Threads do not require a parallel MR-to-LCE bus. Path A is a
+projection upgrade over the same support set:
 
 ```text
 same canonical Memory assets
         |
-        +--> retrieval/surfacing
-        +--> explicit open structures
-        +--> LCE longitudinal compilation
+        +--> retrieval index
+        +--> temporary Thread projection
+        |          |
+        |          +--> accepted Baseline -> Thread retires
+        |
+        +--> idle LCE discovery -> Worktree -> accepted Baseline
 ```
 
-Different consumers apply different policies to the same historical assets.
+This permits standalone LCE to evolve independently while MR swaps only the
+factual substrate adapter at integration time.
 
 ---
 
@@ -610,9 +672,12 @@ This section distinguishes architecture from implementation.
   attributes are resolved back to ACTIVE canonical Memory support before a
   Thread may open, update, mature, or resolve.
 - Thread identity/update is deterministic and bounded: exact/open-question and
-  lexical overlap are used only to choose an existing open Thread; they do not
-  create factual authority. A Thread matures only after an explicit working
-  summary has support beyond its origin.
+  lexical overlap are currently used to choose an existing open Thread. The
+  matching policy is replaceable and is not factual authority.
+- when LCE composition is enabled, mature Threads are automatically compiled
+  through Path A. An accepted Baseline deletes the temporary Thread projection,
+  so the same logical product is not maintained in both layers. Failed or
+  disabled compilation leaves the Thread intact and never rolls back Memory.
 - LCE standalone V1 still owns its latent Semantic Block -> structure ->
   Worktree -> Baseline research/runtime path.
 - MR exposes a bounded read-only temporal view for LCE Path B. Evidence/source
@@ -642,6 +707,11 @@ This section distinguishes architecture from implementation.
 4. **Memory attention ranking is secondary.**  
    Attention/surfacing governs foreground visibility of ordinary Memory. It
    must not replace or flatten an already-compiled longitudinal logic line.
+
+Thread retrieval quality, TTL/capacity and context exposure are intentionally
+deferred refinements recorded in
+`docs/architecture/MEMORY_PROJECTION_FUTURE_REFINEMENTS.md`. They are not
+required to reopen the architecture.
 
 These are implementation tasks, not reasons to redesign the architecture.
 

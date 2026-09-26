@@ -70,6 +70,18 @@ class ThreadUpdatePort(Protocol):
         ...
 
 
+@runtime_checkable
+class ThreadProjectionCompiler(Protocol):
+    """Compile a mature Thread into a higher-level cognition projection.
+
+    Returning a Baseline ID means the projection was accepted and the Thread
+    may leave the active working set. Returning None leaves the Thread active.
+    """
+
+    def compile(self, thread: MemoryThread) -> str | None:
+        ...
+
+
 def _normalized(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
@@ -125,6 +137,7 @@ class ThreadAutoUpdateService:
         canonical: CanonicalMemoryStore,
         product: MemoryProductStore,
         minimum_match: float = 0.30,
+        projection_compiler: ThreadProjectionCompiler | None = None,
     ) -> None:
         if (
             isinstance(minimum_match, bool)
@@ -135,6 +148,7 @@ class ThreadAutoUpdateService:
         self._canonical = canonical
         self._product = product
         self._minimum_match = float(minimum_match)
+        self._projection_compiler = projection_compiler
 
     def close(self) -> None:
         self._product.close()
@@ -148,7 +162,7 @@ class ThreadAutoUpdateService:
         at: datetime,
     ) -> tuple[MemoryThread, ...]:
         require_aware_utc(at, "at")
-        changed: list[MemoryThread] = []
+        changed_by_id: dict[str, MemoryThread] = {}
         for event in accepted_events:
             if event.scope != scope:
                 continue
@@ -164,8 +178,31 @@ class ThreadAutoUpdateService:
             else:
                 updated = self._resolve(scope, signal, support, at)
             if updated is not None:
-                changed.append(updated)
-        return tuple(changed)
+                changed_by_id[updated.thread_id] = updated
+
+        # Thread is a temporary projection. Once the same logical line has an
+        # accepted higher-level projection, delete the lower projection instead
+        # of maintaining two copies of the same logical product.
+        if self._projection_compiler is not None:
+            for thread in self._product.list_threads(scope, include_suppressed=True):
+                if (
+                    thread.status in (ThreadStatus.OPEN, ThreadStatus.RESOLVED)
+                    and thread.mature
+                    and thread.working_summary is not None
+                ):
+                    baseline_id = self._projection_compiler.compile(thread)
+                    if baseline_id is None:
+                        continue
+                    self._product.retire_compiled_thread(
+                        thread.thread_id,
+                        baseline_id=baseline_id,
+                    )
+                    # Keep the affected snapshot in the return value for turn
+                    # tracing; the projection itself no longer exists in the
+                    # active/product store after successful compilation.
+                    changed_by_id[thread.thread_id] = thread
+
+        return tuple(changed_by_id.values())
 
     def _supporting_memories(
         self, scope: Scope, refs: tuple[str, ...]

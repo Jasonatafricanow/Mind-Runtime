@@ -1,7 +1,7 @@
 """Product-level memory governance over canonical MR Memory.
 
 Canonical Memory remains factual authority. This module stores only derived
-attention state and explicit unresolved trajectories in the same memory.sqlite.
+attention state and short-lived logical projections in the same memory.sqlite.
 Neither attention nor threads can create Evidence, Observation, or Memory.
 """
 
@@ -471,6 +471,37 @@ class MemoryProductStore:
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
         return thread
+
+    def retire_compiled_thread(
+        self,
+        thread_id: str,
+        *,
+        baseline_id: str,
+    ) -> bool:
+        """Remove a temporary Thread after LCE accepted its higher projection.
+
+        The accepted Baseline owns durable cognition lineage under the stable
+        mr-thread:<thread_id> region and canonical Memory IDs keep factual
+        provenance. Keeping the Thread row after that point would duplicate the
+        same logical product. Missing rows are an idempotent no-op.
+        """
+        self._writable()
+        require_non_empty(baseline_id, "baseline_id")
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            return False
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be retired as compiled")
+        if not thread.mature or thread.working_summary is None:
+            raise ValueError("Thread is not mature for compilation retirement")
+        if not self._thread_support_is_current(thread):
+            raise ValueError("Thread support is not current")
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM memory_threads WHERE thread_id=?",
+                (thread_id,),
+            )
+        return True
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
         self._writable()

@@ -50,10 +50,16 @@ not own MR raw memory, vector coordinates, or current response reasoning.
 
 ## Architectural Consequence
 
-MR continues to work without LCE. LCE consumes authorized external memory
-views and can persist its own baseline lineage without becoming the runtime's
-current-state authority. The boundary also permits LCE experiments to be
-changed, disabled, or removed without rewriting MR Memory or production state.
+MR continues to work without LCE. LCE consumes canonical external Memory views
+and can persist its own derived Baseline lineage without becoming another
+factual store. Thread and LCE are therefore logically part of the same Memory
+projection hierarchy even though LCE Core remains a separate package and may
+use separate physical persistence.
+
+That split keeps the research surface replaceable: standalone LCE can evolve
+its own discovery/topology implementation, while embedded MR swaps factual
+source ownership for the MR `MemorySubstratePort`. No Memory-content
+synchronization is required.
 
 This is why the two repositories have different public identities. MR is the
 runtime and authority boundary. LCE is the longitudinal structure and
@@ -67,6 +73,12 @@ compilation research surface.
 
 ## Current Status
 
-The MR-side binding exists in the public MR source. LCE Core remains external;
-production activation and automatic longitudinal compilation are separate
-deployment/research decisions, not implicit MR features.
+The MR-side binding exists in the public MR source and production composition
+can now automatically promote mature Thread projections into accepted LCE
+Baselines when LCE is explicitly enabled. The Thread is then retired from the
+active working set, leaving one live logical product rather than parallel
+Thread/LCE copies.
+
+LCE Core remains external. Idle/sleep/dream latent discovery over unstructured
+Memory is still deferred; that future scheduler does not change the factual
+ownership boundary.

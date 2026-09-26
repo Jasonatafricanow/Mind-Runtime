@@ -371,10 +371,12 @@ def default_adapter(
         telemetry_sink=telemetry_sink,
         memory_enabled=memory_enabled,
         memory_binding=binding,
+        lce_enabled=lce_enabled,
         historical_context=build_memory_history(
             binding,
             provider=retrieval_provider,
             lce_enabled=lce_enabled,
+            thread_enabled=memory_enabled,
         ),
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)

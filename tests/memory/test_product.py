@@ -199,6 +199,77 @@ def test_open_update_resolve_thread_is_bounded_durable_and_handoff_ready(tmp_pat
     canonical.close()
 
 
+def test_compiled_thread_projection_is_deleted_after_baseline_acceptance(tmp_path):
+    path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    product.open_thread(
+        thread_id="thread-upgrade",
+        scope=memory().scope,
+        open_question="Will the computer replacement happen?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+    )
+    product.update_thread(
+        "thread-upgrade",
+        supporting_memory_ids=("memory-1", "memory-2"),
+        at=at + timedelta(days=1),
+        working_summary="Price became the blocker, so replacement was postponed.",
+        mature=True,
+    )
+
+    assert product.retire_compiled_thread(
+        "thread-upgrade",
+        baseline_id="baseline-1",
+    )
+    assert product.get_thread("thread-upgrade") is None
+    assert product.list_threads(memory().scope) == ()
+    assert product.surface_threads(memory().scope, now=at + timedelta(days=2)) == ()
+    assert not product.retire_compiled_thread(
+        "thread-upgrade",
+        baseline_id="baseline-1",
+    )
+
+    product.close()
+    product = MemoryProductStore(path, canonical)
+    assert product.get_thread("thread-upgrade") is None
+    product.close()
+    canonical.close()
+
+
+def test_retire_compiled_thread_rejects_invalid_projection_states(tmp_path):
+    _, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+
+    product.open_thread(
+        thread_id="immature",
+        scope=memory().scope,
+        open_question="Still tentative?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+    )
+    with pytest.raises(ValueError, match="not mature"):
+        product.retire_compiled_thread("immature", baseline_id="baseline-1")
+
+    product.open_thread(
+        thread_id="abandoned",
+        scope=memory().scope,
+        open_question="Abandoned?",
+        supporting_memory_ids=("memory-2",),
+        at=at,
+        working_summary="This line was abandoned before compilation.",
+        mature=True,
+    )
+    product.abandon_thread("abandoned", at=at + timedelta(days=1))
+    with pytest.raises(ValueError, match="abandoned"):
+        product.retire_compiled_thread("abandoned", baseline_id="baseline-2")
+
+    with pytest.raises(ValueError, match="non-empty"):
+        product.retire_compiled_thread("immature", baseline_id="")
+
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
