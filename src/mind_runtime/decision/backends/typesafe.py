@@ -47,9 +47,13 @@ def _http_post_json(
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            decoded = json.loads(response.read())
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            raw = response.read()
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise DecisionModelUnavailable("TypeSafe request failed") from exc
+    try:
+        decoded = json.loads(raw)
+    except ValueError as exc:
+        raise DecisionModelInvalidResponse("TypeSafe response is not JSON") from exc
     if not isinstance(decoded, dict):
         raise DecisionModelInvalidResponse("TypeSafe response must be an object")
     return cast(dict[str, object], decoded)
