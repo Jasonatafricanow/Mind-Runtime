@@ -15,6 +15,7 @@ from typing import Any
 from mind_runtime.contracts import (
     ActionDecision,
     ActionPolicyInput,
+    AppraisalModelProposal,
     ActionPolicyResult,
     ActionReceipt,
     Authority,
@@ -39,6 +40,7 @@ from mind_runtime.contracts import (
     ProviderExpressionContext,
     RuntimeState,
     Scope,
+    SemanticEventCandidate,
     ScopeDomain,
     Situation,
     StateTransition,
@@ -60,9 +62,6 @@ from mind_runtime.contracts.telemetry import TelemetrySinkProtocol, TelemetrySta
 from mind_runtime.delivery import DeliveryRequest
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import EventEffectRule
-from mind_runtime.emotional_transition.factory import (
-    create_semantic_provider,
-)
 from mind_runtime.emotional_transition.history import NullHistoricalContext
 from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
@@ -222,6 +221,8 @@ class _Turn:
     surface: SurfaceProjectionResult | None = None
     surface_handoff_request_id: str | None = None
     surface_guard_accepted: bool = False
+    semantic_candidates: tuple[SemanticEventCandidate, ...] = ()
+    appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
 
 
 def _mr_thread_trace(phase: str, orchestrator: TurnOrchestrator, interaction_id: str = "") -> None:
@@ -338,14 +339,10 @@ class TurnOrchestrator:
         # ADR-0004: the canonical path has one EmotionalTransition hop. With
         # a Persona, it is backed by the D7 algorithmic engine; without one,
         # the walking skeleton uses a deterministic stub.
-        # J8-SP1: explicit semantic_provider wins over the factory. If the
-        # caller did not inject one, ask the factory (which reads
-        # MR_SEMANTIC_PROVIDER + GLM_API_KEY from the environment, default
-        # OFF). The factory never writes state, loads memory, performs
-        # routing, or invokes Appraisal — it only returns a provider.
-        if semantic_provider is None:
-            semantic_provider = create_semantic_provider()
-
+        # Online turn semantics are Body/Host-owned. MR never auto-constructs
+        # a model-backed semantic provider from process environment. An
+        # explicitly injected provider remains available only as a bounded
+        # lab/shadow compatibility seam.
         if emotional_transition is None and persona is not None:
             from mind_runtime.dynamics.engine import DynamicsEngine
             from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
@@ -846,8 +843,32 @@ class TurnOrchestrator:
             "conflict) (MR-RUNTIME-05 §9)"
         )
 
-    def begin_turn(self, interaction: Interaction) -> None:
+    def begin_turn(
+        self,
+        interaction: Interaction,
+        *,
+        semantic_candidates: tuple[SemanticEventCandidate, ...] = (),
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
+    ) -> None:
         _mr_thread_trace("ORCH_BEGIN_ENTRY", self, interaction.interaction_id)
+        candidate_ids: list[str] = []
+        for candidate in semantic_candidates:
+            if candidate.scope != interaction.scope:
+                raise ValueError("Body semantic candidate scope must match interaction scope")
+            if candidate.origin_runtime_id != self._runtime_id:
+                raise ValueError("Body semantic candidate origin must match runtime")
+            candidate_ids.append(candidate.candidate_id)
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("Body semantic candidate ids must be unique")
+        proposal_ids: list[str] = []
+        for candidate_id, proposal in appraisal_proposals:
+            if not isinstance(proposal, AppraisalModelProposal):
+                raise ValueError("Body appraisal proposal must be AppraisalModelProposal")
+            proposal_ids.append(candidate_id)
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("Body appraisal proposal candidate ids must be unique")
+        if proposal_ids and set(proposal_ids) != set(candidate_ids):
+            raise ValueError("Body appraisal proposals must exactly cover semantic candidates")
         # MR-RUNTIME-05: acquire the namespace admission lease for the WHOLE
         # turn lifecycle before touching any state. Overlapping turns from
         # other orchestrators on the same namespace block here until the
@@ -877,6 +898,8 @@ class TurnOrchestrator:
             decision_context=None,
             expression_outcome=None,
             action_receipt=None,
+            semantic_candidates=semantic_candidates,
+            appraisal_proposals=appraisal_proposals,
         )
         self.state = TurnState.BEGIN
         self._trace.record(
@@ -1188,6 +1211,12 @@ class TurnOrchestrator:
         # transition_with_gate is only available on EngineEmotionalTransitionPort
         # (not on StubEmotionalTransition). Backward compatibility: if not available,
         # fall back to plain transition().
+        authorized_evidence_refs = set(turn.evidence_refs)
+        for candidate in turn.semantic_candidates:
+            if not set(candidate.evidence_refs) <= authorized_evidence_refs:
+                raise ValueError(
+                    "Body semantic candidate evidence refs must resolve to admitted turn evidence"
+                )
         transition_input = EmotionalTransitionInput(
             interaction_id=turn.interaction.interaction_id,
             scope=turn.interaction.scope,
@@ -1199,10 +1228,11 @@ class TurnOrchestrator:
             persona_version=persona_version,
             persona=persona_dimensions,
             observations=turn.observations,
-            semantic_candidates=(),
+            semantic_candidates=turn.semantic_candidates,
             history_context=situation.historical_context,
             clock=now,
             projection_scope=projection_scope,
+            appraisal_proposals=turn.appraisal_proposals,
         )
         if hasattr(self.emotional_transition, "transition_with_gate"):
             outcome = self.emotional_transition.transition_with_gate(transition_input)
