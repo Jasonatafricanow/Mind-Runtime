@@ -84,6 +84,7 @@ from mind_runtime.memory.pending import (
     PendingWorkingEvidence,
     PendingWorkingOverlay,
 )
+from mind_runtime.memory.threading import ThreadUpdatePort
 from mind_runtime.pipeline.checkpoints import (
     CheckpointStore,
     RecoveryDecision,
@@ -294,6 +295,7 @@ class TurnOrchestrator:
         turn_admission: RuntimeTurnAdmission | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
         surface_delivery_backend: Any = None,
+        thread_updates: ThreadUpdatePort | None = None,
     ) -> None:
         self.surface_projection_port = surface_projection_port
         self._surface_delivery_backend = surface_delivery_backend
@@ -301,6 +303,7 @@ class TurnOrchestrator:
         self._runtime_id = runtime_id
         self._trace = trace
         self._telemetry_sink = telemetry_sink
+        self._thread_updates = thread_updates
         # The D3 factual plane is the only ingest path: no direct Observation
         # construction may bypass authority/ownership/idempotency/provenance.
         self.fact_ingest = fact_ingest or FactIngestService(clock=clock)
@@ -1940,6 +1943,30 @@ class TurnOrchestrator:
                 )
             except Exception:
                 pass
+        if self._thread_updates is not None and turn.transition_result is not None:
+            try:
+                updated_threads = self._thread_updates.apply(
+                    scope=turn.interaction.scope,
+                    accepted_events=turn.transition_result.accepted_events,
+                    at=self._clock.now(),
+                )
+                if updated_threads:
+                    self._trace.record(
+                        turn.interaction.interaction_id,
+                        "memory.thread_update",
+                        ref=updated_threads[-1].thread_id,
+                        outcome=f"{len(updated_threads)}_thread_updates",
+                        at=self._clock.now(),
+                    )
+            except Exception as exc:
+                # Thread state is derived product state. A failure here must
+                # never roll back an already committed canonical turn.
+                self._trace.record(
+                    turn.interaction.interaction_id,
+                    "memory.thread_update_failed",
+                    outcome=type(exc).__name__,
+                    at=self._clock.now(),
+                )
         self._trace.record(
             turn.interaction.interaction_id,
             "commit",

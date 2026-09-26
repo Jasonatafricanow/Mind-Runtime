@@ -509,7 +509,17 @@ class OpenAICompatibleProvider:
                         "GROUNDING HANDLES (o0, o1, ...) provided in the user "
                         "message — NOT raw observation ids. Pick ONE OR MORE "
                         "handles that justify the kind. attributes is a JSON object "
-                        "mapping short string keys to short string values only."
+                        "mapping short string keys to short string values only. Reuse "
+                        "this same pass for medium-term open-line tracking: when the "
+                        "message explicitly introduces or continues an unresolved user "
+                        "goal, decision, awaited outcome, question, or ongoing process, "
+                        "include thread_action='track', thread_question='<short stable "
+                        "open question>', and thread_summary='<concise current explicit "
+                        "state>'. When it explicitly closes, cancels, completes, or "
+                        "settles such a line, use thread_action='resolve' plus a "
+                        "thread_question and concise thread_summary. Otherwise omit "
+                        "thread attributes or set thread_action='none'. Never invent "
+                        "hidden goals or emit PROGRESS/REVERSAL labels."
                     ),
                 },
                 {

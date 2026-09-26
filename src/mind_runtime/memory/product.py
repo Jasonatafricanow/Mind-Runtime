@@ -1,7 +1,7 @@
 """Product-level memory governance over canonical MR Memory.
 
 Canonical Memory remains factual authority. This module stores only derived
-attention state and explicit unresolved trajectories in the same memory.sqlite.
+attention state and short-lived logical projections in the same memory.sqlite.
 Neither attention nor threads can create Evidence, Observation, or Memory.
 """
 
@@ -305,10 +305,14 @@ class MemoryProductStore:
         supporting_memory_ids: tuple[str, ...],
         at: datetime,
         importance: int = 5,
+        working_summary: str | None = None,
+        mature: bool = False,
     ) -> MemoryThread:
         self._writable()
         require_non_empty(thread_id, "thread_id")
         require_aware_utc(at, "at")
+        if mature:
+            raise ValueError("a new Thread cannot start mature")
         if (
             not supporting_memory_ids
             or len(supporting_memory_ids) > MAX_THREAD_ORIGIN_SUPPORT
@@ -330,6 +334,8 @@ class MemoryProductStore:
             suppressed=False,
             origin_memory_ids=supporting_memory_ids,
             current_support_ids=supporting_memory_ids,
+            working_summary=working_summary,
+            mature=mature,
         )
         existing = self.get_thread(thread_id)
         if existing is not None:
@@ -347,6 +353,36 @@ class MemoryProductStore:
             "SELECT payload FROM memory_threads WHERE thread_id=?", (thread_id,)
         ).fetchone()
         return None if row is None else _decode_thread(row[0])
+
+    def list_threads(
+        self,
+        scope: Scope,
+        *,
+        status: ThreadStatus | None = None,
+        include_suppressed: bool = True,
+    ) -> tuple[MemoryThread, ...]:
+        """List product Threads without ranking or semantic interpretation."""
+        if status is not None and not isinstance(status, ThreadStatus):
+            raise ValueError("status must be ThreadStatus or None")
+        if type(include_suppressed) is not bool:
+            raise ValueError("include_suppressed must be bool")
+        if not self._table_exists("memory_threads"):
+            return ()
+        threads: list[MemoryThread] = []
+        for (payload,) in self._conn.execute(
+            "SELECT payload FROM memory_threads ORDER BY thread_id"
+        ):
+            thread = _decode_thread(payload)
+            if thread.scope != scope:
+                continue
+            if status is not None and thread.status is not status:
+                continue
+            if not include_suppressed and thread.suppressed:
+                continue
+            if not self._thread_support_is_current(thread):
+                continue
+            threads.append(thread)
+        return tuple(threads)
 
     def update_thread(
         self,
@@ -372,6 +408,21 @@ class MemoryProductStore:
             raise ValueError("thread support must exactly match thread Scope")
         next_summary = thread.working_summary if working_summary is None else working_summary
         next_mature = thread.mature if mature is None else mature
+        maturity_support = tuple(
+            dict.fromkeys((*thread.origin_memory_ids, *supporting_memory_ids))
+        )
+        if next_mature and not self._has_independent_support(maturity_support):
+            if mature is True:
+                raise ValueError(
+                    "mature Thread requires support from at least two interactions"
+                )
+            next_mature = False
+        if (
+            thread.current_support_ids == supporting_memory_ids
+            and thread.working_summary == next_summary
+            and thread.mature == next_mature
+        ):
+            return thread
         updated = replace(
             thread,
             updated_at=at,
@@ -380,8 +431,6 @@ class MemoryProductStore:
             working_summary=next_summary,
             mature=next_mature,
         )
-        if updated == thread:
-            return thread
         self._put_thread(updated)
         return updated
 
@@ -409,6 +458,9 @@ class MemoryProductStore:
             dict.fromkeys((*thread.current_support_ids, memory_id))
         )[-MAX_THREAD_CURRENT_SUPPORT:]
         summary = thread.working_summary if working_summary is None else working_summary
+        maturity_support = tuple(
+            dict.fromkeys((*thread.origin_memory_ids, *support))
+        )
         updated = replace(
             thread,
             status=ThreadStatus.RESOLVED,
@@ -416,7 +468,14 @@ class MemoryProductStore:
             touch_count=thread.touch_count + 1,
             current_support_ids=support,
             working_summary=summary,
-            mature=thread.mature or summary is not None,
+            mature=(
+                thread.mature
+                and self._has_independent_support(thread.handoff_memory_ids)
+            )
+            or (
+                summary is not None
+                and self._has_independent_support(maturity_support)
+            ),
         )
         self._put_thread(updated)
         return updated
@@ -432,7 +491,42 @@ class MemoryProductStore:
             raise ValueError("Thread is not mature for LCE handoff")
         if not self._thread_support_is_current(thread):
             raise ValueError("Thread support is not current")
+        if not self._has_independent_support(thread.handoff_memory_ids):
+            raise ValueError("Thread maturity lacks independent interaction support")
         return thread
+
+    def retire_compiled_thread(
+        self,
+        thread_id: str,
+        *,
+        baseline_id: str,
+    ) -> bool:
+        """Remove a temporary Thread after LCE accepted its higher projection.
+
+        The accepted Baseline owns durable cognition lineage under the stable
+        mr-thread:<thread_id> region and canonical Memory IDs keep factual
+        provenance. Keeping the Thread row after that point would duplicate the
+        same logical product. Missing rows are an idempotent no-op.
+        """
+        self._writable()
+        require_non_empty(baseline_id, "baseline_id")
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            return False
+        if thread.status is ThreadStatus.ABANDONED:
+            raise ValueError("abandoned Thread cannot be retired as compiled")
+        if not thread.mature or thread.working_summary is None:
+            raise ValueError("Thread is not mature for compilation retirement")
+        if not self._thread_support_is_current(thread):
+            raise ValueError("Thread support is not current")
+        if not self._has_independent_support(thread.handoff_memory_ids):
+            raise ValueError("Thread maturity lacks independent interaction support")
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM memory_threads WHERE thread_id=?",
+                (thread_id,),
+            )
+        return True
 
     def abandon_thread(self, thread_id: str, *, at: datetime) -> MemoryThread:
         self._writable()
@@ -493,6 +587,16 @@ class MemoryProductStore:
             candidates.append((score, thread.updated_at, thread.thread_id, thread))
         candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         return tuple(item[3] for item in candidates[:limit])
+
+    def _has_independent_support(self, memory_ids: tuple[str, ...]) -> bool:
+        interaction_ids = {
+            memory.provenance.interaction_id
+            for memory_id in memory_ids
+            if (memory := self._canonical.get(memory_id)) is not None
+            and memory.lifecycle is MemoryLifecycle.ACTIVE
+            and memory.provenance.interaction_id is not None
+        }
+        return len(interaction_ids) >= 2
 
     def _thread_support_is_current(self, thread: MemoryThread) -> bool:
         for memory_id in thread.handoff_memory_ids:

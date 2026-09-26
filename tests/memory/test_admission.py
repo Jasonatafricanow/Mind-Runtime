@@ -27,10 +27,10 @@ def setup_plane(tmp_path, enabled=True, extractor=None):
     return service, admission, store, backend
 
 
-def admit(service, evidence=None):
+def admit(service, evidence=None, *, interaction_id="interaction-1"):
     return service.admit(
         evidence or make_evidence(),
-        interaction_id="interaction-1",
+        interaction_id=interaction_id,
         writing_runtime="runtime-1",
         writing_persona_id=None,
     )
@@ -42,6 +42,7 @@ def test_admission_on_commits_once_and_restart_replay_is_noop(tmp_path):
     original = store.load_all()
     assert len(original) == 1
     assert original[0].provenance.evidence_refs == ("evidence-1",)
+    assert original[0].provenance.interaction_id == "interaction-1"
     assert original[0].content == "hello"
     store.close()
     backend.close()
@@ -103,6 +104,32 @@ def test_extractor_cannot_forge_provenance(tmp_path, forgery):
     service, _, store, _ = setup_plane(tmp_path, extractor=Forged())
     assert admit(service).disposition.value == "new"
     assert store.load_all() == ()
+
+
+def test_extractor_cannot_choose_source_interaction(tmp_path):
+    from mind_runtime.memory.extraction import DeterministicExtractor
+
+    class ForgedInteraction:
+        def extract(self, evidence, observation):
+            candidate = DeterministicExtractor().extract(evidence, observation)[0]
+            return (
+                replace(
+                    candidate,
+                    provenance=replace(
+                        candidate.provenance,
+                        interaction_id="forged-interaction",
+                    ),
+                ),
+            )
+
+    service, _, store, _ = setup_plane(tmp_path, extractor=ForgedInteraction())
+    assert (
+        admit(service, interaction_id="authoritative-interaction").disposition.value
+        == "new"
+    )
+    memories = store.load_all()
+    assert len(memories) == 1
+    assert memories[0].provenance.interaction_id == "authoritative-interaction"
 
 
 def test_forged_admission_result_without_durable_pair_rejected(tmp_path):

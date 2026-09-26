@@ -61,6 +61,15 @@ SYSTEM_PROMPT = (
     "Confidence must be a JSON number from 0 to 1. Attributes must map nonblank "
     "printable strings to strings: at most 32 entries, keys at most 64 characters, "
     "values at most 1024 characters, combined keys and values at most 8192 characters. "
+    "Reuse this same semantic pass for medium-term open-line tracking: when the "
+    "message explicitly introduces or continues an unresolved user goal, decision, "
+    "awaited outcome, question, or ongoing process that may matter in later turns, "
+    "include attributes thread_action='track', thread_question='<short stable open "
+    "question>', and thread_summary='<concise current explicit state>'. When the "
+    "message explicitly closes, cancels, completes, or settles such a line, use "
+    "thread_action='resolve' plus thread_question and a concise thread_summary. "
+    "Otherwise omit these thread attributes or set thread_action='none'. Do not "
+    "invent hidden goals, and do not emit PROGRESS/REVERSAL labels. "
     "When no event is supported, reply "
     '{"kind": "abstain", "confidence": 0.0, "attributes": {}}.'
 )
@@ -112,7 +121,7 @@ class GLMSemanticProvider(SemanticCandidateProvider):
         endpoint_url: str = GLM_URL,
         api_key: str | None = None,
         timeout_s: float = 60.0,
-        max_tokens: int = 200,
+        max_tokens: int = 320,
         telemetry_sink: TelemetrySinkProtocol | None = None,
     ) -> None:
         self._model = model

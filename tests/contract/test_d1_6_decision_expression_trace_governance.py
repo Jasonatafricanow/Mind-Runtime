@@ -1,6 +1,6 @@
 """D1.6 DecisionContext / Expression / Trace / Data Governance contract tests."""
 
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
 
 import pytest
@@ -71,6 +71,27 @@ def make_context(context_id: str = "context-1") -> DecisionContext:
     )
 
 
+def make_retention(retention_id: str = "ret-1") -> RetentionClass:
+    return RetentionClass(
+        retention_id=retention_id,
+        scope=make_scope(),
+        origin_runtime_id="runtime-1",
+        sensitivity=DataSensitivity.PUBLIC,
+        ttl_days=30,
+        keep_after_close=False,
+    )
+
+
+def make_redaction(policy_id: str = "redact-1") -> RedactionPolicy:
+    return RedactionPolicy(
+        policy_id=policy_id,
+        scope=make_scope(),
+        origin_runtime_id="runtime-1",
+        sensitivity=DataSensitivity.PUBLIC,
+        redact_fields=frozenset({"content"}),
+    )
+
+
 # --- ExpressionGuardResult (15.2) ---
 
 
@@ -98,30 +119,34 @@ def test_guard_rewrite_has_violations_without_written_prose() -> None:
     assert guard.disposition is ExpressionDisposition.REWRITE
 
 
-def test_guard_rejects_blank_expression() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="ACCEPT"):
-        ExpressionGuardResult(
-            guard_id="guard-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            expression="",
-            disposition=ExpressionDisposition.ACCEPT,
-            violations=(),
-        )
-
-
-def test_guard_rejects_blank_violation() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        ExpressionGuardResult(
-            guard_id="guard-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            expression="早上好",
-            disposition=ExpressionDisposition.REJECT,
-            violations=(" ",),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"expression": ""}, "ACCEPT"),
+        (
+            {
+                "disposition": ExpressionDisposition.REJECT,
+                "violations": (" ",),
+            },
+            "non-empty",
+        ),
+        ({"disposition": "yes"}, "disposition"),
+        ({"violations": ("blocked",)}, "ACCEPT"),
+        (
+            {
+                "disposition": ExpressionDisposition.REWRITE,
+                "violations": (),
+            },
+            "REWRITE",
+        ),
+    ),
+)
+def test_guard_rejects_invalid_contract_combinations(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_guard(), **overrides)
 
 
 def test_guard_carries_no_policy_fields() -> None:
@@ -171,29 +196,23 @@ def test_context_is_bounded_and_immutable() -> None:
         context.situation_ref = "other"  # type: ignore[misc]
 
 
-def test_context_rejects_blank_refs() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="",
-            situation_ref="situation-1",
-            effective_user_state_ref="state-1",
-            projected_agent_state_ref="projection-1",
-            relationship_state_refs=(),
-            historical_context_ref=None,
-            assessment_trace_ref="assessment-1",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=None,
-            goals_refs=(),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"interaction_ref": ""}, "non-empty"),
+        ({"relationship_state_refs": ("",)}, "non-empty"),
+        ({"historical_context_ref": " "}, "non-empty"),
+        ({"assessment_trace_ref": ""}, "non-empty"),
+        ({"relevant_persona_ref": " "}, "non-empty"),
+        ({"goals_refs": ("",)}, "non-empty"),
+    ),
+)
+def test_context_rejects_blank_refs(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_context(), **overrides)
 
 
 # --- TraceRef / EvidenceRef ---
@@ -272,17 +291,21 @@ def test_retention_class_is_immutable() -> None:
         retention.ttl_days = 60  # type: ignore[misc]
 
 
-def test_retention_class_rejects_negative_ttl() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="ttl"):
-        RetentionClass(
-            retention_id="ret-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity=DataSensitivity.PUBLIC,
-            ttl_days=-1,
-            keep_after_close=True,
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"ttl_days": -1}, "ttl"),
+        ({"sensitivity": "nonsense"}, "sensitivity"),
+        ({"keep_after_close": "yes"}, "keep_after_close"),
+        ({"retention_id": ""}, "non-empty"),
+    ),
+)
+def test_retention_class_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_retention(), **overrides)
 
 
 def test_redaction_policy_honors_sensitivity() -> None:
@@ -311,212 +334,17 @@ def test_redaction_policy_accepts_empty_redact_fields() -> None:
     assert policy.redact_fields == frozenset()
 
 
-def test_context_rejects_blank_nested_refs() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="i-1",
-            situation_ref="s-1",
-            effective_user_state_ref="e-1",
-            projected_agent_state_ref="p-1",
-            relationship_state_refs=("",),
-            historical_context_ref=None,
-            assessment_trace_ref="assessment-1",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=None,
-            goals_refs=(),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="i-1",
-            situation_ref="s-1",
-            effective_user_state_ref="e-1",
-            projected_agent_state_ref="p-1",
-            relationship_state_refs=(),
-            historical_context_ref=" ",
-            assessment_trace_ref="assessment-1",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=None,
-            goals_refs=(),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="i-1",
-            situation_ref="s-1",
-            effective_user_state_ref="e-1",
-            projected_agent_state_ref="p-1",
-            relationship_state_refs=(),
-            historical_context_ref=None,
-            assessment_trace_ref="",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=None,
-            goals_refs=(),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="i-1",
-            situation_ref="s-1",
-            effective_user_state_ref="e-1",
-            projected_agent_state_ref="p-1",
-            relationship_state_refs=(),
-            historical_context_ref=None,
-            assessment_trace_ref="assessment-1",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=" ",
-            goals_refs=(),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
-    with pytest.raises(ValueError, match="non-empty"):
-        DecisionContext(
-            context_id="c-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            interaction_ref="i-1",
-            situation_ref="s-1",
-            effective_user_state_ref="e-1",
-            projected_agent_state_ref="p-1",
-            relationship_state_refs=(),
-            historical_context_ref=None,
-            assessment_trace_ref="assessment-1",
-            intent_ref="intent-1",
-            policy_result_ref="policy-1",
-            relevant_persona_ref=None,
-            goals_refs=("",),
-            selected_intent_kind="respond",
-            selected_action_type="text_message",
-            attempt=0,
-            expression_context=(),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"sensitivity": "nonsense"}, "sensitivity"),
+        ({"redact_fields": {"x"}}, "frozenset"),
+    ),
+)
+def test_redaction_policy_rejects_invalid_fields(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(make_redaction(), **overrides)
 
-
-def test_guard_rejects_unknown_disposition() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="disposition"):
-        ExpressionGuardResult(
-            guard_id="guard-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            expression="早上好",
-            disposition="yes",  # type: ignore[arg-type]
-            violations=(),
-        )
-
-
-def test_guard_rejects_accept_with_violations() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="ACCEPT"):
-        ExpressionGuardResult(
-            guard_id="guard-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            expression="早上好",
-            disposition=ExpressionDisposition.ACCEPT,
-            violations=("blocked",),
-        )
-
-
-def test_guard_rejects_rewrite_without_violations() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="REWRITE"):
-        ExpressionGuardResult(
-            guard_id="guard-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            expression="早上好",
-            disposition=ExpressionDisposition.REWRITE,
-            violations=(),
-        )
-
-
-def test_retention_class_rejects_unknown_sensitivity() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="sensitivity"):
-        RetentionClass(
-            retention_id="ret-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity="nonsense",  # type: ignore[arg-type]
-            ttl_days=None,
-            keep_after_close=False,
-        )
-
-
-def test_retention_class_rejects_non_bool_keep_flag() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="keep_after_close"):
-        RetentionClass(
-            retention_id="ret-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity=DataSensitivity.PUBLIC,
-            ttl_days=None,
-            keep_after_close="yes",  # type: ignore[arg-type]
-        )
-
-
-def test_redaction_policy_rejects_unknown_sensitivity() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="sensitivity"):
-        RedactionPolicy(
-            policy_id="redact-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity="nonsense",  # type: ignore[arg-type]
-            redact_fields=frozenset({"x"}),
-        )
-
-
-def test_redaction_policy_rejects_non_frozenset() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="frozenset"):
-        RedactionPolicy(
-            policy_id="redact-bad",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity=DataSensitivity.PUBLIC,
-            redact_fields={"x"},  # type: ignore[arg-type]
-        )
-
-
-def test_governance_opaque_ids_must_be_non_empty() -> None:
-    scope = make_scope()
-    with pytest.raises(ValueError, match="non-empty"):
-        RetentionClass(
-            retention_id="",
-            scope=scope,
-            origin_runtime_id="runtime-1",
-            sensitivity=DataSensitivity.PUBLIC,
-            ttl_days=None,
-            keep_after_close=False,
-        )

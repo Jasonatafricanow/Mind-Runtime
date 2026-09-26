@@ -6,7 +6,7 @@ revisions. The current integration supports three distinct paths:
 
 ```text
 selected MR Memory -> LCE Core consolidation
-mature MR Thread   -> no-model LCE Baseline handoff
+mature MR Thread   -> no-model LCE Baseline compilation -> retire active Thread
 accepted Baseline  -> bounded MR HistoricalContext readback
 ```
 
@@ -69,11 +69,11 @@ with session:
 
 The adapter revalidates every Memory ID before LCE receives it.
 
-## Mature Thread handoff
+## Mature Thread projection upgrade
 
-A mature MR Thread is already an online-reasoned, bounded medium-term working
-structure. Do not send it through another discovery/model pass merely to
-reconstruct the same relation.
+A mature MR Thread is already an online-reasoned, bounded temporary projection.
+Do not send it through another discovery/model pass merely to reconstruct the
+same relation.
 
 `open_lce_thread_handoff` performs a no-model handoff:
 
@@ -110,6 +110,16 @@ Replaying an unchanged mature Thread does not create a new semantic revision.
 Thread does not own PROGRESS/REVERSAL history; longitudinal revision authority
 belongs to LCE.
 
+The normal Memory composition can wire
+`LceThreadProjectionCompiler` into `ThreadAutoUpdateService`. When
+`lce_enabled=True`, a mature Thread is compiled after the canonical turn
+commit. Once LCE returns an accepted Baseline identity, MR deletes the
+temporary Thread projection. The Baseline region and supporting canonical
+Memory IDs retain lineage, so no duplicate Thread copy is needed.
+
+If compilation is disabled or fails, the Thread remains available. A derived
+projection failure never rolls back canonical Memory.
+
 ## Accepted cognition readback
 
 `open_lce_read_binding` exposes current accepted Baseline HEADs without
@@ -129,9 +139,11 @@ history = build_memory_history(
 )
 ```
 
-When applicable accepted cognition exists, it is placed before raw Memory
-retrieval inside the same bounded HistoricalContext budget. Raw Memory fills
-remaining capacity.
+When applicable accepted cognition exists, it is placed before ordinary
+canonical Memory retrieval inside the same bounded HistoricalContext budget.
+Canonical Memory fills remaining capacity. Evidence/raw source text is not a
+routine context source; it remains available through provenance for audit,
+falsification, rebuild, and fallback.
 
 This is the consumption rule:
 
@@ -216,7 +228,10 @@ complete pytest/coverage suite.
 
 LCE remains opt-in. `default_adapter(..., lce_enabled=False)` is the default.
 
-Automatic Thread formation/maturity policy and full latent-discovery scheduling
-are separate runtime work. Enabling the binding does not grant LCE factual
-write authority and does not claim that general longitudinal cognition is a
-solved problem.
+Thread formation/maturity remains a bounded online projection policy; its
+future wake-up, capacity and TTL refinements are recorded separately. Full
+idle/sleep/dream latent-discovery scheduling is also deferred.
+
+Enabling the binding does not grant LCE factual write authority. It only allows
+a mature lower-level projection to be upgraded into accepted cognition and
+then retired from the active Thread set.

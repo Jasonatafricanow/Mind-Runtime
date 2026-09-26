@@ -187,22 +187,25 @@ def test_one_rewrite_preserves_authority_and_accepts_second_draft() -> None:
     assert agent.calls[1].context_id == "context-interaction-1-a1"
 
 
-def test_zero_rewrite_cap_rejects_first_duplicate_draft() -> None:
-    agent = FakeAgent(["今天真的很想和你重复"])
-    outcome = make_coordinator(agent=agent, max_rewrites=0).express(make_context())
+@pytest.mark.parametrize(
+    ("max_rewrites", "drafts", "expected_calls"),
+    (
+        (0, ("今天真的很想和你重复",), 1),
+        (1, ("今天真的很想和你重复", "今天真的很想和你再聊"), 2),
+        (2, ("今天真的很想和你一", "今天真的很想和你二", "今天真的很想和你三"), 3),
+    ),
+)
+def test_retry_exhaustion_rejects_without_returning_text(
+    max_rewrites: int,
+    drafts: tuple[str, ...],
+    expected_calls: int,
+) -> None:
+    agent = FakeAgent(list(drafts))
+    outcome = make_coordinator(agent=agent, max_rewrites=max_rewrites).express(make_context())
     assert outcome.final_disposition is ExpressionDisposition.REJECT
     assert outcome.accepted_expression is None
     assert outcome.attempts[-1].reason_codes == ("prefix_duplicate", "retry_exhausted")
-    assert agent.call_count == 1
-
-
-def test_retry_exhaustion_is_reject_and_never_returns_text() -> None:
-    agent = FakeAgent(["今天真的很想和你一", "今天真的很想和你二", "今天真的很想和你三"])
-    outcome = make_coordinator(agent=agent, max_rewrites=2).express(make_context())
-    assert outcome.final_disposition is ExpressionDisposition.REJECT
-    assert outcome.accepted_expression is None
-    assert outcome.attempts[-1].reason_codes == ("prefix_duplicate", "retry_exhausted")
-    assert agent.call_count == 3
+    assert agent.call_count == expected_calls
 
 
 def test_structural_reject_does_not_retry() -> None:
@@ -229,40 +232,25 @@ def test_guard_exception_fails_closed_without_sending() -> None:
     assert outcome.attempts[-1].reason_codes == ("guard_failure",)
 
 
-def test_wrong_scope_guard_output_fails_closed() -> None:
-    outcome = make_coordinator(agent=FakeAgent(["你好呀"]), guard=WrongScopeGuard()).express(
-        make_context()
-    )
+@pytest.mark.parametrize(
+    ("guard", "reason"),
+    (
+        (WrongScopeGuard(), "scope_mismatch"),
+        (WrongOriginGuard(), "origin_mismatch"),
+        (AlteredExpressionGuard(), "invalid_expression"),
+    ),
+)
+def test_invalid_guard_output_fails_closed(
+    guard: object,
+    reason: str,
+) -> None:
+    outcome = make_coordinator(
+        agent=FakeAgent(["你好呀"]),
+        guard=guard,  # type: ignore[arg-type]
+    ).express(make_context())
     assert outcome.final_disposition is ExpressionDisposition.REJECT
     assert outcome.accepted_expression is None
-    assert outcome.attempts[-1].reason_codes == ("scope_mismatch",)
-
-
-def test_wrong_origin_guard_output_fails_closed() -> None:
-    outcome = make_coordinator(agent=FakeAgent(["你好呀"]), guard=WrongOriginGuard()).express(
-        make_context()
-    )
-    assert outcome.final_disposition is ExpressionDisposition.REJECT
-    assert outcome.accepted_expression is None
-    assert outcome.attempts[-1].reason_codes == ("origin_mismatch",)
-
-
-def test_altered_expression_guard_output_fails_closed() -> None:
-    outcome = make_coordinator(agent=FakeAgent(["你好呀"]), guard=AlteredExpressionGuard()).express(
-        make_context()
-    )
-    assert outcome.final_disposition is ExpressionDisposition.REJECT
-    assert outcome.accepted_expression is None
-    assert outcome.attempts[-1].reason_codes == ("invalid_expression",)
-
-
-def test_one_rewrite_cap_exhausts_on_second_duplicate_draft() -> None:
-    agent = FakeAgent(["今天真的很想和你重复", "今天真的很想和你再聊"])
-    outcome = make_coordinator(agent=agent, max_rewrites=1).express(make_context())
-    assert outcome.final_disposition is ExpressionDisposition.REJECT
-    assert outcome.accepted_expression is None
-    assert outcome.attempts[-1].reason_codes == ("prefix_duplicate", "retry_exhausted")
-    assert agent.call_count == 2
+    assert outcome.attempts[-1].reason_codes == (reason,)
 
 
 def test_non_string_provider_output_is_rejected_before_guard_input() -> None:
@@ -295,11 +283,10 @@ def test_attempt_trace_ids_are_distinct_per_attempt() -> None:
     assert len({first.draft_id, second.draft_id}) == 2
 
 
-def test_config_rejects_boolean_or_negative_rewrite_counts() -> None:
+@pytest.mark.parametrize("value", (True, -1))
+def test_config_rejects_invalid_rewrite_counts(value: object) -> None:
     with pytest.raises(ValueError, match="max_rewrites"):
-        ExpressionCoordinatorConfig(max_rewrites=True)
-    with pytest.raises(ValueError, match="max_rewrites"):
-        ExpressionCoordinatorConfig(max_rewrites=-1)
+        ExpressionCoordinatorConfig(max_rewrites=value)  # type: ignore[arg-type]
 
 
 def test_express_rejects_non_context() -> None:

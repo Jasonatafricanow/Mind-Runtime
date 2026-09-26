@@ -1,9 +1,7 @@
-"""C7B coverage gap tests.
+"""C7B defensive edge-path tests.
 
-The full-project gate is ``fail_under=100``. This file pins
-coverage on the defence-in-depth error paths and the daemon's
-``DO_NOT_RETRY`` / ``IN_FLIGHT`` / port-raise branches that the
-behavioural tests do not exercise directly.
+Keep only edge contracts that are not already exercised by the focused
+delivery suites. Prefer parameter matrices over one test per branch.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -51,6 +50,42 @@ def _request(*, request_id: str, body: bytes = b"hello") -> DeliveryRequest:
         created_at=NOW,
         sync=SyncFields(SCOPE, RUNTIME_ID, request_id, 1, f"idem-{request_id}"),
     )
+
+
+def _receipt(
+    request: DeliveryRequest,
+    *,
+    receipt_id: str = "recpt-1",
+    status: DeliveryStatus = DeliveryStatus.SENT,
+    delivered_at: datetime | None = NOW,
+) -> DeliveryReceipt:
+    return DeliveryReceipt(
+        receipt_id=receipt_id,
+        scope=request.scope,
+        origin_runtime_id=request.origin_runtime_id,
+        message_id=request.message_id,
+        delivery_status=status,
+        delivered_at=delivered_at,
+        sync=SyncFields(
+            request.scope,
+            request.origin_runtime_id,
+            receipt_id,
+            1,
+            f"idem-{receipt_id}",
+        ),
+    )
+
+
+def _backend_with_pending_request(
+    db_path: Path,
+    request: DeliveryRequest,
+) -> SqliteDeliveryBackend:
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
+    )
+    return backend
 
 
 class _RaisingPort:
@@ -109,106 +144,37 @@ def test_retry_decision_predicates() -> None:
 # ----------------------------------------------------------- kill switch
 
 
-def test_kill_switch_validate_block_map_malformed(
+@pytest.mark.parametrize(
+    ("column", "raw_value", "accessor", "message"),
+    (
+        ("channel_blocks", "{not-valid", "channel_blocks", "valid JSON object"),
+        ("target_blocks", "[1, 2, 3]", "target_blocks", "must be a JSON object"),
+        ("channel_blocks", '{"x": 1}', "channel_blocks", "must be strings"),
+        ("target_blocks", '{"": "value"}', "target_blocks", "non-empty strings"),
+        ("state", "not-a-level", "state", "must be one of"),
+    ),
+)
+def test_kill_switch_corruption_fails_closed(
     tmp_path: Path,
+    column: str,
+    raw_value: str,
+    accessor: str,
+    message: str,
 ) -> None:
-    """Manually corrupt the channel_blocks JSON; the next decide()
-    must fail closed with a clear ValueError.
-    """
-
-    db_path = tmp_path / "c7b_ks_corrupt.db"
+    db_path = tmp_path / f"c7b_ks_corrupt_{column}.db"
     backend = SqliteDeliveryBackend(db_path)
     backend.close()
-    del backend
-    # Corrupt the channel_blocks JSON.
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET channel_blocks = ?"
-        " WHERE row_id = 1",
-        ("{not-valid",),
-    )
-    conn.commit()
-    conn.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE delivery_kill_switch SET {column} = ? WHERE row_id = 1",
+            (raw_value,),
+        )
 
     backend = SqliteDeliveryBackend(db_path)
     try:
-        with pytest.raises(ValueError, match="valid JSON object"):
-            backend.kill_switch().channel_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_validate_block_map_not_object(
-    tmp_path: Path,
-) -> None:
-    """A non-object JSON value in the block map fails closed."""
-
-    db_path = tmp_path / "c7b_ks_bad.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET target_blocks = ? WHERE row_id = 1",
-        ("[1, 2, 3]",),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be a JSON object"):
-            backend.kill_switch().target_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_validate_block_map_not_string(
-    tmp_path: Path,
-) -> None:
-    """A block map with non-string keys/values fails closed."""
-
-    db_path = tmp_path / "c7b_ks_bad2.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET channel_blocks = ?"
-        " WHERE row_id = 1",
-        ('{"x": 1}',),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be strings"):
-            backend.kill_switch().channel_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_block_channel_rejects_empty_reason(
-    tmp_path: Path,
-) -> None:
-    """block_channel requires a non-empty reason."""
-
-    db_path = tmp_path / "c7b_ks_reason.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="reason"):
-            backend.kill_switch().block_channel(
-                "weixin", reason="", updated_at=datetime.now(tz=UTC),
-            )
-        with pytest.raises(ValueError, match="channel"):
-            backend.kill_switch().block_channel(
-                "", reason="x", updated_at=datetime.now(tz=UTC),
-            )
-        with pytest.raises(ValueError, match="target"):
-            backend.kill_switch().block_target(
-                "", reason="x", updated_at=datetime.now(tz=UTC),
-            )
+        with pytest.raises(ValueError, match=message):
+            getattr(backend.kill_switch(), accessor)()
     finally:
         backend.close()
 
@@ -239,10 +205,7 @@ def test_daemon_pending_at_budget_skips_with_do_not_retry(
 
     db_path = tmp_path / "c7b_budget.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     # Pre-increment attempt_count beyond the budget.
     backend.increment_attempt(request.request_id, at=datetime.now(tz=UTC))
     backend.increment_attempt(request.request_id, at=datetime.now(tz=UTC))
@@ -273,10 +236,7 @@ def test_daemon_in_flight_outcome_returns_in_flight_owner(
 
     db_path = tmp_path / "c7b_inflight.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.set_lifecycle_state(
         request.request_id, DeliveryLifecycleState.IN_FLIGHT,
         at=datetime.now(tz=UTC),
@@ -316,10 +276,7 @@ def test_daemon_port_raises_falls_back_to_unknown(
 
     db_path = tmp_path / "c7b_port_raises.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
 
     with caplog.at_level(logging.INFO, logger="mind_runtime.delivery.daemon"):
         daemon = DaemonPass(backend=backend, port=_RaisingPort(), retry_budget=3)
@@ -344,22 +301,8 @@ def test_persistence_record_receipt_different_bytes_raises(
 
     db_path = tmp_path / "c7b_receipt_collision.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    receipt = _receipt(request)
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -377,88 +320,44 @@ def test_persistence_record_receipt_different_bytes_raises(
     backend.close()
 
 
-def test_persistence_record_attempt_validation_errors(
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"attempt_id": ""}, "attempt_id"),
+        ({"request_id": ""}, "request_id"),
+        ({"attempt": 0}, "attempt"),
+        ({"attempt": True}, "attempt"),
+        ({"outcome": "not-an-enum"}, "outcome"),
+        ({"reason_codes": ("",)}, "non-empty strings"),
+        ({"reason_codes": (1,)}, "non-empty strings"),
+        ({"attempt_id": "att-x", "request_id": "ghost"}, "unknown delivery request"),
+    ),
+)
+def test_persistence_record_attempt_rejects_invalid_fields(
     tmp_path: Path,
+    overrides: dict[str, Any],
+    message: str,
 ) -> None:
-    """record_attempt refuses bad input combinations."""
-
     db_path = tmp_path / "c7b_attempt_bad.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
-    # Empty attempt_id
-    with pytest.raises(ValueError, match="attempt_id"):
-        backend.record_attempt(
-            attempt_id="", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Empty request_id
-    with pytest.raises(ValueError, match="request_id"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id="",
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad attempt
-    with pytest.raises(ValueError, match="attempt"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=0, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    with pytest.raises(ValueError, match="attempt"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=True,
-            started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad outcome
-    with pytest.raises(ValueError, match="outcome"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome="not-an-enum",  # type: ignore[arg-type]
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
-    # Bad reason_codes entry
-    with pytest.raises(ValueError, match="non-empty strings"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("",),
-        )
-    with pytest.raises(ValueError, match="non-empty strings"):
-        backend.record_attempt(
-            attempt_id="att-1", request_id=request.request_id,
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=(1,),  # type: ignore[arg-type]
-        )
-    # Unknown request_id
-    with pytest.raises(ValueError, match="unknown delivery request"):
-        backend.record_attempt(
-            attempt_id="att-x", request_id="ghost",
-            attempt=1, started_at=datetime.now(tz=UTC),
-            ended_at=None,
-            outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-            provider_receipt_ref=None, reason_codes=("x",),
-        )
+    kwargs: dict[str, Any] = {
+        "attempt_id": "att-1",
+        "request_id": request.request_id,
+        "attempt": 1,
+        "started_at": NOW,
+        "ended_at": None,
+        "outcome": DeliveryLifecycleState.FAILED_RETRYABLE,
+        "provider_receipt_ref": None,
+        "reason_codes": ("x",),
+    }
+    kwargs.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        backend.record_attempt(**kwargs)
     backend.close()
 
 
@@ -513,10 +412,7 @@ def test_persistence_record_provider_receipt_ref_validation(
 
     db_path = tmp_path / "c7b_ref.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     with pytest.raises(ValueError, match="non-empty"):
         backend.record_provider_receipt_ref(
             request.request_id, provider_receipt_ref="",
@@ -533,22 +429,8 @@ def test_persistence_record_receipt_validation(
 
     db_path = tmp_path / "c7b_recval.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    receipt = _receipt(request)
+    backend = _backend_with_pending_request(db_path, request)
     with pytest.raises(ValueError, match="request_id"):
         backend.record_receipt(
             receipt, request_id="",
@@ -656,10 +538,7 @@ def test_persistence_record_attempt_idempotent(
 
     db_path = tmp_path / "c7b_att_idem.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     created = backend.record_attempt(
         attempt_id="att-1",
         request_id=request.request_id,
@@ -693,10 +572,7 @@ def test_persistence_attempts_for_request_empty(
 
     db_path = tmp_path / "c7b_att_empty.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         assert backend.attempts_for_request(request.request_id) == ()
     finally:
@@ -797,10 +673,7 @@ def test_persistence_durable_request_loads_validated(
 
     db_path = tmp_path / "c7b_full.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.set_lifecycle_state(
         request.request_id, DeliveryLifecycleState.IN_FLIGHT,
         at=datetime.now(tz=UTC),
@@ -828,10 +701,7 @@ def test_daemon_carrier_unknown_yields_unknown_state(
 
     db_path = tmp_path / "c7b_carrier_unknown.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
 
     class _UnknownPort:
         def deliver(self, request: DeliveryRequest) -> DeliveryReceipt:
@@ -867,10 +737,7 @@ def test_daemon_pending_with_live_in_flight_outcome_branch(
 
     db_path = tmp_path / "c7b_inflight2.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     # Pre-set the row to IN_FLIGHT with attempt_count > 0 so
     # compute_retry_decision returns reconcile_first, not can_retry.
     backend.set_lifecycle_state(
@@ -923,22 +790,8 @@ def test_daemon_unsent_receipt_yields_rejected(
 
     db_path = tmp_path / "c7b_unsent.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.UNSENT,
-        delivered_at=None,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    backend = _backend_with_pending_request(db_path, request)
+    receipt = _receipt(request, status=DeliveryStatus.UNSENT, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
         now=datetime.now(tz=UTC), attempt=1,
@@ -962,22 +815,8 @@ def test_daemon_sent_receipt_with_collision(
 
     db_path = tmp_path / "c7b_collision.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    backend = _backend_with_pending_request(db_path, request)
+    receipt = _receipt(request)
     # Persist once, then call _apply_receipt — the second call
     # inside _apply_receipt raises ValueError, which is caught
     # and the row stays ACCEPTED.
@@ -1010,22 +849,8 @@ def test_daemon_collision_when_receipt_persisted_with_different_attempt(
 
     db_path = tmp_path / "c7b_collision2.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    backend = _backend_with_pending_request(db_path, request)
+    receipt = _receipt(request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -1042,56 +867,6 @@ def test_daemon_collision_when_receipt_persisted_with_different_attempt(
 
 
 # ----------------------------------------------------------- kill switch
-
-
-def test_kill_switch_block_map_non_string_keys_fails_closed(
-    tmp_path: Path,
-) -> None:
-    """A block map with non-string keys fails closed."""
-
-    db_path = tmp_path / "c7b_ks_keys.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET target_blocks = ? WHERE row_id = 1",
-        ('{"": "value"}',),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="non-empty strings"):
-            backend.kill_switch().target_blocks()
-    finally:
-        backend.close()
-
-
-def test_kill_switch_corrupt_state_value_fails_closed(
-    tmp_path: Path,
-) -> None:
-    """A state value not in the allowed levels fails closed."""
-
-    db_path = tmp_path / "c7b_ks_state.db"
-    backend = SqliteDeliveryBackend(db_path)
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_kill_switch SET state = ? WHERE row_id = 1",
-        ("not-a-level",),
-    )
-    conn.commit()
-    conn.close()
-
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="must be one of"):
-            backend.kill_switch().state()
-    finally:
-        backend.close()
 
 
 def test_kill_switch_block_channel_after_global_off(
@@ -1153,22 +928,8 @@ def test_persistence_reopen_fails_when_receipt_status_corrupt(
 
     db_path = tmp_path / "c7b_bad_status.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-bad",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-bad", 1, "idem-recpt-bad",
-        ),
-    )
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    receipt = _receipt(request, receipt_id="recpt-bad")
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -1189,127 +950,50 @@ def test_persistence_reopen_fails_when_receipt_status_corrupt(
         SqliteDeliveryBackend(db_path)
 
 
-def test_persistence_reopen_fails_when_attempt_outcome_corrupt(
+@pytest.mark.parametrize(
+    ("column", "raw_value", "message"),
+    (
+        ("outcome", "not-an-outcome", "att-bad"),
+        ("reason_codes", "{not-valid-json", "att-bad"),
+        ("reason_codes", '{"a": 1}', "must be a JSON array"),
+    ),
+)
+def test_persistence_reopen_rejects_corrupt_attempt_fields(
     tmp_path: Path,
+    column: str,
+    raw_value: str,
+    message: str,
 ) -> None:
-    """Corrupt the attempt's outcome to an unknown value; reopen
-    must fail closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_outcome.db"
+    db_path = tmp_path / f"c7b_bad_attempt_{column}.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
     backend.record_attempt(
-        attempt_id="att-bad", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
+        attempt_id="att-bad",
+        request_id=request.request_id,
+        attempt=1,
+        started_at=NOW,
+        ended_at=NOW,
         outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
         provider_receipt_ref=None,
         reason_codes=("x",),
     )
     backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET outcome = ? WHERE attempt_id = ?",
-        ("not-an-outcome", "att-bad"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="att-bad"):
-        SqliteDeliveryBackend(db_path)
 
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE delivery_attempts SET {column} = ? WHERE attempt_id = ?",
+            (raw_value, "att-bad"),
+        )
 
-def test_persistence_reopen_fails_when_reason_codes_malformed(
-    tmp_path: Path,
-) -> None:
-    """Corrupt the attempt's reason_codes JSON; reopen must fail
-    closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_reasons.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.record_attempt(
-        attempt_id="att-bad-r", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
-        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-        provider_receipt_ref=None,
-        reason_codes=("x",),
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET reason_codes = ?"
-        " WHERE attempt_id = ?",
-        ("{not-valid-json", "att-bad-r"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="att-bad-r"):
-        SqliteDeliveryBackend(db_path)
-
-
-def test_persistence_reopen_fails_when_reason_codes_not_array(
-    tmp_path: Path,
-) -> None:
-    """A reason_codes value that is valid JSON but not an array
-    fails closed.
-    """
-
-    db_path = tmp_path / "c7b_bad_reasons2.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.record_attempt(
-        attempt_id="att-bad-r2", request_id=request.request_id, attempt=1,
-        started_at=datetime.now(tz=UTC),
-        ended_at=datetime.now(tz=UTC),
-        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
-        provider_receipt_ref=None,
-        reason_codes=("x",),
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_attempts SET reason_codes = ?"
-        " WHERE attempt_id = ?",
-        ('{"a": 1}', "att-bad-r2"),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="must be a JSON array"):
+    with pytest.raises(ValueError, match=message):
         SqliteDeliveryBackend(db_path)
 
 
 # ----------------------------------------------------------- kill switch
-
-
-def test_kill_switch_block_target_rejects_empty_reason(
-    tmp_path: Path,
-) -> None:
-    """block_target refuses empty reason."""
-
-    db_path = tmp_path / "c7b_ks_tgt_reason.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        with pytest.raises(ValueError, match="reason"):
-            backend.kill_switch().block_target(
-                "user-1", reason="", updated_at=datetime.now(tz=UTC),
-            )
-    finally:
-        backend.close()
 
 
 def test_kill_switch_unblock_target_no_op_when_not_blocked(
@@ -1327,105 +1011,42 @@ def test_kill_switch_unblock_target_no_op_when_not_blocked(
         backend.close()
 
 
-def test_kill_switch_decide_rejects_empty_channel_and_target(
-    tmp_path: Path,
-) -> None:
-    """decide() refuses empty channel or target (defense in depth)."""
-
-    db_path = tmp_path / "c7b_ks_decide.db"
-    backend = SqliteDeliveryBackend(db_path)
-    try:
-        ks = backend.kill_switch()
-        with pytest.raises(ValueError, match="channel"):
-            ks.decide(channel="", target="user-1")
-        with pytest.raises(ValueError, match="target"):
-            ks.decide(channel="weixin", target="")
-    finally:
-        backend.close()
-
-
 # ----------------------------------------------------------- more persistence
 
 
-def test_persistence_request_reopen_corrupt_sync_not_dict(
+@pytest.mark.parametrize(
+    ("raw_sync", "message"),
+    (
+        ('["not", "a", "dict"]', "must be a JSON object"),
+        ('{"scope": "user"}', "missing required keys"),
+        (
+            '{"scope": 1, "origin_runtime_id": "x", "object_id": "y",'
+            ' "version": 1, "idempotency_key": "z"}',
+            "sync.scope",
+        ),
+    ),
+)
+def test_persistence_request_reopen_rejects_corrupt_sync(
     tmp_path: Path,
+    raw_sync: str,
+    message: str,
 ) -> None:
-    """A sync field that is valid JSON but not a dict fails closed
-    on reopen.
-    """
-
     db_path = tmp_path / "c7b_corrupt_sync.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
     backend = SqliteDeliveryBackend(db_path)
     backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
+        request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
     )
     backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        ('["not", "a", "dict"]', request.request_id),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="must be a JSON object"):
-        SqliteDeliveryBackend(db_path)
 
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
+            (raw_sync, request.request_id),
+        )
 
-def test_persistence_request_reopen_corrupt_sync_missing_keys(
-    tmp_path: Path,
-) -> None:
-    """A sync field that is missing required keys fails closed
-    on reopen.
-    """
-
-    db_path = tmp_path / "c7b_corrupt_sync2.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        ('{"scope": "user"}', request.request_id),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="missing required keys"):
-        SqliteDeliveryBackend(db_path)
-
-
-def test_persistence_request_reopen_corrupt_sync_malformed(
-    tmp_path: Path,
-) -> None:
-    """A sync field with bad value types fails closed on reopen."""
-
-    db_path = tmp_path / "c7b_corrupt_sync3.db"
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    backend.close()
-    del backend
-    conn = sqlite3.connect(db_path)
-    # scope must be a string, but it is an int. SyncFields()
-    # construction will fail.
-    conn.execute(
-        "UPDATE delivery_requests SET sync = ? WHERE request_id = ?",
-        (
-            '{"scope": 1, "origin_runtime_id": "x", "object_id": "y",'
-            ' "version": 1, "idempotency_key": "z"}',
-            request.request_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(ValueError, match="sync.scope"):
+    with pytest.raises(ValueError, match=message):
         SqliteDeliveryBackend(db_path)
 
 
@@ -1436,22 +1057,8 @@ def test_persistence_receipt_reopen_corrupt_sync(
 
     db_path = tmp_path / "c7b_corrupt_rec_sync.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-bad-sync",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-bad-sync", 1, "idem-recpt-bad-sync",
-        ),
-    )
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    receipt = _receipt(request, receipt_id="recpt-bad-sync")
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_receipt(
         receipt, request_id=request.request_id,
         provider_receipt_ref=None,
@@ -1480,10 +1087,7 @@ def test_persistence_attempt_reason_codes_load_failure(
 
     db_path = tmp_path / "c7b_att_bad_load.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-bad-load", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1526,10 +1130,7 @@ def test_persistence_set_lifecycle_state_at_validation(
 
     db_path = tmp_path / "c7b_at.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         with pytest.raises(ValueError, match="aware UTC"):
             backend.set_lifecycle_state(
@@ -1548,10 +1149,7 @@ def test_persistence_record_attempt_ended_at_validation(
 
     db_path = tmp_path / "c7b_ended.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     try:
         with pytest.raises(ValueError, match="aware UTC"):
             backend.record_attempt(
@@ -1602,10 +1200,7 @@ def test_persistence_load_request_corrupt_payload_type(
 
     db_path = tmp_path / "c7b_load_bad_payload.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.close()
     del backend
     # Replace the payload with a non-bytes value.
@@ -1632,10 +1227,7 @@ def test_persistence_get_attempt_corrupt_reason_codes(
 
     db_path = tmp_path / "c7b_load_bad_reasons.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-bad-r3", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1745,22 +1337,8 @@ def test_persistence_record_receipt_returns_false_on_idempotent(
 
     db_path = tmp_path / "c7b_rec_false.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=NOW,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    receipt = _receipt(request)
+    backend = _backend_with_pending_request(db_path, request)
     try:
         first = backend.record_receipt(
             receipt, request_id=request.request_id,
@@ -1843,10 +1421,7 @@ def test_persistence_get_attempt_returns_row(
 
     db_path = tmp_path / "c7b_get_att.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
+    backend = _backend_with_pending_request(db_path, request)
     backend.record_attempt(
         attempt_id="att-1", request_id=request.request_id, attempt=1,
         started_at=datetime.now(tz=UTC),
@@ -1875,22 +1450,8 @@ def test_daemon_apply_receipt_sent_no_delivered_at(
 
     db_path = tmp_path / "c7b_no_dt.db"
     request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    backend = SqliteDeliveryBackend(db_path)
-    backend.record_request(
-        request, lifecycle_state=DeliveryLifecycleState.PENDING,
-    )
-    receipt = DeliveryReceipt(
-        receipt_id="recpt-1",
-        scope=request.scope,
-        origin_runtime_id=request.origin_runtime_id,
-        message_id=request.message_id,
-        delivery_status=DeliveryStatus.SENT,
-        delivered_at=None,
-        sync=SyncFields(
-            request.scope, request.origin_runtime_id,
-            "recpt-1", 1, "idem-recpt-1",
-        ),
-    )
+    backend = _backend_with_pending_request(db_path, request)
+    receipt = _receipt(request, delivered_at=None)
     state, reason, ref = _apply_receipt(
         request=request, receipt=receipt, backend=backend,
         now=datetime.now(tz=UTC), attempt=1,

@@ -469,15 +469,6 @@ def tick_situation_facts(stack: _Stack, *, now: datetime = BASE) -> dict[str, st
 # ── LR1: counter below threshold -> not eligible ────────────────────────────
 
 
-def test_lr1_counter_below_threshold_not_eligible(tmp_path: Path) -> None:
-    stack = make_stack(tmp_path, photo_cadence_threshold=3)
-    seed_counter(stack, evidence_id="ev-cad", key=CADENCE_COUNTER, value="2")
-
-    facts = tick_situation_facts(stack)
-
-    assert facts[ELIGIBILITY_FACT] == "false"
-
-
 # ── LR2: threshold reached -> eligible, never a forced media action ─────────
 
 
@@ -513,22 +504,23 @@ def test_lr2_threshold_reached_eligible_but_no_forced_media(tmp_path: Path) -> N
 # ── LR3: missing counter -> fail-closed false, no fabricated facts ──────────
 
 
-def test_lr3_missing_counter_fails_closed_without_fabrication(tmp_path: Path) -> None:
+@pytest.mark.parametrize("counter_value", (None, "many"))
+def test_lr3_invalid_or_missing_counter_fails_closed(
+    tmp_path: Path,
+    counter_value: str | None,
+) -> None:
     stack = make_stack(tmp_path, photo_cadence_threshold=3)
+    if counter_value is not None:
+        seed_counter(
+            stack,
+            evidence_id="ev-cad",
+            key=CADENCE_COUNTER,
+            value=counter_value,
+        )
 
-    facts = tick_situation_facts(stack)
-    assert facts[ELIGIBILITY_FACT] == "false"
-    # The derivation admitted no Evidence: the factual plane stays empty.
-    assert list(stack["fact_service"].observations.all()) == []
-
-
-def test_lr3_garbage_counter_value_fails_closed(tmp_path: Path) -> None:
-    stack = make_stack(tmp_path, photo_cadence_threshold=3)
-    seed_counter(stack, evidence_id="ev-cad", key=CADENCE_COUNTER, value="many")
-
-    facts = tick_situation_facts(stack)
-
-    assert facts[ELIGIBILITY_FACT] == "false"
+    assert tick_situation_facts(stack)[ELIGIBILITY_FACT] == "false"
+    if counter_value is None:
+        assert list(stack["fact_service"].observations.all()) == []
 
 
 # ── LR4: daily cap exhausted + cadence eligible -> ActionPolicy still blocks ─
@@ -556,25 +548,9 @@ def test_lr4_daily_cap_beats_cadence_eligibility(tmp_path: Path) -> None:
 # ── LR5: eligibility reaches the provider-facing generation context ─────────
 
 
-def test_lr5_eligibility_reaches_generation_context(tmp_path: Path) -> None:
-    stack = make_stack(tmp_path, with_expression=True, photo_cadence_threshold=3)
-    seed_counter(stack, evidence_id="ev-cad", key=CADENCE_COUNTER, value="3")
-    seed_affect(stack)
-
-    report = stack["ticker"].tick(scope=stack["scope"], now=BASE + timedelta(hours=2))
-    assert report.wake_signal is not None
-    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
-
-    artifact = turn_result.proactive_expression
-    assert artifact is not None
-    assert artifact.disposition is ExpressionDisposition.ACCEPT
-    assert "media.photo_frequency_eligible: true" in stack["agent"].calls[0].text
-
-
-# ── LR6: raw counters never leak into the provider-facing context ────────────
-
-
-def test_lr6_raw_counters_do_not_leak_to_provider(tmp_path: Path) -> None:
+def test_lr5_eligibility_reaches_provider_without_raw_counters(
+    tmp_path: Path,
+) -> None:
     stack = make_stack(tmp_path, with_expression=True, photo_cadence_threshold=3)
     seed_counter(stack, evidence_id="ev-cad", key=CADENCE_COUNTER, value="3")
     seed_counter(stack, evidence_id="ev-photo", key=DAILY_PHOTO_COUNTER, value="2")
@@ -586,10 +562,11 @@ def test_lr6_raw_counters_do_not_leak_to_provider(tmp_path: Path) -> None:
 
     artifact = turn_result.proactive_expression
     assert artifact is not None
-    text = stack["agent"].calls[0].text
     assert artifact.disposition is ExpressionDisposition.ACCEPT
-    assert CADENCE_COUNTER not in text
-    assert DAILY_PHOTO_COUNTER not in text
+    provider_text = stack["agent"].calls[0].text
+    assert "media.photo_frequency_eligible: true" in provider_text
+    assert CADENCE_COUNTER not in provider_text
+    assert DAILY_PHOTO_COUNTER not in provider_text
 
 
 # ── LR7a/b/c: the algorithm is generic; the numbers are configuration ────────
@@ -608,26 +585,25 @@ def test_lr7a_generic_runtime_without_config_never_activates_cadence(
     assert tick_situation_facts(stack)[ELIGIBILITY_FACT] == "false"
 
 
-def test_lr7b_configured_threshold_three(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("threshold", "below", "at"),
+    ((3, "2", "3"), (5, "3", "5")),
+)
+def test_lr7_configured_threshold_is_data_not_kernel_law(
+    tmp_path: Path,
+    threshold: int,
+    below: str,
+    at: str,
+) -> None:
     def run(sub: str, count: str) -> str:
-        (tmp_path / sub).mkdir()
-        stack = make_stack(tmp_path / sub, photo_cadence_threshold=3)
+        path = tmp_path / sub
+        path.mkdir()
+        stack = make_stack(path, photo_cadence_threshold=threshold)
         seed_counter(stack, evidence_id=f"ev-{sub}", key=CADENCE_COUNTER, value=count)
         return tick_situation_facts(stack)[ELIGIBILITY_FACT]
 
-    assert run("two", "2") == "false"
-    assert run("three", "3") == "true"
-
-
-def test_lr7c_configured_threshold_five(tmp_path: Path) -> None:
-    def run(sub: str, count: str) -> str:
-        (tmp_path / sub).mkdir()
-        stack = make_stack(tmp_path / sub, photo_cadence_threshold=5)
-        seed_counter(stack, evidence_id=f"ev-{sub}", key=CADENCE_COUNTER, value=count)
-        return tick_situation_facts(stack)[ELIGIBILITY_FACT]
-
-    assert run("three", "3") == "false"
-    assert run("five", "5") == "true"
+    assert run("below", below) == "false"
+    assert run("at", at) == "true"
 
 
 # ── LR8: C5C angle-guard behavior unchanged with the cadence fact present ────

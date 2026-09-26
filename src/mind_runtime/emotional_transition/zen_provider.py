@@ -72,7 +72,7 @@ class ZenHy3Provider(SemanticCandidateProvider):
         *,
         model: str = ZEN_MODEL,
         timeout_s: float = 60.0,
-        max_tokens: int = 200,
+        max_tokens: int = 320,
         telemetry_sink: TelemetrySinkProtocol | None = None,
     ) -> None:
         self._model = model

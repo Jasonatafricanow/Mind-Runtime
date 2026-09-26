@@ -231,6 +231,7 @@ def build_runtime_stack(
     cognitive_tick_config: CognitiveTickConfig | None = None,
     memory_enabled: bool = False,
     memory_binding: RuntimeBinding | None = None,
+    lce_enabled: bool = False,
     historical_context: HistoricalContextPort | None = None,
     slow_plasticity_window_size: int | None = None,
     definitions: StateDefinitionRegistry | None = None,
@@ -309,8 +310,14 @@ def build_runtime_stack(
         raise ValueError("Surface port requires SURFACE_V1 composition")
     if type(memory_enabled) is not bool:
         raise ValueError("memory_enabled must be bool")
+    if type(lce_enabled) is not bool:
+        raise ValueError("lce_enabled must be bool")
+    thread_updates = None
     if memory_enabled:
-        from mind_runtime.memory.composition import build_bound_fact_service
+        from mind_runtime.memory.composition import (
+            build_bound_fact_service,
+            build_bound_thread_updates,
+        )
 
         if memory_binding is None:
             raise ValueError("enabled Memory requires a Runtime binding")
@@ -322,6 +329,19 @@ def build_runtime_stack(
         ):
             raise ValueError("Memory binding must match the factual/state runtime namespace")
         fact_service = build_bound_fact_service(memory_binding, clock=clock, enabled=True)
+        thread_projection_compiler = None
+        if lce_enabled:
+            from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+
+            thread_projection_compiler = LceThreadProjectionCompiler(
+                binding=memory_binding,
+                enabled=True,
+            )
+        thread_updates = build_bound_thread_updates(
+            memory_binding,
+            enabled=True,
+            projection_compiler=thread_projection_compiler,
+        )
     else:
         fact_service = FactIngestService(clock=clock, backend=SqliteFactBackend(facts_db))
     state_backend = SqliteStateBackend(state_db)
@@ -435,6 +455,7 @@ def build_runtime_stack(
         action_policy=turn_action_policy,
         policy_resources=turn_policy_resources,
         expression_guard=expression_guard,
+        thread_updates=thread_updates,
         # MR-RUNTIME-05: enroll the stack in the process-local, per-namespace
         # canonical admission authority — whole turns on this namespace are
         # serialized and each admitted turn refreshes from the durable base.

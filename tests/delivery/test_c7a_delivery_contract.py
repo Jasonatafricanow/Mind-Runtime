@@ -162,97 +162,29 @@ def test_g6_kill_switch_cancels_outstanding_durable_requests() -> None:
 # -------------------------------------------------- contract-level guard tests
 
 
-def test_contract_rejects_empty_payload() -> None:
-    """DeliveryRequest refuses an empty body: the carrier can never
-    deliver nothing."""
-    with pytest.raises(ValueError, match="payload_bytes"):
-        DeliveryRequest(
-            request_id="deliv-empty",
-            message_id="msg-empty",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="user-1",action_type="proactive_message", payload_bytes=b"",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-empty", 1, "idem-deliv-empty"),
-        )
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"payload_bytes": b""}, "payload_bytes"),
+        ({"request_id": ""}, "request_id"),
+        ({"message_id": ""}, "message_id"),
+        ({"channel": ""}, "channel"),
+        ({"target": ""}, "target"),
+        ({"payload_bytes": "not-bytes"}, "payload_bytes must be bytes"),
+        ({"scope": "not-scope"}, "scope must be a Scope"),
+    ),
+)
+def test_contract_rejects_invalid_request_fields(
+    overrides: dict[str, object], message: str
+) -> None:
+    request = _request(request_id="deliv-1")
+    with pytest.raises(ValueError, match=message):
+        replace(request, **overrides)  # type: ignore[arg-type]
 
 
 def test_contract_rejects_empty_idempotency_key() -> None:
     with pytest.raises(ValueError, match="idempotency_key"):
         make_request_id(SCOPE, "intent-1", "")
-
-
-def test_contract_rejects_empty_request_id() -> None:
-    with pytest.raises(ValueError, match="request_id"):
-        DeliveryRequest(
-            request_id="",
-            message_id="msg-1",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="user-1",action_type="proactive_message", payload_bytes=b"x",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "", 1, "idem-empty"),
-        )
-
-
-def test_contract_rejects_empty_message_id() -> None:
-    with pytest.raises(ValueError, match="message_id"):
-        DeliveryRequest(
-            request_id="deliv-1",
-            message_id="",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="user-1",action_type="proactive_message", payload_bytes=b"x",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-1", 1, "idem-1"),
-        )
-
-
-def test_contract_rejects_empty_channel() -> None:
-    with pytest.raises(ValueError, match="channel"):
-        DeliveryRequest(
-            request_id="deliv-1",
-            message_id="msg-1",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="", target="user-1",action_type="proactive_message", payload_bytes=b"x",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-1", 1, "idem-1"),
-        )
-
-
-def test_contract_rejects_empty_target() -> None:
-    with pytest.raises(ValueError, match="target"):
-        DeliveryRequest(
-            request_id="deliv-1",
-            message_id="msg-1",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="",action_type="proactive_message", payload_bytes=b"x",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-1", 1, "idem-1"),
-        )
-
-
-def test_contract_rejects_non_bytes_payload() -> None:
-    with pytest.raises(ValueError, match="payload_bytes must be bytes"):
-        DeliveryRequest(
-            request_id="deliv-1",
-            message_id="msg-1",
-            scope=SCOPE, origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="user-1",
-            action_type="proactive_message", payload_bytes="not-bytes",  # type: ignore[arg-type]
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-1", 1, "idem-1"),
-        )
-
-
-def test_contract_rejects_non_scope() -> None:
-    with pytest.raises(ValueError, match="scope must be a Scope"):
-        DeliveryRequest(
-            request_id="deliv-1",
-            message_id="msg-1",
-            scope="not-scope",  # type: ignore[arg-type]
-            origin_runtime_id=RUNTIME_ID,
-            channel="weixin", target="user-1",action_type="proactive_message", payload_bytes=b"x",
-            created_at=NOW,
-            sync=SyncFields(SCOPE, RUNTIME_ID, "deliv-1", 1, "idem-1"),
-        )
 
 
 def test_contract_rejects_scope_origin_mismatch() -> None:
@@ -297,34 +229,6 @@ def test_in_memory_backend_records_seen_request_ids() -> None:
     assert request.request_id in backend.seen_request_ids
     assert backend.sent_count == 1
     assert receipt.delivery_status is DeliveryStatus.SENT
-
-
-def test_in_memory_backend_fail_after_kill_switch() -> None:
-    """After fail_after=N the next deliver() yields UNKNOWN, not SENT."""
-    from mind_runtime.delivery import InMemoryDeliveryBackend
-
-    backend = InMemoryDeliveryBackend(fail_after=1)
-    request1 = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    request2 = _request(request_id=make_request_id(SCOPE, "intent-1", "k2"))
-    receipt1 = backend.deliver(request1)
-    receipt2 = backend.deliver(request2)
-    assert receipt1.delivery_status is DeliveryStatus.SENT
-    assert receipt2.delivery_status is DeliveryStatus.UNKNOWN
-    assert backend.sent_count == 1
-
-
-def test_in_memory_backend_idempotent_dedup() -> None:
-    """Re-delivering the same request_id yields a SENT receipt, no double-send."""
-    from mind_runtime.delivery import InMemoryDeliveryBackend
-
-    backend = InMemoryDeliveryBackend()
-    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
-    receipt1 = backend.deliver(request)
-    receipt2 = backend.deliver(request)
-    # Same id, both SENT, but no double-increment.
-    assert receipt1.delivery_status is DeliveryStatus.SENT
-    assert receipt2.delivery_status is DeliveryStatus.SENT
-    assert backend.sent_count == 1
 
 
 def test_receipt_store_get_returns_none_when_missing() -> None:

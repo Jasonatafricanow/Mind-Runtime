@@ -364,6 +364,38 @@ def _interaction_from_row(row: sqlite3.Row) -> Interaction:
     )
 
 
+class SqliteFactReader:
+    """Read-only factual provenance access for bounded external consumers."""
+
+    def __init__(self, path: str | Path) -> None:
+        self._conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA query_only=ON")
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def load_observations(self) -> tuple[Observation, ...]:
+        rows = self._conn.execute(
+            "SELECT * FROM observations ORDER BY observed_at, id"
+        ).fetchall()
+        return tuple(_observation_from_row(row) for row in rows)
+
+    def find_evidence(self, scope: Scope, evidence_id: str) -> tuple[Evidence, str] | None:
+        row = self._conn.execute(
+            f"SELECT * FROM evidence WHERE {_scope_where()} AND id = ?",
+            (*_scope_values(scope), evidence_id),
+        ).fetchone()
+        return _evidence_from_row(row) if row is not None else None
+
+    def find_observation(self, scope: Scope, observation_id: str) -> Observation | None:
+        row = self._conn.execute(
+            f"SELECT * FROM observations WHERE {_scope_where()} AND id = ?",
+            (*_scope_values(scope), observation_id),
+        ).fetchone()
+        return _observation_from_row(row) if row is not None else None
+
+
 @runtime_checkable
 class FactBackend(Protocol):
     """Durable append-only storage for the D3 factual plane."""

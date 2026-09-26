@@ -16,3 +16,4 @@ verifiable anchors and evidence limits are stated in the document.
 - [04 — Hot Start became a lab experiment](04-hot-start-to-lab.md)
 - [05 — Model variance changed the definition of success](05-model-variance.md)
 - [06 — Retrieval is useful, but retrieval is not authority](06-retrieval-is-not-authority.md)
+- [07 — One Memory subsystem, multiple projection levels](07-layered-memory-projections.md)

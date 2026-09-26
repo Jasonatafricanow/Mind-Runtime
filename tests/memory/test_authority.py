@@ -4,19 +4,31 @@ import ast
 from pathlib import Path
 
 
-def test_admission_is_only_production_caller_of_job_completion():
+def test_memory_job_capabilities_have_no_unowned_production_references():
+    """Secondary source guard; runtime admission tests carry authority proof."""
     root = Path(__file__).resolve().parents[2] / "src" / "mind_runtime"
-    callers = []
+    write_seams = {"_register_job", "_freeze_job", "_complete_job"}
+    allowed = {"memory/store.py", "memory/admission.py"}
+    references = []
     for path in root.rglob("*.py"):
+        relative = path.relative_to(root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8-sig"))
         for node in ast.walk(tree):
-            if (
+            seam = None
+            if isinstance(node, ast.Attribute) and node.attr in write_seams:
+                seam = node.attr
+            elif (
                 isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "_complete_job"
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in write_seams
             ):
-                callers.append(path.relative_to(root).as_posix())
-    assert callers == ["memory/admission.py"]
+                seam = str(node.args[1].value)
+            if seam is not None and relative not in allowed:
+                references.append((relative, seam))
+    assert references == []
 
 
 def test_new_plane_imports_no_vector_provider_or_retrieval_authority():
