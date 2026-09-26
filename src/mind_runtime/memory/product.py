@@ -322,8 +322,6 @@ class MemoryProductStore:
         memories = tuple(self._memory(mid, active=True) for mid in supporting_memory_ids)
         if any(memory.scope != scope for memory in memories):
             raise ValueError("thread support must exactly match thread Scope")
-        if mature and not self._has_independent_support(supporting_memory_ids):
-            raise ValueError("mature Thread requires support from at least two interactions")
         thread = MemoryThread(
             thread_id=thread_id,
             scope=scope,
