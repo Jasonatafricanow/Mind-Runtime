@@ -339,6 +339,56 @@ def test_persisted_forged_mature_thread_fails_final_handoff_gate(tmp_path):
     canonical.close()
 
 
+def test_mature_thread_handoff_rechecks_lifecycle_and_abandonment(tmp_path):
+    path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+
+    for thread_id in ("stale-support", "abandoned"):
+        product.open_thread(
+            thread_id=thread_id,
+            scope=memory().scope,
+            open_question=f"{thread_id}?",
+            supporting_memory_ids=("memory-1",),
+            at=at,
+            working_summary="Initial support.",
+        )
+        product.update_thread(
+            thread_id,
+            supporting_memory_ids=("memory-1", "memory-2"),
+            at=at + timedelta(days=1),
+            working_summary="Independent support matured the line.",
+            mature=True,
+        )
+
+    abandoned = product.abandon_thread(
+        "abandoned",
+        at=at + timedelta(days=2),
+    )
+    assert abandoned.status is ThreadStatus.ABANDONED
+    with pytest.raises(ValueError, match="abandoned"):
+        product.thread_handoff("abandoned")
+
+    product.close()
+    canonical.close()
+    with sqlite3.connect(path) as conn:
+        payload = conn.execute(
+            "SELECT payload FROM canonical_memory WHERE memory_id='memory-2'"
+        ).fetchone()[0]
+        data = json.loads(payload)
+        data["lifecycle"] = "archived"
+        conn.execute(
+            "UPDATE canonical_memory SET payload=? WHERE memory_id='memory-2'",
+            (json.dumps(data, sort_keys=True, ensure_ascii=False),),
+        )
+
+    canonical = CanonicalMemoryStore(path)
+    product = MemoryProductStore(path, canonical)
+    with pytest.raises(ValueError, match="support is not current"):
+        product.thread_handoff("stale-support")
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
