@@ -4,16 +4,8 @@ from __future__ import annotations
 
 from time import perf_counter
 
-from mind_runtime.decision.contracts import (
-    DecisionKind,
-    DecisionRequest,
-    DecisionResult,
-)
-from mind_runtime.decision.port import (
-    DecisionModelError,
-    DecisionModelInvalidResponse,
-    DecisionModelPort,
-)
+from mind_runtime.decision.contracts import DecisionKind, DecisionRequest, DecisionResult
+from mind_runtime.decision.port import DecisionModelPort
 from mind_runtime.decision.telemetry import (
     DecisionCallStatus,
     DecisionTelemetrySink,
@@ -22,51 +14,27 @@ from mind_runtime.decision.telemetry import (
 )
 
 
-def _validate_result(request: DecisionRequest, result: DecisionResult) -> None:
+def _valid_result(request: DecisionRequest, result: object) -> bool:
     if not isinstance(result, DecisionResult):
-        raise DecisionModelInvalidResponse("backend must return DecisionResult")
-    by_id = {answer.question_id: answer for answer in result.answers}
-    expected_ids = {question.question_id for question in request.questions}
-    if set(by_id) != expected_ids:
-        raise DecisionModelInvalidResponse("backend answers do not match request questions")
-    for question in request.questions:
-        answer = by_id[question.question_id]
+        return False
+    expected = {item.question_id: item for item in request.questions}
+    actual = {item.question_id: item for item in result.answers}
+    if set(actual) != set(expected):
+        return False
+    for question_id, question in expected.items():
+        answer = actual[question_id]
         if answer.kind is not question.kind:
-            raise DecisionModelInvalidResponse("backend answer kind mismatch")
-        keys = set(answer.probabilities)
-        if question.kind is DecisionKind.BOOLEAN:
-            if keys != {"false", "true"}:
-                raise DecisionModelInvalidResponse(
-                    "BOOLEAN answers require false/true probabilities"
-                )
-        elif keys != set(question.options):
-            raise DecisionModelInvalidResponse(
-                "CHOICE/SCORE probabilities must match request options"
-            )
-
-
-def _record_safely(telemetry: DecisionTelemetrySink, trace: DecisionTrace) -> None:
-    try:
-        telemetry.record(trace)
-    except Exception:
-        # Observability is never allowed to turn optional decision compute
-        # into a core pipeline dependency.
-        return
-
-
-def _backend_name(backend: DecisionModelPort) -> str | None:
-    try:
-        return backend.backend_name
-    except Exception:
-        return None
+            return False
+        allowed = {"false", "true"} if question.kind is DecisionKind.BOOLEAN else set(
+            question.options
+        )
+        if set(answer.probabilities) != set(allowed):
+            return False
+    return True
 
 
 class DecisionCapability:
-    """One shared optional decision-model capability.
-
-    Absence or backend failure returns None. Callers must preserve their
-    original baseline path when this happens.
-    """
+    """Shared optional model capability; every failure falls back to baseline."""
 
     def __init__(
         self,
@@ -81,71 +49,60 @@ class DecisionCapability:
     def available(self) -> bool:
         return self._backend is not None
 
+    def _record(self, trace: DecisionTrace) -> None:
+        try:
+            self._telemetry.record(trace)
+        except Exception:
+            pass
+
     def evaluate(self, request: DecisionRequest) -> DecisionResult | None:
         if not isinstance(request, DecisionRequest):
             raise TypeError("request must be DecisionRequest")
         started = perf_counter()
         if self._backend is None:
-            _record_safely(
-                self._telemetry,
+            self._record(
                 DecisionTrace(
-                    feature=request.feature,
-                    projection_version=request.projection_version,
-                    request_fingerprint=request.fingerprint,
-                    status=DecisionCallStatus.ABSENT,
-                    backend=None,
-                    model_version=None,
-                    latency_ms=(perf_counter() - started) * 1000,
-                ),
+                    request.feature,
+                    request.projection_version,
+                    request.fingerprint,
+                    DecisionCallStatus.ABSENT,
+                    None,
+                    None,
+                    (perf_counter() - started) * 1000,
+                )
             )
             return None
 
+        backend_name: str | None = None
         try:
+            backend_name = self._backend.backend_name
             result = self._backend.evaluate(request)
-            _validate_result(request, result)
-        except DecisionModelError as exc:
-            _record_safely(
-                self._telemetry,
-                DecisionTrace(
-                    feature=request.feature,
-                    projection_version=request.projection_version,
-                    request_fingerprint=request.fingerprint,
-                    status=DecisionCallStatus.UNAVAILABLE,
-                    backend=_backend_name(self._backend),
-                    model_version=None,
-                    latency_ms=(perf_counter() - started) * 1000,
-                    error_type=type(exc).__name__,
-                ),
-            )
-            return None
+            if not _valid_result(request, result):
+                raise ValueError("decision backend returned an incompatible result")
         except Exception as exc:
-            # A buggy or unexpectedly failing optimization backend is still an
-            # optional capability. The core caller keeps its baseline path.
-            _record_safely(
-                self._telemetry,
+            self._record(
                 DecisionTrace(
-                    feature=request.feature,
-                    projection_version=request.projection_version,
-                    request_fingerprint=request.fingerprint,
-                    status=DecisionCallStatus.UNAVAILABLE,
-                    backend=_backend_name(self._backend),
-                    model_version=None,
-                    latency_ms=(perf_counter() - started) * 1000,
-                    error_type=type(exc).__name__,
-                ),
+                    request.feature,
+                    request.projection_version,
+                    request.fingerprint,
+                    DecisionCallStatus.UNAVAILABLE,
+                    backend_name,
+                    None,
+                    (perf_counter() - started) * 1000,
+                    type(exc).__name__,
+                )
             )
             return None
 
-        _record_safely(
-            self._telemetry,
+        self._record(
             DecisionTrace(
-                feature=request.feature,
-                projection_version=request.projection_version,
-                request_fingerprint=request.fingerprint,
-                status=DecisionCallStatus.SUCCESS,
-                backend=result.backend,
-                model_version=result.model_version,
-                latency_ms=(perf_counter() - started) * 1000,
-            ),
+                request.feature,
+                request.projection_version,
+                request.fingerprint,
+                DecisionCallStatus.SUCCESS,
+                result.backend,
+                result.model_version,
+                (perf_counter() - started) * 1000,
+            )
         )
         return result
