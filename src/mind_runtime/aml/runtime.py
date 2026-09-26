@@ -43,8 +43,8 @@ from mind_runtime.memory.providers.bm25 import (
 )
 from mind_runtime.memory.providers.dense import InMemoryDenseRetrievalProvider
 from mind_runtime.memory.providers.hybrid import (
-    HyDEFallbackProvider,
     HybridRRFProvider,
+    HyDEFallbackProvider,
     QueryExpander,
     RetrievalArm,
 )
