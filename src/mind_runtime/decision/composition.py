@@ -4,14 +4,45 @@ from __future__ import annotations
 
 from time import perf_counter
 
-from mind_runtime.decision.contracts import DecisionRequest, DecisionResult
-from mind_runtime.decision.port import DecisionModelError, DecisionModelPort
+from mind_runtime.decision.contracts import (
+    DecisionKind,
+    DecisionRequest,
+    DecisionResult,
+)
+from mind_runtime.decision.port import (
+    DecisionModelError,
+    DecisionModelInvalidResponse,
+    DecisionModelPort,
+)
 from mind_runtime.decision.telemetry import (
     DecisionCallStatus,
     DecisionTelemetrySink,
     DecisionTrace,
     NullDecisionTelemetry,
 )
+
+
+def _validate_result(request: DecisionRequest, result: DecisionResult) -> None:
+    if not isinstance(result, DecisionResult):
+        raise DecisionModelInvalidResponse("backend must return DecisionResult")
+    by_id = {answer.question_id: answer for answer in result.answers}
+    expected_ids = {question.question_id for question in request.questions}
+    if set(by_id) != expected_ids:
+        raise DecisionModelInvalidResponse("backend answers do not match request questions")
+    for question in request.questions:
+        answer = by_id[question.question_id]
+        if answer.kind is not question.kind:
+            raise DecisionModelInvalidResponse("backend answer kind mismatch")
+        keys = set(answer.probabilities)
+        if question.kind is DecisionKind.BOOLEAN:
+            if keys != {"false", "true"}:
+                raise DecisionModelInvalidResponse(
+                    "BOOLEAN answers require false/true probabilities"
+                )
+        elif keys != set(question.options):
+            raise DecisionModelInvalidResponse(
+                "CHOICE/SCORE probabilities must match request options"
+            )
 
 
 class DecisionCapability:
@@ -53,6 +84,7 @@ class DecisionCapability:
             return None
         try:
             result = self._backend.evaluate(request)
+            _validate_result(request, result)
         except DecisionModelError as exc:
             self._telemetry.record(
                 DecisionTrace(
