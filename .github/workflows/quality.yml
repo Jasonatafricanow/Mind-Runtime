@@ -60,7 +60,7 @@ jobs:
       - name: Install verified LCE compatibility baseline
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@5894a2334943d9a12310992fedcc1932a473b3d2"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@c7580b28518124362c48281681ea692a4052b4b8"
       - name: Verify MR-LCE binding
         run: python -m pytest tests/lce_binding tests/memory_retrieval -q
 
