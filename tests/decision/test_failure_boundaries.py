@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from collections.abc import Mapping
+from contextlib import contextmanager
 from typing import cast
 
 import pytest
@@ -42,17 +42,38 @@ def boolean_request() -> DecisionRequest:
     "build,error",
     [
         (lambda: DecisionQuestion("", DecisionKind.BOOLEAN, "x"), ValueError),
-        (lambda: DecisionQuestion("q", cast(DecisionKind, "boolean"), "x"), TypeError),
-        (lambda: DecisionQuestion(\n                "q", DecisionKind.BOOLEAN, "x", cast(tuple[str, ...], [])\n            ), TypeError),
         (
             lambda: DecisionQuestion(
-                "q", DecisionKind.CHOICE, "x", ("same", "same")
+                "q",
+                cast(DecisionKind, "boolean"),
+                "x",
+            ),
+            TypeError,
+        ),
+        (
+            lambda: DecisionQuestion(
+                "q",
+                DecisionKind.BOOLEAN,
+                "x",
+                cast(tuple[str, ...], []),
+            ),
+            TypeError,
+        ),
+        (
+            lambda: DecisionQuestion(
+                "q",
+                DecisionKind.CHOICE,
+                "x",
+                ("same", "same"),
             ),
             ValueError,
         ),
         (
             lambda: DecisionQuestion(
-                "q", DecisionKind.SCORE, "x", tuple(str(i) for i in range(11))
+                "q",
+                DecisionKind.SCORE,
+                "x",
+                tuple(str(i) for i in range(11)),
             ),
             ValueError,
         ),
@@ -112,7 +133,11 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
     "build,error",
     [
         (
-            lambda: DecisionAnswer(\n                "q", cast(DecisionKind, "boolean"), {"true": 1.0}\n            ),
+            lambda: DecisionAnswer(
+                "q",
+                cast(DecisionKind, "boolean"),
+                {"true": 1.0},
+            ),
             TypeError,
         ),
         (
@@ -121,13 +146,17 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
         ),
         (
             lambda: DecisionAnswer(
-                "q", DecisionKind.BOOLEAN, {"true": cast(float, "yes")}
+                "q",
+                DecisionKind.BOOLEAN,
+                {"true": cast(float, "yes")},
             ),
             TypeError,
         ),
         (
             lambda: DecisionAnswer(
-                "q", DecisionKind.BOOLEAN, {"true": 1.5}
+                "q",
+                DecisionKind.BOOLEAN,
+                {"true": 1.5},
             ),
             ValueError,
         ),
@@ -142,30 +171,37 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
         ),
         (
             lambda: DecisionAnswer(
-                "q", DecisionKind.SCORE, {"low": 1.0}, score=float("inf")
+                "q",
+                DecisionKind.SCORE,
+                {"low": 1.0},
+                score=float("inf"),
             ),
             ValueError,
         ),
         (
             lambda: DecisionAnswer(
-                "q", DecisionKind.SCORE, {"low": 1.0}, confidence=2.0
+                "q",
+                DecisionKind.SCORE,
+                {"low": 1.0},
+                confidence=2.0,
             ),
             ValueError,
         ),
-        (
-            lambda: DecisionResult("b", "v", ()),
-            ValueError,
-        ),
+        (lambda: DecisionResult("b", "v", ()), ValueError),
         (
             lambda: DecisionResult(
                 "b",
                 "v",
                 (
                     DecisionAnswer(
-                        "same", DecisionKind.BOOLEAN, {"false": 0.0, "true": 1.0}
+                        "same",
+                        DecisionKind.BOOLEAN,
+                        {"false": 0.0, "true": 1.0},
                     ),
                     DecisionAnswer(
-                        "same", DecisionKind.BOOLEAN, {"false": 0.0, "true": 1.0}
+                        "same",
+                        DecisionKind.BOOLEAN,
+                        {"false": 0.0, "true": 1.0},
                     ),
                 ),
             ),
@@ -177,7 +213,9 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
                 "v",
                 (
                     DecisionAnswer(
-                        "q", DecisionKind.BOOLEAN, {"false": 0.0, "true": 1.0}
+                        "q",
+                        DecisionKind.BOOLEAN,
+                        {"false": 0.0, "true": 1.0},
                     ),
                 ),
                 input_tokens=-1,
@@ -204,21 +242,6 @@ def test_answer_helpers_and_missing_question_are_explicit() -> None:
     result = DecisionResult("b", "v", (answer,))
     with pytest.raises(KeyError):
         result.answer("missing")
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        DecisionModelConfig(backend=""),
-        DecisionModelConfig.__new__(DecisionModelConfig),
-    ],
-)
-def test_factory_config_guard_setup(config) -> None:
-    # The normal invalid constructor is covered below; the __new__ case simply
-    # proves this test matrix does not rely on environment configuration.
-    if hasattr(config, "backend"):
-        return
-    assert not hasattr(config, "backend")
 
 
 @pytest.mark.parametrize(
@@ -271,7 +294,7 @@ def test_factory_builds_one_typesafe_capability() -> None:
         },
     ],
 )
-def test_typesafe_invalid_boolean_responses_fail_closed_at_backend(response) -> None:
+def test_typesafe_invalid_boolean_responses_are_rejected(response) -> None:
     backend = TypeSafeDecisionBackend(
         api_key="key",
         post_json=lambda *_args: response,
@@ -330,16 +353,12 @@ def test_memory_projection_input_guards_and_single_candidate_bypass() -> None:
     with pytest.raises(ValueError):
         MemoryRerankCandidate("id", "")
     with pytest.raises(TypeError):
-        MemoryRetrievalDecisionProjection(object())
+        MemoryRetrievalDecisionProjection(cast(DecisionCapability, object()))
     with pytest.raises(ValueError):
-        from mind_runtime.decision import DecisionCapability
-
         MemoryRetrievalDecisionProjection(
             DecisionCapability(),
             max_candidate_characters=1,
         )
-
-    from mind_runtime.decision import DecisionCapability
 
     projection = MemoryRetrievalDecisionProjection(DecisionCapability())
     assert projection.rerank(
