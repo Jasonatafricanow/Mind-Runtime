@@ -87,7 +87,7 @@ class TypeSafeDecisionBackend:
         api_key: str,
         model: str = "jev-1.13.0",
         endpoint: str = DEFAULT_TYPESAFE_ENDPOINT,
-        timeout_seconds: float = 8.0,
+        timeout_seconds: float = 2.0,
         post_json: JsonPost | None = None,
     ) -> None:
         if not api_key.strip() or not model.strip():
