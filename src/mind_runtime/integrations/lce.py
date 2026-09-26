@@ -37,11 +37,14 @@ if TYPE_CHECKING:
         ConsolidationResult,
         SemanticConsolidatorPort,
     )
+    from lce.cognition.promotion import BoundedInterpreter, PromotionPolicy
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
     from lce.core.projection import LceProjectionCore
     from lce.reference_memory.contracts import RawEvidence
+    from lce.semantic.contracts import SemanticDecisionProvider
     from lce.store.sqlite_store import SqliteBaselineStore
+    from lce.structure.contracts import StructureConfig
 
 MAX_SELECTED_MEMORIES = 100
 MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY = 32
@@ -497,6 +500,104 @@ class _GenericLceCore:
 
 
 @dataclass(frozen=True)
+class LceProjectionSession:
+    """MR-native longitudinal projection over canonical Memory."""
+
+    _adapter: MrMemorySubstrateAdapter
+    _source: MrCanonicalLceSource
+    _core: LceProjectionCore
+
+    def process_memory(self, memory_id: str) -> Any:
+        return self._core.process(self._source.get_evidence(memory_id))
+
+    def sync(self) -> tuple[Any, ...]:
+        materials = self._source.list_current_valid_evidence()
+        if not materials:
+            return ()
+        return tuple(self._core.run_batch(materials))
+
+    def source_changed_and_rebuild(
+        self,
+        memory_id: str,
+        *,
+        cutoff: datetime | None = None,
+    ) -> Any:
+        return self._core.source_changed_and_rebuild(
+            memory_id,
+            cutoff=cutoff,
+        )
+
+    def accepted_understandings(
+        self,
+        current_context: str | None,
+        *,
+        limit: int = 4,
+    ) -> tuple[LceAcceptedUnderstanding, ...]:
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError("limit must be an integer in [0, 100]")
+        if limit == 0:
+            return ()
+        query_tokens = set(lexical_tokens(current_context or ""))
+        candidates: list[LceAcceptedUnderstanding] = []
+        for view in self._core.query(current_context):
+            support_ids = tuple(view.supporting_source_refs)
+            if not support_ids:
+                continue
+            try:
+                memories = self._adapter.get_by_ids(support_ids)
+            except MemorySelectionError:
+                continue
+            searchable = " ".join(
+                [view.content, *(memory.content for memory in memories)]
+            )
+            searchable_tokens = set(lexical_tokens(searchable))
+            if query_tokens:
+                overlap = len(query_tokens & searchable_tokens)
+                if overlap == 0:
+                    continue
+                relevance = overlap / len(query_tokens)
+            else:
+                relevance = 1.0
+            source_refs = tuple(
+                sorted(
+                    {
+                        ref
+                        for memory in memories
+                        for ref in memory.source_refs
+                    }
+                )
+            )
+            candidates.append(
+                LceAcceptedUnderstanding(
+                    content=view.content,
+                    baseline_id=view.baseline_id,
+                    region_id=view.region_id,
+                    revision_number=view.revision_number,
+                    supporting_memory_ids=support_ids,
+                    source_refs=source_refs,
+                    relevance=min(1.0, relevance),
+                )
+            )
+        candidates.sort(
+            key=lambda item: (
+                -item.relevance,
+                item.region_id,
+                -item.revision_number,
+            )
+        )
+        return tuple(candidates[:limit])
+
+    def close(self) -> None:
+        self._core.close()
+
+    def __enter__(self) -> LceProjectionSession:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+@dataclass(frozen=True)
 class LceBindingSession:
     """Generic external-Memory LCE Core session."""
 
@@ -707,6 +808,70 @@ class LceThreadProjectionCompiler:
 def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
     scope_address = hashlib.sha256(scope_json(adapter.scope).encode("utf-8")).hexdigest()
     return adapter._paths.lce_root / scope_address
+
+
+def open_lce_projection_binding(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    semantic_provider: SemanticDecisionProvider | None = None,
+    interpreter: BoundedInterpreter | None = None,
+    policy: PromotionPolicy | None = None,
+    structure_config: StructureConfig | None = None,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceProjectionSession | None:
+    """Open the MR-native canonical-Memory -> LCE projection pipeline."""
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    CanonicalMemoryStore(
+        adapter._paths.memory_db,
+        read_only=True,
+    ).close()
+    source = MrCanonicalLceSource(adapter)
+    try:
+        from lce.core.projection import LceProjectionCore
+        from lce.reference_memory import (
+            ProjectionSubstrate,
+            SqliteProjectionStateStore,
+        )
+    except ImportError as exc:
+        raise LceIntegrationUnavailable(
+            "install an LCE build with external projection substrate support"
+        ) from exc
+
+    root = _scope_lce_root(adapter) / "projection-v1"
+    state = SqliteProjectionStateStore(root / "state")
+    substrate = ProjectionSubstrate(
+        source,
+        state,
+        close_source=False,
+        close_state=True,
+    )
+    try:
+        core = LceProjectionCore(
+            root / "runtime",
+            memory=substrate,
+            provider=semantic_provider,
+            policy=policy,
+            structure_config=structure_config,
+            interpreter=interpreter,
+            close_memory=True,
+        )
+    except BaseException:
+        substrate.close()
+        raise
+    return LceProjectionSession(adapter, source, core)
 
 
 def open_lce_thread_handoff(
