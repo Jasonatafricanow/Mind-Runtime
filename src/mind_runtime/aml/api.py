@@ -149,6 +149,32 @@ def build_runtime_from_env() -> AmlMemoryRuntime:
             ),
         )
 
+    lce_semantic_provider = None
+    lce_interpreter = None
+    lce_profile = _optional_triplet("AML_LCE")
+    if lce_profile is not None:
+        endpoint, api_key, model = lce_profile
+        from mind_runtime.aml.lce_provider import (
+            OpenAICompatibleBoundedInterpreter,
+            OpenAICompatibleLceSemanticProvider,
+        )
+
+        lce_timeout = float(
+            os.environ.get("AML_LCE_TIMEOUT_SECONDS", "20")
+        )
+        lce_semantic_provider = OpenAICompatibleLceSemanticProvider(
+            endpoint=endpoint,
+            api_key=api_key,
+            model=model,
+            timeout_seconds=lce_timeout,
+        )
+        lce_interpreter = OpenAICompatibleBoundedInterpreter(
+            endpoint=endpoint,
+            api_key=api_key,
+            model=model,
+            timeout_seconds=lce_timeout,
+        )
+
     decision_backend = os.environ.get(
         "AML_DECISION_BACKEND",
         "none",
@@ -175,6 +201,8 @@ def build_runtime_from_env() -> AmlMemoryRuntime:
         hyde_expander=hyde,
         decision=decision,
         thread_semantics=thread_semantics,
+        lce_semantic_provider=lce_semantic_provider,
+        lce_interpreter=lce_interpreter,
     )
 
 
