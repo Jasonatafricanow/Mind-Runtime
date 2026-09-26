@@ -729,6 +729,8 @@ def begin_turn_clean(
     occurred_at: datetime | None = None,
     profile: str = "xiyue",
     agent: Any = None,
+    semantic_proposals: tuple[Any, ...] = (),
+    appraisal_proposals: tuple[tuple[str, Any], ...] = (),
 ) -> tuple[Any | None, IngressVerdict]:
     """Gateway seam entrypoint.
 
@@ -781,6 +783,8 @@ def begin_turn_clean(
             session_id=session_id,
             message_id=message_id,
             occurred_at=occurred_at,
+            semantic_proposals=semantic_proposals,
+            appraisal_proposals=appraisal_proposals,
         )
         if handle is None:
             # begin_turn returned None or FAILED
