@@ -187,23 +187,31 @@ benchmark scores.
 
 ## Current implementation status
 
-The Body-owned ACTIVE semantic migration and the optional decision capability are
-separate implementation tracks.
+The ACTIVE online semantic cutover is implemented on the Body-owned input path:
 
-At the time of acceptance, the repository still contains legacy online semantic
-provider wiring and a model-backed appraisal composition path. Those are implementation
-debt relative to this decision. Their migration must separately:
+1. Host/Body can supply bounded `SemanticEventProposal` and
+   `AppraisalModelProposal` values.
+2. The Host adapter binds MR-owned Scope, runtime identity, and the admitted
+   turn Evidence reference; Body cannot author those authority fields.
+3. `TurnOrchestrator` carries the bound candidates/proposals into the single
+   `EmotionalTransitionInput` and no longer auto-constructs a semantic
+   provider from process environment.
+4. `SemanticRouter` consumes supplied candidates without calling a provider.
+5. `SemanticAppraisalProducer` validates a supplied Body proposal and binds
+   system fields without requiring a local appraisal model.
+6. ACTIVE Xiyue/certification composition no longer constructs GLM/Zen or a
+   model-backed appraisal provider and no longer requires their credentials for
+   readiness.
+7. The durable appraisal journal/application-receipt path remains in MR because
+   MR still owns validation, materialization, Dynamics application, and commit.
+8. Legacy semantic/provider implementations remain available only as explicit
+   LAB/shadow/recorded compatibility mechanisms; they are not ACTIVE semantic
+   authority.
 
-1. expose a bounded Host/Body -> MR typed semantic/appraisal proposal seam;
-2. remove automatic provider construction from ACTIVE TurnOrchestrator composition;
-3. disable/remove certified production dependence on `MR_SEMANTIC_PROVIDER` and
-   GLM/Zen credentials;
-4. migrate model-backed appraisal parsing to Body-supplied bounded proposals rather
-   than introducing another MR-owned online LLM;
-5. retain any small-model code only behind explicit LAB/shadow/background modes;
-6. update readiness/certification tests so an internal semantic provider is not a
-   production-readiness requirement.
+The Host implementation is responsible for obtaining the shared semantic pass
+from its Body LLM and supplying these typed proposals. MR does not replace a
+missing Body proposal by silently invoking its own online model.
 
-The optional decision-model track may be implemented independently because it does
-not alter that ACTIVE semantic ownership boundary. It must remain removable and
-must preserve the pre-existing baseline behavior when absent.
+The optional decision-model capability remains independent and fail-open; its
+presence or absence does not change this semantic ownership boundary.
+
