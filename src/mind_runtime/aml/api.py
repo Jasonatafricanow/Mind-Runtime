@@ -209,11 +209,8 @@ def create_app(
     def health() -> dict[str, bool]:
         return {"ok": True}
 
-    @app.post("/aml/add")
-    def add(
-        body: _AddModel,
-        _: Annotated[None, Depends(require_auth)],
-    ) -> dict[str, object]:
+    @app.post("/aml/add", dependencies=[Depends(require_auth)])
+    def add(body: _AddModel) -> dict[str, object]:
         request = AmlAddRequest(
             request_id=body.request_id,
             user_id=body.user_id,
