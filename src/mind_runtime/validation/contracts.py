@@ -902,8 +902,7 @@ def _event_effect(value: object, context: str) -> EventEffectRule:
 def _intent_rule(value: object, context: str) -> IntentRule:
     if not isinstance(value, Mapping):
         raise ValueError(f"{context} schema drift")
-    keys = set(value)
-    expected_base = {
+    expected = {
         "rule_id",
         "kind",
         "base_strength",
@@ -915,7 +914,8 @@ def _intent_rule(value: object, context: str) -> IntentRule:
         "expires_after",
         "reconsideration_policy",
     }
-    if keys != expected_base and keys != expected_base | {"minimum_initiative"}:
+    keys = set(value)
+    if keys not in (expected, expected | {"minimum_initiative"}):
         raise ValueError(f"{context} schema drift")
     raw = cast(Mapping[str, object], value)
     try:
@@ -924,22 +924,6 @@ def _intent_rule(value: object, context: str) -> IntentRule:
         )
     except ValueError as error:
         raise ValueError(f"{context}.reconsideration_policy enum value is invalid") from error
-
-    min_initiative: float | None = None
-    if "minimum_initiative" in raw:
-        min_init_val = raw["minimum_initiative"]
-        if min_init_val is not None:
-            if (
-                isinstance(min_init_val, bool)
-                or not isinstance(min_init_val, (int, float))
-                or not isfinite(min_init_val)
-            ):
-                raise ValueError(f"{context}.minimum_initiative must be a finite numeric value")
-            flt_val = float(min_init_val)
-            if not 0.0 < flt_val <= 1.0:
-                raise ValueError(f"{context}.minimum_initiative must be in (0, 1]")
-            min_initiative = flt_val
-
     return IntentRule(
         rule_id=_string(raw["rule_id"], f"{context}.rule_id"),
         kind=_string(raw["kind"], f"{context}.kind"),
@@ -955,7 +939,11 @@ def _intent_rule(value: object, context: str) -> IntentRule:
             else _duration(raw["expires_after"], f"{context}.expires_after")
         ),
         reconsideration_policy=reconsideration,
-        minimum_initiative=min_initiative,
+        minimum_initiative=(
+            None
+            if raw.get("minimum_initiative") is None
+            else _number(raw["minimum_initiative"], f"{context}.minimum_initiative")
+        ),
     )
 
 

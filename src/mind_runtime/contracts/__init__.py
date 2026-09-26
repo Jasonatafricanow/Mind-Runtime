@@ -79,7 +79,6 @@ from mind_runtime.contracts.host import (
     HostWakeNotification,
 )
 from mind_runtime.contracts.intent import (
-    InitiativeAdmissionTrace,
     Intent,
     IntentEngineResult,
     IntentScoreContribution,
@@ -88,7 +87,6 @@ from mind_runtime.contracts.intent import (
     IntentTransition,
     IntentWake,
     ReconsiderationPolicy,
-    VALID_INITIATIVE_ADMISSION_OUTCOMES,
     WakeSignal,
 )
 from mind_runtime.contracts.interaction import Interaction, InteractionStatus
@@ -185,7 +183,6 @@ __all__ = [
     "HostStatus",
     "HostTurnStatus",
     "HostWakeNotification",
-    "InitiativeAdmissionTrace",
     "Interaction",
     "InteractionStatus",
     "Intent",

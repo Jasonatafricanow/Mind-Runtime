@@ -31,7 +31,6 @@ from mind_runtime.contracts import (
     ExpressionOutcome,
     Intent,
     IntentEngineInput,
-    IntentScoreTrace,
     IntentStatus,
     Interaction,
     Observation,
@@ -223,7 +222,6 @@ class _Turn:
     surface: SurfaceProjectionResult | None = None
     surface_handoff_request_id: str | None = None
     surface_guard_accepted: bool = False
-    intent_traces: tuple[IntentScoreTrace, ...] = ()
 
 
 def _mr_thread_trace(phase: str, orchestrator: TurnOrchestrator, interaction_id: str = "") -> None:
@@ -650,12 +648,6 @@ class TurnOrchestrator:
         if self._turn is None:
             return None
         return self._turn.policy_result
-
-    @property
-    def intent_traces(self) -> tuple[IntentScoreTrace, ...]:
-        if self._turn is None:
-            return ()
-        return self._turn.intent_traces
 
     @property
     def turn_projection(self) -> TurnProjection | None:
@@ -1254,18 +1246,9 @@ class TurnOrchestrator:
                 raise ValueError("candidate Intent origin must match runtime")
             if not self.intent_lifecycle.is_initial_candidate(candidate):
                 raise ValueError("intent engine must return version-one candidate Intents")
-        turn.intent_traces = intent_result.traces
         for score_trace in intent_result.traces:
             if score_trace.scope != turn.interaction.scope:
                 raise ValueError("Intent score trace scope must match interaction scope")
-            if score_trace.surface_admission is not None and not score_trace.admitted:
-                self._trace.record(
-                    turn.interaction.interaction_id,
-                    "initiative_gate_rejected",
-                    ref=score_trace.intent_id,
-                    outcome=score_trace.surface_admission.outcome,
-                    at=now,
-                )
 
         admitted = tuple(
             self.intent_lifecycle.admit(candidate) for candidate in intent_result.candidates
