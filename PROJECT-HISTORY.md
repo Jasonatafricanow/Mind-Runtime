@@ -97,6 +97,55 @@ Relevant evidence:
 - `src/observation_window/`
 - `docs/case-studies/02-faculty-boundaries.md`
 
+### 7. Optional bounded decision compute became a shared parallel capability
+
+As retrieval, Thread, and longitudinal cognition matured, a new class of problem
+became visible: some semantic judgments were too fuzzy for deterministic rules but
+too small to justify another full reasoning pass.
+
+The runtime therefore introduced a single provider-neutral decision-model seam rather
+than adding model clients separately inside each feature.
+
+The design is explicitly parallel and optional:
+
+```text
+feature baseline pipeline -------------------------------> result
+                         \
+                          -> bounded projection
+                          -> DecisionModelPort
+                          -> optional judgment
+                          -> feature-owned policy
+```
+
+The first concrete use is canonical-Memory retrieval reranking. BM25/vector/RRF
+discovery still produces candidates, MR revalidates canonical scope/lifecycle first,
+and the optional decision model only judges semantic relevance over canonical Memory
+content. Provider/index text never becomes authority through the reranker.
+
+TypeSafe Jev is implemented as one replaceable backend behind the generic port. The
+backend is lazy-loaded, has no SDK requirement in the default runtime import graph,
+and defaults to a short fail-fast timeout. Absence, timeout, malformed output, or
+backend failure must preserve the original baseline pipeline.
+
+The same port is intentionally reusable by future Thread fuzzy identity resolution,
+LCE reasoning-cost gating, Affect, or other bounded decisions without creating new
+provider-specific API paths. No canonical mutation authority is delegated to the
+decision model.
+
+Relevant evidence:
+
+- `src/mind_runtime/decision/`
+- `src/mind_runtime/memory/decision_projection.py`
+- `src/mind_runtime/memory/retrieval.py`
+- `docs/adr/0034-body-owned-online-semantics-and-decision-model-option.md`
+- `tests/decision/`
+- `tests/memory_retrieval/test_decision_rerank.py`
+- `tests/memory_retrieval/test_decision_composition.py`
+
+This work was deliberately kept separate from the pending ACTIVE semantic migration.
+Legacy MR-owned online semantic-model wiring, GLM/Zen cleanup, appraisal migration,
+and Host/Body semantic ownership changes remain a different implementation track.
+
 ## Why the history was not rewritten
 
 A synthetic Git history would create cleaner-looking activity but weaker evidence.
@@ -114,3 +163,5 @@ The design evolution is instead backed by source boundaries, ADRs, tests, certif
 The public baseline demonstrates a large deterministic and restart-safe runtime surface, but it is still **research engineering / pre-production**.
 
 In particular, live shadow validation remains separate from deterministic certification, and incomplete external evidence is reported as incomplete rather than folded into a production claim.
+
+The optional decision-model plane is currently being developed on an isolated branch and is not part of the public `main` baseline until its integration checks and the separate local semantic-migration work are reconciled.
