@@ -726,3 +726,35 @@ def test_model_backed_appraisal_model_untrusted_evidence_fails_closed() -> None:
 
     appraisal = producer.assemble(candidate=candidate, context=context)
     assert appraisal.salience is None
+
+
+def test_body_supplied_appraisal_proposal_needs_no_local_model() -> None:
+    candidate = _candidate()
+    context = SemanticAppraisalContext(
+        candidate=candidate,
+        situation=_situation(),
+        persona=(),
+        history=None,
+        current_affect=(),
+    )
+    proposal = AppraisalModelProposal(
+        meanings=("the plan was cancelled",),
+        valence="negative",
+        relationship_relevance="relevant",
+        salience=0.88,
+        appraisal_confidence=0.91,
+        supporting_evidence_refs=candidate.evidence_refs,
+    )
+    producer = SemanticAppraisalProducer(model=None)
+    acceptance = producer.accept(
+        candidate=candidate,
+        context=context,
+        interaction_id="interaction-1",
+        persona_id="kayla",
+        route_abstention_reasons=(),
+        projection_scope=AGENT_SCOPE,
+        proposal=proposal,
+    )
+    assert acceptance.status == "ACCEPTED"
+    assert acceptance.appraisal.meanings == proposal.meanings
+    assert acceptance.appraisal.salience == proposal.salience
