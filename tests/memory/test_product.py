@@ -389,6 +389,70 @@ def test_mature_thread_handoff_rechecks_lifecycle_and_abandonment(tmp_path):
     canonical.close()
 
 
+def test_thread_lifecycle_state_machine_blocks_alternate_write_paths(tmp_path):
+    _, canonical, product = setup_store(
+        tmp_path,
+        rows=(memory(), second_memory(), other_scope_memory()),
+    )
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    opened = product.open_thread(
+        thread_id="state-machine",
+        scope=memory().scope,
+        open_question="Will this remain writable?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="Initial state.",
+    )
+
+    replay = product.open_thread(
+        thread_id="state-machine",
+        scope=memory().scope,
+        open_question="Will this remain writable?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="Initial state.",
+    )
+    assert replay == opened
+
+    with pytest.raises(ValueError, match="unknown thread"):
+        product.update_thread(
+            "missing",
+            supporting_memory_ids=("memory-1",),
+            at=at,
+        )
+    with pytest.raises(ValueError, match="unknown thread"):
+        product.resolve_thread("missing", memory_id="memory-1", at=at)
+    with pytest.raises(ValueError, match="unknown thread"):
+        product.thread_handoff("missing")
+
+    with pytest.raises(ValueError, match="exactly match thread Scope"):
+        product.resolve_thread(
+            "state-machine",
+            memory_id="memory-2",
+            at=at + timedelta(days=1),
+        )
+
+    resolved = product.resolve_thread(
+        "state-machine",
+        memory_id="memory-1",
+        at=at + timedelta(days=1),
+        working_summary="Closed.",
+    )
+    assert product.resolve_thread(
+        "state-machine",
+        memory_id="memory-1",
+        at=at + timedelta(days=2),
+    ) == resolved
+
+    with pytest.raises(ValueError, match="only OPEN"):
+        product.abandon_thread(
+            "state-machine",
+            at=at + timedelta(days=3),
+        )
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
