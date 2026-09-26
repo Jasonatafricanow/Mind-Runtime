@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 
 from mind_runtime.contracts.common import (
     SyncFields,
@@ -113,6 +114,72 @@ class IntentScoreContribution:
             raise ValueError("amount must be numeric")
 
 
+VALID_INITIATIVE_ADMISSION_OUTCOMES = frozenset(
+    {
+        "passed",
+        "below_minimum",
+        "surface_unavailable",
+        "surface_stale_or_mismatch",
+        "surface_invalid",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class InitiativeAdmissionTrace:
+    """Explanation for an independent Surface.initiative admission gate evaluation."""
+
+    minimum: float
+    observed: float | None
+    outcome: str
+    admission_validation_ref: str
+    control: str = "initiative"
+    comparator: str = "gte"
+
+    def __post_init__(self) -> None:
+        if self.control != "initiative":
+            raise ValueError("control must be 'initiative'")
+        if self.comparator != "gte":
+            raise ValueError("comparator must be 'gte'")
+        if (
+            isinstance(self.minimum, bool)
+            or not isinstance(self.minimum, (int, float))
+            or not isfinite(self.minimum)
+        ):
+            raise ValueError("minimum must be a finite numeric value")
+        if not 0.0 < float(self.minimum) <= 1.0:
+            raise ValueError("minimum must be in (0, 1]")
+        if self.observed is not None:
+            if (
+                isinstance(self.observed, bool)
+                or not isinstance(self.observed, (int, float))
+                or not isfinite(self.observed)
+            ):
+                raise ValueError("observed must be a finite numeric value or None")
+            if not 0.0 <= float(self.observed) <= 1.0:
+                raise ValueError("observed must be in [0, 1]")
+        if self.outcome not in VALID_INITIATIVE_ADMISSION_OUTCOMES:
+            raise ValueError(f"outcome must be one of {sorted(VALID_INITIATIVE_ADMISSION_OUTCOMES)}")
+        if self.outcome == "passed":
+            if self.observed is None:
+                raise ValueError("observed must not be None when outcome is 'passed'")
+            if float(self.observed) < float(self.minimum):
+                raise ValueError(
+                    f"observed ({self.observed}) must be >= minimum ({self.minimum}) when outcome is 'passed'"
+                )
+        elif self.outcome == "below_minimum":
+            if self.observed is None:
+                raise ValueError("observed must not be None when outcome is 'below_minimum'")
+            if float(self.observed) >= float(self.minimum):
+                raise ValueError(
+                    f"observed ({self.observed}) must be < minimum ({self.minimum}) when outcome is 'below_minimum'"
+                )
+        elif self.outcome in ("surface_unavailable", "surface_stale_or_mismatch", "surface_invalid"):
+            if self.observed is not None:
+                raise ValueError(f"observed must be None when outcome is {self.outcome!r}")
+        require_non_empty(self.admission_validation_ref, "admission_validation_ref")
+
+
 @dataclass(frozen=True, slots=True)
 class IntentScoreTrace:
     """Immutable explanation for one admitted or rejected Intent rule."""
@@ -133,6 +200,7 @@ class IntentScoreTrace:
     surface_weights: tuple[tuple[str, float], ...] = ()
     surface_recipe_ref: str | None = None
     ruleset_ref: str | None = None
+    surface_admission: InitiativeAdmissionTrace | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -158,6 +226,45 @@ class IntentScoreTrace:
             require_non_empty(self.surface_dependency_digest, "surface_dependency_digest")
         if self.overlap_validation_ref is not None:
             require_non_empty(self.overlap_validation_ref, "overlap_validation_ref")
+        if self.surface_admission is not None:
+            if not isinstance(self.surface_admission, InitiativeAdmissionTrace):
+                raise ValueError("surface_admission must be an InitiativeAdmissionTrace")
+            adm = self.surface_admission
+            if adm.outcome == "passed":
+                if not self.admitted:
+                    raise ValueError("admitted must be True when surface_admission outcome is 'passed'")
+                if "threshold_met" not in self.reason_codes:
+                    raise ValueError(
+                        f"reason_codes must reflect successful threshold admission when outcome is 'passed', got {self.reason_codes}"
+                    )
+            elif adm.outcome == "below_minimum":
+                if self.admitted:
+                    raise ValueError("admitted must be False when surface_admission outcome is 'below_minimum'")
+                if self.reason_codes != ("initiative_below_minimum",):
+                    raise ValueError(
+                        f"reason_codes must be ('initiative_below_minimum',) when outcome is 'below_minimum', got {self.reason_codes}"
+                    )
+            elif adm.outcome == "surface_unavailable":
+                if self.admitted:
+                    raise ValueError("admitted must be False when surface_admission outcome is 'surface_unavailable'")
+                if self.reason_codes != ("surface_unavailable",):
+                    raise ValueError(
+                        f"reason_codes must be ('surface_unavailable',) when outcome is 'surface_unavailable', got {self.reason_codes}"
+                    )
+            elif adm.outcome == "surface_stale_or_mismatch":
+                if self.admitted:
+                    raise ValueError("admitted must be False when surface_admission outcome is 'surface_stale_or_mismatch'")
+                if self.reason_codes != ("surface_stale_or_mismatch",):
+                    raise ValueError(
+                        f"reason_codes must be ('surface_stale_or_mismatch',) when outcome is 'surface_stale_or_mismatch', got {self.reason_codes}"
+                    )
+            elif adm.outcome == "surface_invalid":
+                if self.admitted:
+                    raise ValueError("admitted must be False when surface_admission outcome is 'surface_invalid'")
+                if self.reason_codes != ("surface_invalid",):
+                    raise ValueError(
+                        f"reason_codes must be ('surface_invalid',) when outcome is 'surface_invalid', got {self.reason_codes}"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
