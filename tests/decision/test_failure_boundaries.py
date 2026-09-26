@@ -141,3 +141,99 @@ def test_memory_projection_guards_do_not_expand_the_model_boundary() -> None:
         query="q",
         candidates=(MemoryRerankCandidate("m1", "one"),),
     ) == ("m1",)
+
+
+def test_remaining_generic_boundary_guards() -> None:
+    with pytest.raises(ValueError):
+        DecisionQuestion("q", DecisionKind.CHOICE, "x", ("same", "same"))
+    with pytest.raises(ValueError):
+        DecisionQuestion("q", DecisionKind.BOOLEAN, "x", ("bad",))
+    with pytest.raises(ValueError):
+        DecisionRequest(
+            "x",
+            "v1",
+            {str(i): "x" * 8192 for i in range(9)},
+            (_boolean_request().questions[0],),
+        )
+    with pytest.raises(ValueError):
+        DecisionAnswer(
+            "q",
+            DecisionKind.BOOLEAN,
+            {"true": cast(float, "bad")},
+        )
+    with pytest.raises(ValueError):
+        DecisionAnswer(
+            "q",
+            DecisionKind.CHOICE,
+            {"a": 1.0},
+            selected="missing",
+        )
+    with pytest.raises(ValueError):
+        DecisionAnswer(
+            "q",
+            DecisionKind.SCORE,
+            {"low": 1.0},
+            score=float("inf"),
+        )
+    valid = DecisionAnswer(
+        "q",
+        DecisionKind.BOOLEAN,
+        {"false": 0.0, "true": 1.0},
+    )
+    with pytest.raises(ValueError):
+        DecisionResult("b", "v", (valid,), input_tokens=-1)
+    with pytest.raises(KeyError):
+        DecisionResult("b", "v", (valid,)).answer("missing")
+    with pytest.raises(ValueError):
+        DecisionModelConfig(backend="")
+    with pytest.raises(ValueError):
+        MemoryRetrievalDecisionProjection(
+            DecisionCapability(),
+            max_candidate_characters=1,
+        )
+    with pytest.raises(ValueError):
+        MemoryRetrievalDecisionProjection(
+            DecisionCapability(),
+            max_candidates=1,
+        )
+
+
+def test_typesafe_concrete_boundary_guards() -> None:
+    with pytest.raises(ValueError):
+        TypeSafeDecisionBackend(api_key="", model="jev")
+    with pytest.raises(ValueError):
+        TypeSafeDecisionBackend(api_key="key", model="")
+    with pytest.raises(ValueError):
+        TypeSafeDecisionBackend(api_key="key", endpoint="ftp://invalid")
+    with pytest.raises(ValueError):
+        TypeSafeDecisionBackend(api_key="key", timeout_seconds=0)
+
+    choice = DecisionRequest(
+        "test",
+        "v1",
+        {"value": "candidate"},
+        (
+            DecisionQuestion(
+                "choice",
+                DecisionKind.CHOICE,
+                "Which?",
+                ("a", "b"),
+            ),
+        ),
+    )
+    backend = TypeSafeDecisionBackend(
+        api_key="key",
+        post_json=lambda *_args: {
+            "model": "jev",
+            "answers": {
+                "choice": {
+                    "type": "choice",
+                    "choice": 1,
+                    "probabilities": {"a": 0.5, "b": 0.5},
+                    "confidence": 0.5,
+                }
+            },
+        },
+    )
+    with pytest.raises(DecisionModelInvalidResponse):
+        backend.evaluate(choice)
