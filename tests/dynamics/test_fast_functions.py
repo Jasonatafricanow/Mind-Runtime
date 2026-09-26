@@ -417,3 +417,32 @@ def test_registry_requires_present_function_binding() -> None:
     assert empty.get_by_function(FastFunctionKind.ACTIVITY_WAKE) is None
     with pytest.raises(KeyError, match="no fast function registered"):
         empty.require_by_function(FastFunctionKind.ACTIVITY_WAKE)
+
+
+def test_registry_rejects_duplicate_state_key_or_function_kind() -> None:
+    spec1 = FAST_FUNCTION_V1_SPECS[0]
+    spec1_dup_key = replace(spec1, function_kind=FastFunctionKind.ACTIVITY_WAKE)
+    with pytest.raises(ValueError, match="duplicate state key in registry"):
+        FastFunctionRegistry((spec1, spec1_dup_key))
+
+    spec1_dup_kind = replace(FAST_FUNCTION_V1_SPECS[1], function_kind=spec1.function_kind)
+    with pytest.raises(ValueError, match="duplicate function kind in registry"):
+        FastFunctionRegistry((spec1, spec1_dup_kind))
+
+
+def test_registry_requires_present_state_key() -> None:
+    empty = FastFunctionRegistry(())
+    assert empty.get("agent.affect.missing") is None
+    with pytest.raises(KeyError, match="no fast function registered for state key"):
+        empty.require("agent.affect.missing")
+
+
+def test_spec_defaults_product_label_to_semantic_label() -> None:
+    spec = FastStateFunctionSpec(
+        state_key="agent.affect.custom",
+        semantic_label="custom label",
+        function_kind=FastFunctionKind.ACTIVITY_WAKE,
+        primary_consumer="test-consumer",
+        external_action_capable=False,
+    )
+    assert spec.product_label == "custom label"
