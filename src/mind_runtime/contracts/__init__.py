@@ -26,6 +26,7 @@ from mind_runtime.contracts.appraisal import (
     SemanticAppraisalContext,
     SemanticAppraisalModelPort,
     SemanticEventCandidate,
+    SemanticEventProposal,
     SemanticRoutingResult,
 )
 from mind_runtime.contracts.behavior import (
@@ -145,6 +146,7 @@ __all__ = [
     "AssessmentTrace",
     "AffectiveDimensionProfile",
     "AmbiguityAssessment",
+    "AppraisalModelProposal",
     "AppraisalPath",
     "AppraisalRouteDecision",
     "Authority",
@@ -214,6 +216,7 @@ __all__ = [
     "SemanticAppraisal",
     "SemanticDaypart",
     "SemanticEventCandidate",
+    "SemanticEventProposal",
     "SemanticPrecision",
     "SemanticRelation",
     "SemanticRoutingResult",

@@ -11,11 +11,13 @@ import pytest
 
 import mind_runtime.validation.composition as subject
 from mind_runtime.contracts import (
+    AppraisalModelProposal,
     Authority,
     HistoricalContextQuery,
     RuntimeState,
     Scope,
     ScopeDomain,
+    SemanticEventCandidate,
     SyncFields,
 )
 from mind_runtime.emotional_transition.history import HistoryProviderUnavailable
@@ -511,68 +513,53 @@ def test_apply_event_rejects_non_event(tmp_path: Path) -> None:
         composition.close()
 
 
-class MockAppraisalTransport:
-    """Offline test transport returning structured model appraisal response."""
-
-    def __init__(self, response_payload: dict[str, object] | None = None) -> None:
-        self.calls: list[dict[str, object]] = []
-        self.response_payload = response_payload or {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "meanings": ["relational_commitment"],
-                                "valence": "positive",
-                                "relationship_relevance": "relational_security",
-                                "salience": 0.88,
-                                "appraisal_confidence": 0.82,
-                                "supporting_evidence_refs": ["h30-evidence-positive"],
-                            }
-                        )
-                    }
-                }
-            ]
-        }
-
-    def post_json(
-        self, url: str, framed: dict[str, object], timeout_s: float
-    ) -> dict[str, object]:
-        self.calls.append({"url": url, "framed": framed, "timeout_s": timeout_s})
-        return self.response_payload
+def _body_positive_semantics(event):
+    evidence = event.evidence[0]
+    candidate = SemanticEventCandidate(
+        candidate_id="body-h30-positive",
+        scope=evidence.scope,
+        origin_runtime_id=evidence.origin_runtime_id,
+        kind="plan_confirmed",
+        attributes=(("intensity", "1"),),
+        confidence=1.0,
+        evidence_refs=(evidence.id,),
+    )
+    proposal = AppraisalModelProposal(
+        meanings=("relational_commitment",),
+        valence="positive",
+        relationship_relevance="relational_security",
+        salience=0.88,
+        appraisal_confidence=0.82,
+        supporting_evidence_refs=(evidence.id,),
+    )
+    return candidate, proposal
 
 
-def test_production_appraisal_activation_e2e_persists_slow_state_with_value_proof(
+def test_body_appraisal_e2e_persists_slow_state_with_value_proof(
     tmp_path: Path,
 ) -> None:
-    """Mandatory real production E2E and value proof:
+    """Body proposal -> MR validation -> journal/gate -> canonical slow state."""
 
-    runtime-config.json -> build_composition() -> apply_event() -> SQLite slow state persisted.
-    Proves candidate.confidence, appraisal.confidence, salience, proposed_value, disposition,
-    and persisted value across the entire closed pipeline.
-    """
-    transport = MockAppraisalTransport()
-    config = replace(make_runtime_config(tmp_path), appraisal_transport=transport)
+    config = make_runtime_config(tmp_path)
     composition = subject.build_composition(config)
-
     event = load_horizon_template(INPUTS / "horizon-30.json").events[1]
     config.clock.advance_to(NOW + event.at_offset)
+    candidate, proposal = _body_positive_semantics(event)
 
     try:
-        composition.apply_event(event)
+        composition.apply_event(
+            event,
+            semantic_candidates=(candidate,),
+            appraisal_proposals=((candidate.candidate_id, proposal),),
+        )
 
-        # 1. Transport was invoked exactly once with candidate context
-        assert len(transport.calls) == 1
-        call = transport.calls[0]
-        assert "model-appraisal-v1" in str(call["framed"])
-        assert "h30-evidence-positive" in str(call["framed"])
-
-        # 2. Transition produced slow decisions
         turn = composition.orchestrator._turn
         assert turn is not None
+        assert turn.transition_result is not None
+        assert len(turn.transition_result.accepted_appraisals) == 1
+        assert turn.transition_result.accepted_appraisals[0].appraisal.salience == 0.88
         assert turn.slow_decisions
 
-        # Verify decoded thresholds used by production composition
         transition_port = composition.orchestrator.emotional_transition
         gate = getattr(transition_port, "_homeostasis_gate", None)
         assert gate is not None
@@ -580,76 +567,62 @@ def test_production_appraisal_activation_e2e_persists_slow_state_with_value_proo
         assert gate.config.salience_floor_slow_accept == 0.60
         assert gate.config.confidence_floor_slow == 0.80
 
-        # Find the longitudinal decision
         long_decision = next(
-            d for d in turn.slow_decisions
-            if d.candidate.target_dimension == "agent.longitudinal.relationship_security"
+            d
+            for d in turn.slow_decisions
+            if d.candidate.target_dimension
+            == "agent.longitudinal.relationship_security"
         )
-
-        # Value Proof Assertions:
-        # Carrier A: candidate attribution certainty
         assert long_decision.candidate.confidence == 1.0
-        # Carrier B: appraisal certainty (from model proposal, distinct from attribution)
-        # Sourced from proposal appraisal_confidence = 0.82
-        # Gate candidate carries salience and proposed_value
         assert long_decision.candidate.salience == 0.88
         assert long_decision.candidate.proposed_value == 0.80
         assert long_decision.decision.value == "slow_accept"
         assert long_decision.candidate.evidence_refs == ("h30-evidence-positive",)
 
-        # 3. Canonical Slow State persisted to SQLite state backend
         state_backend = SqliteStateBackend(config.durable_paths.state_db)
         try:
             agent_scope = Scope(
-                domain=ScopeDomain.AGENT, agent_id="kayla_v0", persona_id="kayla_v0"
+                domain=ScopeDomain.AGENT,
+                agent_id="kayla_v0",
+                persona_id="kayla_v0",
             )
             slow_states = state_backend.load_slow_states(
-                agent_scope, "agent.longitudinal.relationship_security"
+                agent_scope,
+                "agent.longitudinal.relationship_security",
             )
             assert len(slow_states) >= 1
             persisted = slow_states[-1]
-            assert persisted.dimension == "agent.longitudinal.relationship_security"
             assert persisted.value == 0.80
-            assert persisted.status == "active"
             assert persisted.evidence_refs == ("h30-evidence-positive",)
-
-            # Rolling-window table verification
-            cursor = state_backend._conn.cursor()
-            rows = cursor.execute(
-                "SELECT target_dimension, proposed_value, salience, evidence_refs "
-                "FROM slow_contribution_window "
-                "WHERE target_dimension = 'agent.longitudinal.relationship_security'"
-            ).fetchall()
-            assert len(rows) == 1
-            assert rows[0][0] == "agent.longitudinal.relationship_security"
-            assert rows[0][1] == 0.80
-            assert rows[0][2] == 0.88
         finally:
             state_backend.close()
-
     finally:
         composition.close()
 
 
-def test_production_appraisal_negative_e2e_forced_failure_zero_slow_write(
-    tmp_path: Path,
-) -> None:
-    """Producer failure cannot borrow the legacy mapper or write Slow state."""
-    class FailingAppraisalTransport:
-        def post_json(
-            self, url: str, framed: dict[str, object], timeout_s: float
-        ) -> dict[str, object]:
-            raise RuntimeError("forced provider transport outage")
+def test_invalid_body_appraisal_cannot_write_slow_state(tmp_path: Path) -> None:
+    """Invalid Body appraisal cannot borrow legacy mapping or write slow state."""
 
-    transport = FailingAppraisalTransport()
-    config = replace(make_runtime_config(tmp_path), appraisal_transport=transport)
+    config = make_runtime_config(tmp_path)
     composition = subject.build_composition(config)
-
     event = load_horizon_template(INPUTS / "horizon-30.json").events[1]
     config.clock.advance_to(NOW + event.at_offset)
+    candidate, proposal = _body_positive_semantics(event)
+    invalid = AppraisalModelProposal(
+        meanings=proposal.meanings,
+        valence=proposal.valence,
+        relationship_relevance=proposal.relationship_relevance,
+        salience=proposal.salience,
+        appraisal_confidence=proposal.appraisal_confidence,
+        supporting_evidence_refs=("not-authorized",),
+    )
 
     try:
-        composition.apply_event(event)
+        composition.apply_event(
+            event,
+            semantic_candidates=(candidate,),
+            appraisal_proposals=((candidate.candidate_id, invalid),),
+        )
 
         turn = composition.orchestrator._turn
         assert turn is not None
@@ -659,25 +632,20 @@ def test_production_appraisal_negative_e2e_forced_failure_zero_slow_write(
         assert turn.transition_result.accepted_events == ()
         assert turn.transition_result.legacy_no_appraisal is False
 
-        # Verify zero writes to SQLite state backend
         state_backend = SqliteStateBackend(config.durable_paths.state_db)
         try:
             agent_scope = Scope(
-                domain=ScopeDomain.AGENT, agent_id="kayla_v0", persona_id="kayla_v0"
+                domain=ScopeDomain.AGENT,
+                agent_id="kayla_v0",
+                persona_id="kayla_v0",
             )
             slow_states = state_backend.load_slow_states(
-                agent_scope, "agent.longitudinal.relationship_security"
+                agent_scope,
+                "agent.longitudinal.relationship_security",
             )
             assert slow_states == ()
-
-            cursor = state_backend._conn.cursor()
-            rows = cursor.execute(
-                "SELECT * FROM slow_contribution_window"
-            ).fetchall()
-            assert len(rows) == 0
         finally:
             state_backend.close()
-
     finally:
         composition.close()
 

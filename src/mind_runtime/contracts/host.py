@@ -34,6 +34,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
+from mind_runtime.contracts.appraisal import AppraisalModelProposal, SemanticEventProposal
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
 
@@ -92,7 +93,7 @@ class HostTurnRequest:
       * shock / salience / urgency / timescale
       * persona mutation
       * memory authority results
-      * appraisal results
+      * authoritative appraisal results
     """
 
     interaction_id: str
@@ -103,6 +104,8 @@ class HostTurnRequest:
     channel: str = "default"
     session_id: str | None = None
     host_metadata: tuple[tuple[str, str], ...] = ()
+    semantic_proposals: tuple[SemanticEventProposal, ...] = ()
+    appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -114,6 +117,25 @@ class HostTurnRequest:
         # session_id may be None (some Hosts do not have a session concept)
         if self.session_id is not None:
             require_non_empty(self.session_id, "session_id")
+        semantic_ids: list[str] = []
+        for semantic_proposal in self.semantic_proposals:
+            if not isinstance(semantic_proposal, SemanticEventProposal):
+                raise ValueError("semantic_proposals must contain SemanticEventProposal")
+            semantic_ids.append(semantic_proposal.candidate_id)
+        if len(set(semantic_ids)) != len(semantic_ids):
+            raise ValueError("semantic proposal ids must be unique")
+        appraisal_ids: list[str] = []
+        for candidate_id, appraisal_proposal in self.appraisal_proposals:
+            require_non_empty(candidate_id, "appraisal proposal candidate_id")
+            if not isinstance(appraisal_proposal, AppraisalModelProposal):
+                raise ValueError("appraisal_proposals must contain AppraisalModelProposal")
+            appraisal_ids.append(candidate_id)
+        if len(set(appraisal_ids)) != len(appraisal_ids):
+            raise ValueError("appraisal proposal candidate ids must be unique")
+        if set(appraisal_ids) != set(semantic_ids):
+            raise ValueError(
+                "appraisal proposals must exactly cover supplied semantic proposals"
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -345,7 +345,8 @@ def build_runtime_stack(
     else:
         fact_service = FactIngestService(clock=clock, backend=SqliteFactBackend(facts_db))
     state_backend = SqliteStateBackend(state_db)
-    if appraisal_producer is not None:
+    appraisal_capable = persona is not None and definitions is not None
+    if appraisal_producer is not None or appraisal_capable:
         state_backend.enable_application_receipts()
     marker_store = SqliteCommitMarkerStore(state_db, connection=state_backend.connection)
     if situation is None:
@@ -376,7 +377,7 @@ def build_runtime_stack(
             state_backend.save_definition(definition)
     projection_journal = (
         ProjectionJournal(Path(state_db).with_name("appraisal_journal.sqlite"))
-        if appraisal_producer is not None
+        if appraisal_producer is not None or appraisal_capable
         else None
     )
     decision_context_compiler = None
