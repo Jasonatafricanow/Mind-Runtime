@@ -820,7 +820,12 @@ class LceThreadProjectionCompiler:
             return None
         with session:
             result = session.handoff_thread(thread)
-        return result.baseline.baseline_id
+        baseline_id = result.baseline.baseline_id
+        if not isinstance(baseline_id, str) or not baseline_id:
+            raise LceIntegrationUnavailable(
+                "LCE handoff returned an invalid baseline identity"
+            )
+        return baseline_id
 
 
 def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
