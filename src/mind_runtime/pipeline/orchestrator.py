@@ -1212,8 +1212,8 @@ class TurnOrchestrator:
         # (not on StubEmotionalTransition). Backward compatibility: if not available,
         # fall back to plain transition().
         authorized_evidence_refs = set(turn.evidence_refs)
-        for candidate in turn.semantic_candidates:
-            if not set(candidate.evidence_refs) <= authorized_evidence_refs:
+        for semantic_candidate in turn.semantic_candidates:
+            if not set(semantic_candidate.evidence_refs) <= authorized_evidence_refs:
                 raise ValueError(
                     "Body semantic candidate evidence refs must resolve to admitted turn evidence"
                 )
