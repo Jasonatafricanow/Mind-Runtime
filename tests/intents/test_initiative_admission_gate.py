@@ -1,9 +1,9 @@
 """Focused tests for the optional Surface.initiative admission gate."""
 
+import json
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
 
 import pytest
 
@@ -170,7 +170,13 @@ def test_gate_fails_closed_when_surface_is_missing() -> None:
 
 def test_gate_rejects_stale_surface_lineage() -> None:
     raw, surface, projected, situation = _fixture()
-    stale = replace(projected, projection_id="projection:stale")
+    stale = ProjectedMindState(
+        projection_id="projection:stale",
+        scope=projected.scope,
+        origin_runtime_id=projected.origin_runtime_id,
+        projected_states=projected.projected_states,
+        sync=_sync("projection:stale"),
+    )
     result = DeterministicIntentEngine((_rule(),), RUNTIME).evaluate(
         IntentEngineInput(
             interaction_id="fixture-1",
