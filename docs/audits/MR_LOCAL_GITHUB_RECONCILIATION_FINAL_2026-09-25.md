@@ -14,10 +14,10 @@
 This report delivers the authoritative final reconciliation and closure for the comprehensive migration brief defined in **GitHub Issue #11**.
 
 All planned migration gates have completed, passed quality verification, and merged into the canonical repository trunk (`main`):
-1. **Gate A (Reality Layer)**: Closed in PR #13 (`8d7bfef`). Hardened reality admission, replay determinism, and observation contracts.
-2. **Gate B1 (Observation Window IA & Persistence)**: Closed in PR #14 (`d1d13f8`) and PR #15 (`0387b32`). Delivered Observation Window V2 IA, REST endpoints, trace journals, and persistence fixtures.
-3. **Gate B2 (Surface Affect Architecture & Calibration)**: Closed in PR #16 (`664cded`). Delivered `PersonalityDisposition`, `SurfaceAffectProjector`, qualitative recipes, and lineage guarantees.
-4. **Gate B3 (Fast Function Registry V1)**: Closed in PR #17 (`389ad3b`) and PR #18 (`45cf36a`). Forward-ported the 8-function fast-state registry, anti-spam invariants, and public dynamics exports.
+1. **Gate A (Reality Layer)**: Closed in PR #12 (`ed229e6` / `8d7bfef`). Hardened reality admission, replay determinism, and observation contracts.
+2. **Gate B1 (Observation Window IA & Persistence)**: Closed in PR #13 (`15c73f7` / `912210e`) with evidence close in PR #14 (`26305fe` / `63e3bcf`). Delivered Observation Window V2 IA, REST endpoints, trace journals, and persistence fixtures.
+3. **Gate B2 (Surface Affect Architecture & Calibration)**: Closed in PR #15 (`e64d46a` / `dbf55ca`) with evidence close in PR #16 (`664cded` / `ceffaa9`). Delivered `PersonalityDisposition`, `SurfaceAffectProjector`, qualitative recipes, and lineage guarantees.
+4. **Gate B3 (Fast Function Registry V1)**: Closed in PR #17 (`389ad3b` / `19f2542`) with report close in PR #18 (`45cf36a` / `fe066c7`). Forward-ported the 8-function fast-state registry, anti-spam invariants, and public dynamics exports.
 5. **Gate B4 (Proactive Behavior Consumers)**: Merged in PR #22 (`d21cbcf3f83429192869b02a1f19600b843eda5e`). Resolved runtime control-flow bug in `abort_proactive_turn()`, bound proactive context preparer without typing regressions, preserved all deferred/config-blocked behavioral invariants, and passed full test suite with 94% branch coverage.
 6. **Gate C (Baseline Recovery & Document Classification)**: Audited all historical baseline recovery contracts, experimental replays, and forensic lines. Reconciled documents and formally classified research spikes as `PRESERVED_RESEARCH_ONLY`.
 7. **Section 14 Final Disposition Matrix**: Fully codified all historical branches, worktrees, components, and behavioral invariants into the standard 5-state disposition taxonomy.
@@ -79,9 +79,9 @@ Key defects identified and resolved:
 
 | Component / Branch / Artifact | Historical Ref / Source | Disposition State | Rational & Governance Justification |
 |---|---|---|---|
-| **Reality Observation Layer** | `w/mr-migration-reality-gate-a-20260925` | **MERGED_MAIN** | Closed in PR #13 (`8d7bfef`). Hardened observation admission and temporal reality replay. |
-| **Observation Window IA & Persistence** | `w/mr-migration-w2-gate-b1-20260925` | **MERGED_MAIN** | Closed in PR #14 (`d1d13f8`) & PR #15 (`0387b32`). Delivered V2 IA, REST APIs, and journal stores. |
-| **Surface Affect Architecture** | `w/mr-migration-surface-gate-b2-20260925` | **MERGED_MAIN** | Closed in PR #16 (`664cded`). Delivered disposition schemas, qualitative surface recipes, lineage tracking. |
+| **Reality Observation Layer** | `w/mr-migration-reality-gate-a-20260925` | **MERGED_MAIN** | Closed in PR #12 (`ed229e6`). Hardened observation admission and temporal reality replay. |
+| **Observation Window IA & Persistence** | `w/mr-migration-w2-gate-b1-20260925` | **MERGED_MAIN** | Closed in PR #13 (`15c73f7`) & PR #14 (`26305fe`). Delivered V2 IA, REST APIs, and journal stores. |
+| **Surface Affect Architecture** | `w/mr-migration-surface-gate-b2-20260925` | **MERGED_MAIN** | Closed in PR #15 (`e64d46a`) & PR #16 (`664cded`). Delivered disposition schemas, qualitative surface recipes, lineage tracking. |
 | **Fast Function Registry V1** | `w/mr-migration-fast-function-gate-b3-20260925` | **MERGED_MAIN** | Closed in PR #17 (`389ad3b`) & PR #18 (`45cf36a`). 8-function registry and anti-spam invariants in main. |
 | **Proactive Behavior Consumers** | `w/mr-migration-consumers-gate-b4-20260925` | **MERGED_MAIN** | Closed in PR #22 (`d21cbcf`). Runtime adapter defect fixed, full consumer suite green, 94% coverage. |
 | **Longing Proactive Contact** | `w/mr-longing-proactive-contact-v1-01` | **DEFERRED_CONFIG_BLOCKED** | Intent & Policy wired; Ticker produces WakeSignals; external proactive contact remains gated by config. |
