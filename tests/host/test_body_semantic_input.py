@@ -27,7 +27,7 @@ def _appraisal() -> AppraisalModelProposal:
         relationship_relevance="relevant",
         salience=0.8,
         appraisal_confidence=0.85,
-        supporting_evidence_refs=("body-cannot-authorize-this",),
+        supporting_evidence_refs=(),
     )
 
 
@@ -82,3 +82,22 @@ def test_duplicate_body_semantic_ids_are_rejected() -> None:
 def test_semantic_proposal_without_appraisal_sidecar_is_rejected() -> None:
     with pytest.raises(ValueError, match="exactly cover"):
         _request(semantic_proposals=(_semantic("body-1"),))
+
+
+def test_explicit_body_evidence_selector_is_preserved_for_mr_validation() -> None:
+    proposal = _appraisal()
+    explicit = AppraisalModelProposal(
+        meanings=proposal.meanings,
+        valence=proposal.valence,
+        relationship_relevance=proposal.relationship_relevance,
+        salience=proposal.salience,
+        appraisal_confidence=proposal.appraisal_confidence,
+        supporting_evidence_refs=("history-ref-1",),
+    )
+    request = _request(
+        semantic_proposals=(_semantic(),),
+        appraisal_proposals=(("body-1", explicit),),
+    )
+    evidence = _evidence_from_request(request)
+    _, appraisals = _body_semantics_from_request(request, evidence)
+    assert appraisals[0][1].supporting_evidence_refs == ("history-ref-1",)
