@@ -1,10 +1,4 @@
-"""TypeSafe System One backend for the generic DecisionModelPort.
-
-The integration uses the HTTP API directly so MR does not require the TypeSafe
-SDK at import time. The backend is optional and all transport or response
-failures are translated into DecisionModelError subclasses for fail-open
-composition.
-"""
+"""TypeSafe System One backend for the generic DecisionModelPort."""
 
 from __future__ import annotations
 
@@ -45,74 +39,41 @@ def _http_post_json(
     payload: Mapping[str, object],
     timeout: float,
 ) -> Mapping[str, object]:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = Request(url, data=body, headers=dict(headers), method="POST")
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode(),
+        headers=dict(headers),
+        method="POST",
+    )
     try:
         with urlopen(request, timeout=timeout) as response:
-            raw_body = response.read()
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise DecisionModelUnavailable("TypeSafe System One request failed") from exc
-    try:
-        decoded: object = json.loads(raw_body)
-    except (TypeError, ValueError) as exc:
-        raise DecisionModelInvalidResponse("TypeSafe response was not valid JSON") from exc
+            decoded = json.loads(response.read())
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        raise DecisionModelUnavailable("TypeSafe request failed") from exc
     if not isinstance(decoded, dict):
-        raise DecisionModelInvalidResponse("TypeSafe response must be a JSON object")
+        raise DecisionModelInvalidResponse("TypeSafe response must be an object")
     return cast(dict[str, object], decoded)
 
 
 def _question_payload(question: DecisionQuestion) -> dict[str, object]:
-    if question.kind is DecisionKind.BOOLEAN:
-        return {
-            "type": "noul",
-            "instructions": question.instructions,
-        }
-    if question.kind is DecisionKind.CHOICE:
-        return {
-            "type": "choice",
-            "instructions": question.instructions,
-            "criteria": {option: None for option in question.options},
-        }
-    return {
-        "type": "score",
+    payload: dict[str, object] = {
+        "type": "noul" if question.kind is DecisionKind.BOOLEAN else question.kind.value,
         "instructions": question.instructions,
-        "criteria": list(question.options),
     }
+    if question.kind is DecisionKind.CHOICE:
+        payload["criteria"] = {option: None for option in question.options}
+    elif question.kind is DecisionKind.SCORE:
+        payload["criteria"] = list(question.options)
+    return payload
 
 
-def _mapping(value: object, name: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping):
-        raise DecisionModelInvalidResponse(f"{name} must be an object")
-    for key in value:
-        if not isinstance(key, str):
-            raise DecisionModelInvalidResponse(f"{name} keys must be strings")
-    return cast(Mapping[str, object], value)
-
-
-def _probability(value: object, name: str) -> float:
+def _probability(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise DecisionModelInvalidResponse(f"{name} must be numeric")
+        raise ValueError
     result = float(value)
     if not 0.0 <= result <= 1.0:
-        raise DecisionModelInvalidResponse(f"{name} must be in [0, 1]")
+        raise ValueError
     return result
-
-
-def _finite_number(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise DecisionModelInvalidResponse(f"{name} must be numeric")
-    result = float(value)
-    if result != result or result in (float("inf"), float("-inf")):
-        raise DecisionModelInvalidResponse(f"{name} must be finite")
-    return result
-
-
-def _usage(value: object, name: str) -> int | None:
-    if value is None:
-        return None
-    if type(value) is not int or value < 0:
-        raise DecisionModelInvalidResponse(f"{name} must be a nonnegative integer")
-    return value
 
 
 class TypeSafeDecisionBackend:
@@ -125,11 +86,9 @@ class TypeSafeDecisionBackend:
         timeout_seconds: float = 8.0,
         post_json: JsonPost | None = None,
     ) -> None:
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("api_key must be nonempty")
-        if not isinstance(model, str) or not model.strip():
-            raise ValueError("model must be nonempty")
-        if not isinstance(endpoint, str) or not endpoint.startswith(("https://", "http://")):
+        if not api_key.strip() or not model.strip():
+            raise ValueError("api_key and model must be nonempty")
+        if not endpoint.startswith(("https://", "http://")):
             raise ValueError("endpoint must be an http(s) URL")
         if (
             isinstance(timeout_seconds, bool)
@@ -152,8 +111,7 @@ class TypeSafeDecisionBackend:
             "state": dict(request.state),
             "model": self._model,
             "questions": {
-                question.question_id: _question_payload(question)
-                for question in request.questions
+                item.question_id: _question_payload(item) for item in request.questions
             },
         }
         try:
@@ -166,106 +124,79 @@ class TypeSafeDecisionBackend:
                 payload,
                 self._timeout,
             )
-        except DecisionModelUnavailable:
+            model = response["model"]
+            raw_answers = response["answers"]
+            if not isinstance(model, str) or not isinstance(raw_answers, Mapping):
+                raise ValueError
+
+            answers = tuple(
+                self._answer(question, raw_answers[question.question_id])
+                for question in request.questions
+            )
+            usage = response.get("usage")
+            input_tokens = output_tokens = None
+            if isinstance(usage, Mapping):
+                raw_input, raw_output = usage.get("input_tokens"), usage.get("output_tokens")
+                if type(raw_input) is int and raw_input >= 0:
+                    input_tokens = raw_input
+                if type(raw_output) is int and raw_output >= 0:
+                    output_tokens = raw_output
+            return DecisionResult(
+                backend=self.backend_name,
+                model_version=model,
+                answers=answers,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+        except (DecisionModelUnavailable, DecisionModelInvalidResponse):
             raise
-        except DecisionModelInvalidResponse:
-            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionModelInvalidResponse("invalid TypeSafe response") from exc
         except Exception as exc:
             raise DecisionModelUnavailable("TypeSafe transport failed") from exc
 
-        model = response.get("model")
-        if not isinstance(model, str) or not model.strip():
-            raise DecisionModelInvalidResponse("TypeSafe response is missing model")
-        raw_answers = _mapping(response.get("answers"), "answers")
-        answers: list[DecisionAnswer] = []
-        for question in request.questions:
-            raw = _mapping(raw_answers.get(question.question_id), question.question_id)
-            raw_type = raw.get("type")
-            if question.kind is DecisionKind.BOOLEAN:
-                if raw_type != "noul":
-                    raise DecisionModelInvalidResponse("Noul answer type mismatch")
-                yes = _probability(raw.get("noul"), f"{question.question_id}.noul")
-                answers.append(
-                    DecisionAnswer(
-                        question_id=question.question_id,
-                        kind=question.kind,
-                        probabilities={"false": 1.0 - yes, "true": yes},
-                        selected="true" if yes >= 0.5 else "false",
-                    )
-                )
-                continue
-
-            if question.kind is DecisionKind.CHOICE:
-                if raw_type != "choice":
-                    raise DecisionModelInvalidResponse("Choice answer type mismatch")
-                raw_probabilities = _mapping(
-                    raw.get("probabilities"),
-                    f"{question.question_id}.probabilities",
-                )
-                probabilities = {
-                    option: _probability(
-                        raw_probabilities.get(option),
-                        f"{question.question_id}.probabilities[{option}]",
-                    )
-                    for option in question.options
-                }
-                selected = raw.get("choice")
-                if not isinstance(selected, str):
-                    raise DecisionModelInvalidResponse("Choice answer is missing selected option")
-                confidence = _probability(
-                    raw.get("confidence"),
-                    f"{question.question_id}.confidence",
-                )
-                answers.append(
-                    DecisionAnswer(
-                        question_id=question.question_id,
-                        kind=question.kind,
-                        probabilities=probabilities,
-                        selected=selected,
-                        confidence=confidence,
-                    )
-                )
-                continue
-
-            if raw_type != "score":
-                raise DecisionModelInvalidResponse("Score answer type mismatch")
-            raw_probabilities = _mapping(
-                raw.get("probabilities"),
-                f"{question.question_id}.probabilities",
-            )
-            probabilities = {
-                level: _probability(
-                    raw_probabilities.get(str(index)),
-                    f"{question.question_id}.probabilities[{index}]",
-                )
-                for index, level in enumerate(question.options)
-            }
-            confidence = _probability(
-                raw.get("confidence"),
-                f"{question.question_id}.confidence",
-            )
-            score = _finite_number(raw.get("score"), f"{question.question_id}.score")
-            answers.append(
-                DecisionAnswer(
-                    question_id=question.question_id,
-                    kind=question.kind,
-                    probabilities=probabilities,
-                    score=score,
-                    confidence=confidence,
-                )
+    @staticmethod
+    def _answer(question: DecisionQuestion, raw: object) -> DecisionAnswer:
+        if not isinstance(raw, Mapping):
+            raise ValueError
+        if question.kind is DecisionKind.BOOLEAN:
+            if raw.get("type") != "noul":
+                raise ValueError
+            yes = _probability(raw.get("noul"))
+            return DecisionAnswer(
+                question.question_id,
+                question.kind,
+                {"false": 1.0 - yes, "true": yes},
+                selected="true" if yes >= 0.5 else "false",
             )
 
-        usage = response.get("usage")
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        if usage is not None:
-            usage_map = _mapping(usage, "usage")
-            input_tokens = _usage(usage_map.get("input_tokens"), "usage.input_tokens")
-            output_tokens = _usage(usage_map.get("output_tokens"), "usage.output_tokens")
-        return DecisionResult(
-            backend=self.backend_name,
-            model_version=model,
-            answers=tuple(answers),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+        if raw.get("type") != question.kind.value:
+            raise ValueError
+        probabilities = raw.get("probabilities")
+        if not isinstance(probabilities, Mapping):
+            raise ValueError
+        if question.kind is DecisionKind.CHOICE:
+            mapped = {option: _probability(probabilities.get(option)) for option in question.options}
+            selected = raw.get("choice")
+            confidence = _probability(raw.get("confidence"))
+            if not isinstance(selected, str):
+                raise ValueError
+            return DecisionAnswer(
+                question.question_id,
+                question.kind,
+                mapped,
+                selected=selected,
+                confidence=confidence,
+            )
+
+        mapped = {
+            level: _probability(probabilities.get(str(index)))
+            for index, level in enumerate(question.options)
+        }
+        return DecisionAnswer(
+            question.question_id,
+            question.kind,
+            mapped,
+            score=float(raw["score"]),
+            confidence=_probability(raw.get("confidence")),
         )
