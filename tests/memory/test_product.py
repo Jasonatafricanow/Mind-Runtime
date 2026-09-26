@@ -261,6 +261,45 @@ def test_thread_maturity_requires_cross_interaction_support(tmp_path):
     canonical.close()
 
 
+def test_legacy_memory_without_interaction_provenance_cannot_mature(tmp_path):
+    path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
+    product.close()
+    canonical.close()
+
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute("SELECT memory_id,payload FROM canonical_memory").fetchall()
+        for memory_id, payload in rows:
+            data = json.loads(payload)
+            data["provenance"].pop("interaction_id", None)
+            conn.execute(
+                "UPDATE canonical_memory SET payload=? WHERE memory_id=?",
+                (json.dumps(data, sort_keys=True, ensure_ascii=False), memory_id),
+            )
+
+    canonical = CanonicalMemoryStore(path)
+    product = MemoryProductStore(path, canonical)
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    loaded = canonical.load_all()
+    assert all(item.provenance.interaction_id is None for item in loaded)
+    product.open_thread(
+        thread_id="legacy-thread",
+        scope=memory().scope,
+        open_question="Can legacy support authorize maturity?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="Legacy provenance is readable but not authoritative for maturity.",
+    )
+    with pytest.raises(ValueError, match="at least two interactions"):
+        product.update_thread(
+            "legacy-thread",
+            supporting_memory_ids=("memory-1", "memory-2"),
+            at=at + timedelta(days=1),
+            mature=True,
+        )
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
