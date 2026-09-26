@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from collections.abc import Mapping
+from typing import cast
 
 import pytest
 
 from mind_runtime.decision import (
     DecisionAnswer,
+    DecisionCapability,
     DecisionKind,
     DecisionModelInvalidResponse,
     DecisionModelUnavailable,
@@ -39,8 +42,8 @@ def boolean_request() -> DecisionRequest:
     "build,error",
     [
         (lambda: DecisionQuestion("", DecisionKind.BOOLEAN, "x"), ValueError),
-        (lambda: DecisionQuestion("q", "boolean", "x"), TypeError),
-        (lambda: DecisionQuestion("q", DecisionKind.BOOLEAN, "x", []), TypeError),
+        (lambda: DecisionQuestion("q", cast(DecisionKind, "boolean"), "x"), TypeError),
+        (lambda: DecisionQuestion(\n                "q", DecisionKind.BOOLEAN, "x", cast(tuple[str, ...], [])\n            ), TypeError),
         (
             lambda: DecisionQuestion(
                 "q", DecisionKind.CHOICE, "x", ("same", "same")
@@ -57,7 +60,7 @@ def boolean_request() -> DecisionRequest:
             lambda: DecisionRequest(
                 feature="x",
                 projection_version="v1",
-                state=[],
+                state=cast(Mapping[str, str], []),
                 questions=(boolean_question(),),
             ),
             TypeError,
@@ -109,7 +112,7 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
     "build,error",
     [
         (
-            lambda: DecisionAnswer("q", "boolean", {"true": 1.0}),
+            lambda: DecisionAnswer(\n                "q", cast(DecisionKind, "boolean"), {"true": 1.0}\n            ),
             TypeError,
         ),
         (
@@ -118,7 +121,7 @@ def test_request_contract_rejects_invalid_shapes(build, error) -> None:
         ),
         (
             lambda: DecisionAnswer(
-                "q", DecisionKind.BOOLEAN, {"true": "yes"}
+                "q", DecisionKind.BOOLEAN, {"true": cast(float, "yes")}
             ),
             TypeError,
         ),
