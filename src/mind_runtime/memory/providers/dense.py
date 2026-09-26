@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 from dataclasses import dataclass
 
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
-from mind_runtime.memory.embedding import EmbeddingProvider, validate_vector
+from mind_runtime.memory.embedding import EmbeddingIdentity, EmbeddingProvider, validate_vector
 from mind_runtime.memory.retrieval import (
     MemoryRetrievalQuery,
     RetrievalProviderUnavailable,
@@ -15,6 +19,69 @@ from mind_runtime.memory.retrieval import (
 )
 from mind_runtime.memory.store import scope_json
 
+
+
+class SqliteCachedEmbeddingProvider:
+    """Persistent content-addressed cache around any embedding provider."""
+
+    def __init__(self, provider: EmbeddingProvider, path: str | Path) -> None:
+        self._provider = provider
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS embedding_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    vector_json TEXT NOT NULL
+                )
+                """
+            )
+
+    @property
+    def identity(self) -> EmbeddingIdentity:
+        return self._provider.identity
+
+    def _cache_key(self, text: str) -> str:
+        identity = self.identity
+        payload = json.dumps(
+            [
+                identity.provider,
+                identity.model_id,
+                identity.dimension,
+                identity.revision,
+                text,
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(payload).hexdigest()
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("embedding input must be nonempty")
+        key = self._cache_key(text)
+        with sqlite3.connect(self._path, timeout=30.0) as conn:
+            row = conn.execute(
+                "SELECT vector_json FROM embedding_cache WHERE cache_key=?",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                raw = json.loads(row[0])
+                if not isinstance(raw, list):
+                    raise ValueError("cached embedding payload is invalid")
+                return validate_vector(
+                    tuple(float(value) for value in raw),
+                    self.identity,
+                )
+
+        vector = validate_vector(self._provider.embed(text), self.identity)
+        with sqlite3.connect(self._path, timeout=30.0) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO embedding_cache VALUES (?, ?)",
+                (key, json.dumps(vector)),
+            )
+        return vector
 
 @dataclass(frozen=True, slots=True)
 class _DenseDocument:
