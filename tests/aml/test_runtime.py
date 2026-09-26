@@ -15,7 +15,12 @@ from mind_runtime.aml.runtime import AmlMemoryRuntime, AmlRequestConflict
 
 
 class _ThreadSemantics:
-    def analyze(self, *, message: AmlMessage, context: tuple[AmlMessage, ...]) -> ThreadSemanticDecision:
+    def analyze(
+        self,
+        *,
+        message: AmlMessage,
+        context: tuple[AmlMessage, ...],
+    ) -> ThreadSemanticDecision:
         del context
         return ThreadSemanticDecision(
             action="track",
