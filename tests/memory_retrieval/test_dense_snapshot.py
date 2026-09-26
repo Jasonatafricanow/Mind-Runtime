@@ -9,7 +9,10 @@ from mind_runtime.memory.contracts import (
     MemoryProvenance,
 )
 from mind_runtime.memory.embedding import EmbeddingIdentity
-from mind_runtime.memory.providers.dense import InMemoryDenseRetrievalProvider
+from mind_runtime.memory.providers.dense import (
+    InMemoryDenseRetrievalProvider,
+    SqliteCachedEmbeddingProvider,
+)
 from mind_runtime.memory.retrieval import MemoryRetrievalQuery
 
 
@@ -68,3 +71,31 @@ def test_dense_snapshot_ranks_semantic_match_and_preserves_scope() -> None:
     )
     assert tuple(item.memory_id for item in hits) == ("apple", "beach")
     assert hits[0].score == 1.0
+
+
+class _CountingEmbedding:
+    identity = EmbeddingIdentity("fake", "cached", 3, "v1")
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        self.calls += 1
+        return (1.0, 0.0, 0.0)
+
+
+def test_sqlite_embedding_cache_survives_provider_rebuild(tmp_path) -> None:
+    upstream = _CountingEmbedding()
+    first = SqliteCachedEmbeddingProvider(
+        upstream,
+        tmp_path / "embeddings.sqlite",
+    )
+    assert first.embed("same text") == (1.0, 0.0, 0.0)
+    assert upstream.calls == 1
+
+    second = SqliteCachedEmbeddingProvider(
+        upstream,
+        tmp_path / "embeddings.sqlite",
+    )
+    assert second.embed("same text") == (1.0, 0.0, 0.0)
+    assert upstream.calls == 1
