@@ -35,6 +35,7 @@ class MemoryRetrievalDecisionProjection:
         decision: DecisionCapability,
         *,
         max_candidate_characters: int = 2048,
+        max_candidates: int = 24,
     ) -> None:
         if not isinstance(decision, DecisionCapability):
             raise TypeError("decision must be DecisionCapability")
@@ -43,8 +44,11 @@ class MemoryRetrievalDecisionProjection:
             or not 128 <= max_candidate_characters <= 8192
         ):
             raise ValueError("max_candidate_characters must be in [128, 8192]")
+        if type(max_candidates) is not int or not 2 <= max_candidates <= 24:
+            raise ValueError("max_candidates must be in [2, 24]")
         self._decision = decision
         self._max_candidate_characters = max_candidate_characters
+        self._max_candidates = max_candidates
 
     @property
     def available(self) -> bool:
@@ -59,9 +63,11 @@ class MemoryRetrievalDecisionProjection:
         baseline = tuple(candidate.memory_id for candidate in candidates)
         if len(candidates) < 2 or not self._decision.available:
             return baseline
+        judged = candidates[: self._max_candidates]
+        untouched = candidates[self._max_candidates :]
         state: dict[str, str] = {"query": query[:4096]}
         questions: list[DecisionQuestion] = []
-        for index, candidate in enumerate(candidates):
+        for index, candidate in enumerate(judged):
             key = f"candidate_{index}"
             state[key] = candidate.content[: self._max_candidate_characters]
             questions.append(
@@ -90,7 +96,9 @@ class MemoryRetrievalDecisionProjection:
                 index,
                 candidate.memory_id,
             )
-            for index, candidate in enumerate(candidates)
+            for index, candidate in enumerate(judged)
         ]
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return tuple(memory_id for _, _, memory_id in scored)
+        return tuple(memory_id for _, _, memory_id in scored) + tuple(
+            candidate.memory_id for candidate in untouched
+        )
