@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -46,6 +47,7 @@ class IntentRule:
     expires_after: timedelta | None
     reconsideration_policy: ReconsiderationPolicy
     surface_control_weights: tuple[tuple[str, float], ...] = ()
+    minimum_initiative: float | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.rule_id, "rule_id")
@@ -81,6 +83,31 @@ class IntentRule:
             if control in seen_controls:
                 raise ValueError("surface_control_weights controls must be unique")
             seen_controls.add(control)
+        if self.minimum_initiative is not None:
+            minimum_initiative = _require_number(
+                self.minimum_initiative, "minimum_initiative"
+            )
+            if not 0 < minimum_initiative <= 1:
+                raise ValueError("minimum_initiative must be in (0, 1]")
+            expected_root = {
+                "spontaneous_share": "agent.affect.sharing_urge",
+                "proactive_inquiry": "agent.affect.curiosity",
+            }.get(self.kind)
+            if expected_root is None:
+                raise ValueError(
+                    "minimum_initiative is only valid for spontaneous proactive motives"
+                )
+            if (
+                self.dimension_weights != ((expected_root, 1.0),)
+                or self.surface_control_weights
+                or self.event_kind is not None
+                or self.event_bonus != 0
+                or self.due_at_attribute is not None
+            ):
+                raise ValueError(
+                    "minimum_initiative requires one dedicated proactive root "
+                    "and no additive Surface/event path"
+                )
         if self.surface_control_weights:
             from mind_runtime.intents.surface_validator import (
                 validate_intent_rule_surface_overlap,
@@ -105,8 +132,14 @@ class DeterministicIntentEngine:
             kinds.add(rule.kind)
         self._rules = rules
         self._runtime_id = runtime_id
+        def _rule_wire(rule: IntentRule) -> dict[str, object]:
+            data = asdict(rule)
+            if rule.minimum_initiative is None:
+                data.pop("minimum_initiative")
+            return data
+
         rules_wire = json.dumps(
-            [asdict(rule) for rule in rules],
+            [_rule_wire(rule) for rule in rules],
             sort_keys=True,
             default=str,
             separators=(",", ":"),
@@ -142,6 +175,7 @@ class DeterministicIntentEngine:
         surface_controls_ref: str | None = None
         surface_dependency_digest: str | None = None
         overlap_validation_ref: str | None = None
+        surface_recipe_ref: str | None = None
 
         is_surface_aware = len(rule.surface_control_weights) > 0
         if is_surface_aware:
@@ -355,6 +389,59 @@ class DeterministicIntentEngine:
             reason_codes = ("below_minimum_strength",)
         else:
             reason_codes = ("threshold_met",)
+
+        minimum_initiative = rule.minimum_initiative
+        if admitted and minimum_initiative is not None:
+            surface = engine_input.surface
+            if surface is None or surface.status != "AVAILABLE" or surface.controls is None:
+                admitted = False
+                reason_codes = ("surface_unavailable",)
+            else:
+                from mind_runtime.surface.lineage import validate_projected_surface
+
+                reference = (
+                    f"tick:{engine_input.interaction_id}"
+                    if engine_input.interaction_id.startswith("cognitive-tick-")
+                    else f"interaction:{engine_input.interaction_id}"
+                )
+                if not validate_projected_surface(
+                    surface,
+                    projected=engine_input.projected,
+                    runtime_id=self._runtime_id,
+                    interaction_or_tick_ref=reference,
+                    persona_id=engine_input.projected.scope.persona_id,
+                    persona_version=engine_input.persona_version,
+                    persona_content_digest=engine_input.persona_content_digest,
+                ):
+                    admitted = False
+                    reason_codes = ("surface_stale_or_mismatch",)
+                else:
+                    controls = surface.controls
+                    values = controls.get("values")
+                    initiative = (
+                        values.get("initiative") if isinstance(values, Mapping) else None
+                    )
+                    if (
+                        isinstance(initiative, bool)
+                        or not isinstance(initiative, (int, float))
+                        or not isfinite(initiative)
+                        or not 0 <= initiative <= 1
+                    ):
+                        admitted = False
+                        reason_codes = ("surface_invalid",)
+                    else:
+                        surface_controls_ref = str(controls.get("controls_id", ""))
+                        surface_dependency_digest = str(
+                            controls.get("dependency_digest", "")
+                        )
+                        surface_recipe_ref = (
+                            f"{controls.get('recipe_id')}:"
+                            f"{controls.get('recipe_version')}:"
+                            f"{controls.get('recipe_digest')}"
+                        )
+                        if initiative < minimum_initiative:
+                            admitted = False
+                            reason_codes = ("initiative_below_minimum",)
         trace = IntentScoreTrace(
             trace_id=trace_id,
             scope=engine_input.scope,
@@ -371,9 +458,15 @@ class DeterministicIntentEngine:
             overlap_validation_ref=overlap_validation_ref,
             surface_weights=rule.surface_control_weights if is_surface_aware else (),
             surface_recipe_ref=(
-                f"{controls.get('recipe_id')}:{controls.get('recipe_version')}:{controls.get('recipe_digest')}"
-                if is_surface_aware
-                else None
+                surface_recipe_ref
+                if rule.minimum_initiative is not None
+                else (
+                    f"{controls.get('recipe_id')}:"
+                    f"{controls.get('recipe_version')}:"
+                    f"{controls.get('recipe_digest')}"
+                    if is_surface_aware
+                    else None
+                )
             ),
             ruleset_ref=self._ruleset_ref,
         )
@@ -405,7 +498,9 @@ class DeterministicIntentEngine:
                 version=1,
                 idempotency_key=f"idem-{intent_id}-v1",
             ),
-            surface_use=trace if is_surface_aware else None,
+            surface_use=(
+                trace if is_surface_aware or rule.minimum_initiative is not None else None
+            ),
         )
         return candidate, trace
 
