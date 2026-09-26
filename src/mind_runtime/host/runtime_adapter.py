@@ -42,6 +42,7 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
+    AppraisalModelProposal,
     Authority,
     AuthorityLevel,
     Evidence,
@@ -151,7 +152,7 @@ def _body_semantics_from_request(
     evidence: Evidence,
 ) -> tuple[
     tuple[SemanticEventCandidate, ...],
-    tuple[tuple[str, object], ...],
+    tuple[tuple[str, AppraisalModelProposal], ...],
 ]:
     """Bind Body-owned proposals to MR-owned scope/runtime/evidence authority."""
 
