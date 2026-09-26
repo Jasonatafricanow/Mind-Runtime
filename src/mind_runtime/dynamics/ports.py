@@ -217,9 +217,17 @@ class EngineEmotionalTransitionPort:
                             occurred_at=transition_input.clock,
                             payload={
                                 "candidate_id": candidate.candidate_id,
-                                "event_kind": getattr(candidate, "event_kind", getattr(candidate, "kind", None)),
+                                "event_kind": getattr(
+                                    candidate,
+                                    "event_kind",
+                                    getattr(candidate, "kind", None),
+                                ),
                                 "confidence": candidate.confidence,
-                                "summary": getattr(candidate, "summary", getattr(candidate, "kind", None)),
+                                "summary": getattr(
+                                    candidate,
+                                    "summary",
+                                    getattr(candidate, "kind", None),
+                                ),
                                 "evidence_refs": list(candidate.evidence_refs),
                             },
                             source_refs=candidate.evidence_refs,
@@ -275,7 +283,9 @@ class EngineEmotionalTransitionPort:
                     acceptance = cached_by_candidate.get(candidate.candidate_id)
                     if acceptance is None:
                         if active_appraisal_producer is None:
-                            raise ValueError("appraisal producer unavailable for uncached candidate")
+                            raise ValueError(
+                                "appraisal producer unavailable for uncached candidate"
+                            )
                         acceptance = active_appraisal_producer.accept(
                             candidate=candidate,
                             context=appraisal_ctx,
@@ -320,15 +330,39 @@ class EngineEmotionalTransitionPort:
                                 occurred_at=transition_input.clock,
                                 payload={
                                     "candidate_id": candidate.candidate_id,
-                                    "appraisal_id": getattr(assembled_appraisal, "appraisal_id", None),
-                                    "meanings": list(getattr(assembled_appraisal, "meanings", ())),
+                                    "appraisal_id": getattr(
+                                        assembled_appraisal,
+                                        "appraisal_id",
+                                        None,
+                                    ),
+                                    "meanings": list(
+                                        getattr(assembled_appraisal, "meanings", ())
+                                    ),
                                     "valence": getattr(assembled_appraisal, "valence", None),
-                                    "salience": getattr(assembled_appraisal, "salience", None),
-                                    "confidence": getattr(assembled_appraisal, "confidence", None),
-                                    "appraisal_confidence": getattr(assembled_appraisal, "confidence", None),
-                                    "relationship_relevance": getattr(assembled_appraisal, "relationship_relevance", None),
+                                    "salience": getattr(
+                                        assembled_appraisal,
+                                        "salience",
+                                        None,
+                                    ),
+                                    "confidence": getattr(
+                                        assembled_appraisal,
+                                        "confidence",
+                                        None,
+                                    ),
+                                    "appraisal_confidence": getattr(
+                                        assembled_appraisal,
+                                        "confidence",
+                                        None,
+                                    ),
+                                    "relationship_relevance": getattr(
+                                        assembled_appraisal,
+                                        "relationship_relevance",
+                                        None,
+                                    ),
                                 },
-                                source_refs=tuple(getattr(assembled_appraisal, "evidence_refs", ())),
+                                source_refs=tuple(
+                                    getattr(assembled_appraisal, "evidence_refs", ())
+                                ),
                             )
                         except Exception:
                             pass
@@ -649,11 +683,26 @@ class EngineEmotionalTransitionPort:
                             if (cand and hasattr(self._effects, "_rules"))
                             else None
                         )
-                        base_amount = rule.base_amount if (rule is not None and rule.dimension == dim) else None
-                        rule_id = getattr(rule, "rule_id", None) if rule is not None else None
-                        rule_status = "present" if (rule_id or base_amount is not None) else "not_applicable"
+                        base_amount = (
+                            rule.base_amount
+                            if rule is not None and rule.dimension == dim
+                            else None
+                        )
+                        rule_id = (
+                            getattr(rule, "rule_id", None)
+                            if rule is not None
+                            else None
+                        )
+                        rule_status = (
+                            "present"
+                            if rule_id or base_amount is not None
+                            else "not_applicable"
+                        )
                         formula = (
-                            f"{base_amount} × {cand.confidence:.2f} × {profile.sensitivity:.2f} = {scaled_impulse:+.4f}"
+                            (
+                                f"{base_amount} × {cand.confidence:.2f} × "
+                                f"{profile.sensitivity:.2f} = {scaled_impulse:+.4f}"
+                            )
                             if (base_amount is not None and cand)
                             else f"{scaled_impulse:+.4f}"
                         )
