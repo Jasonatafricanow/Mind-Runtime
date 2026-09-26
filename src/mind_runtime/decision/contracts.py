@@ -1,8 +1,4 @@
-"""Provider-neutral contracts for optional bounded semantic judgment.
-
-Decision models are optimization-only capabilities. They never own canonical
-state, Memory, Thread, LCE Baseline acceptance, or action authority.
-"""
+"""Provider-neutral contracts for optional bounded semantic judgment."""
 
 from __future__ import annotations
 
@@ -21,11 +17,9 @@ class DecisionKind(StrEnum):
     SCORE = "score"
 
 
-def _text(value: str, name: str, *, maximum: int) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be nonempty")
-    if len(value) > maximum:
-        raise ValueError(f"{name} exceeds {maximum} characters")
+def _required_text(value: object, name: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise ValueError(f"{name} must contain 1..{maximum} characters")
     return value.strip()
 
 
@@ -38,29 +32,26 @@ class DecisionQuestion:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self,
-            "question_id",
-            _text(self.question_id, "question_id", maximum=128),
+            self, "question_id", _required_text(self.question_id, "question_id", 128)
+        )
+        object.__setattr__(
+            self, "instructions", _required_text(self.instructions, "instructions", 4096)
         )
         if not isinstance(self.kind, DecisionKind):
             raise TypeError("kind must be DecisionKind")
-        object.__setattr__(
-            self,
-            "instructions",
-            _text(self.instructions, "instructions", maximum=4096),
-        )
         if not isinstance(self.options, tuple):
             raise TypeError("options must be a tuple")
-        normalized = tuple(_text(value, "option", maximum=512) for value in self.options)
-        if len(normalized) != len(set(normalized)):
+        options = tuple(_required_text(value, "option", 512) for value in self.options)
+        if len(options) != len(set(options)):
             raise ValueError("options must be unique")
-        if self.kind is DecisionKind.BOOLEAN and normalized:
-            raise ValueError("BOOLEAN questions do not accept options")
-        if self.kind is DecisionKind.CHOICE and not 2 <= len(normalized) <= 255:
-            raise ValueError("CHOICE questions require 2..255 options")
-        if self.kind is DecisionKind.SCORE and not 2 <= len(normalized) <= 10:
-            raise ValueError("SCORE questions require 2..10 ordered levels")
-        object.__setattr__(self, "options", normalized)
+        if self.kind is DecisionKind.BOOLEAN:
+            if options:
+                raise ValueError("BOOLEAN questions do not accept options")
+        else:
+            maximum = 255 if self.kind is DecisionKind.CHOICE else 10
+            if not 2 <= len(options) <= maximum:
+                raise ValueError(f"{self.kind.value} requires 2..{maximum} options")
+        object.__setattr__(self, "options", options)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,35 +62,32 @@ class DecisionRequest:
     questions: tuple[DecisionQuestion, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "feature", _text(self.feature, "feature", maximum=128))
+        object.__setattr__(self, "feature", _required_text(self.feature, "feature", 128))
         object.__setattr__(
             self,
             "projection_version",
-            _text(self.projection_version, "projection_version", maximum=64),
+            _required_text(self.projection_version, "projection_version", 64),
         )
-        if not isinstance(self.state, Mapping):
-            raise TypeError("state must be a mapping")
-        if not 1 <= len(self.state) <= 256:
-            raise ValueError("state must contain 1..256 entries")
-        frozen: dict[str, str] = {}
-        total = 0
-        for key, value in self.state.items():
-            clean_key = _text(key, "state key", maximum=128)
-            clean_value = _text(value, f"state[{clean_key}]", maximum=8192)
-            total += len(clean_key) + len(clean_value)
-            frozen[clean_key] = clean_value
-        if total > 65536:
+        if not isinstance(self.state, Mapping) or not 1 <= len(self.state) <= 256:
+            raise ValueError("state must be a mapping with 1..256 entries")
+        frozen = {
+            _required_text(key, "state key", 128): _required_text(
+                value, "state value", 8192
+            )
+            for key, value in self.state.items()
+        }
+        if sum(len(key) + len(value) for key, value in frozen.items()) > 65536:
             raise ValueError("state exceeds 65536 characters")
-        object.__setattr__(self, "state", MappingProxyType(frozen))
-        if not isinstance(self.questions, tuple) or not self.questions:
-            raise ValueError("questions must be a nonempty tuple")
-        if len(self.questions) > 256:
-            raise ValueError("questions exceeds 256 entries")
-        if any(not isinstance(question, DecisionQuestion) for question in self.questions):
-            raise TypeError("questions must contain DecisionQuestion values")
-        ids = tuple(question.question_id for question in self.questions)
+        if (
+            not isinstance(self.questions, tuple)
+            or not 1 <= len(self.questions) <= 256
+            or any(not isinstance(item, DecisionQuestion) for item in self.questions)
+        ):
+            raise ValueError("questions must contain 1..256 DecisionQuestion values")
+        ids = tuple(item.question_id for item in self.questions)
         if len(ids) != len(set(ids)):
             raise ValueError("question_id values must be unique")
+        object.__setattr__(self, "state", MappingProxyType(frozen))
 
     @property
     def fingerprint(self) -> str:
@@ -108,17 +96,27 @@ class DecisionRequest:
             "projection_version": self.projection_version,
             "state": dict(self.state),
             "questions": [
-                {
-                    "id": question.question_id,
-                    "kind": question.kind.value,
-                    "instructions": question.instructions,
-                    "options": question.options,
-                }
-                for question in self.questions
+                (item.question_id, item.kind.value, item.instructions, item.options)
+                for item in self.questions
             ],
         }
-        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+
+def _probabilities(values: Mapping[str, float]) -> MappingProxyType[str, float]:
+    if not isinstance(values, Mapping) or not values:
+        raise ValueError("probabilities must be a nonempty mapping")
+    normalized: dict[str, float] = {}
+    for key, raw in values.items():
+        key = _required_text(key, "probability key", 512)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError("probabilities must be numeric")
+        value = float(raw)
+        if not isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError("probabilities must be finite values in [0, 1]")
+        normalized[key] = value
+    return MappingProxyType(normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,39 +130,23 @@ class DecisionAnswer:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self,
-            "question_id",
-            _text(self.question_id, "question_id", maximum=128),
+            self, "question_id", _required_text(self.question_id, "question_id", 128)
         )
         if not isinstance(self.kind, DecisionKind):
             raise TypeError("kind must be DecisionKind")
-        if not isinstance(self.probabilities, Mapping) or not self.probabilities:
-            raise ValueError("probabilities must be a nonempty mapping")
-        frozen: dict[str, float] = {}
-        for key, raw in self.probabilities.items():
-            clean_key = _text(key, "probability key", maximum=512)
-            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-                raise TypeError("probabilities must be numeric")
-            value = float(raw)
-            if not isfinite(value) or not 0.0 <= value <= 1.0:
-                raise ValueError("probabilities must be finite values in [0, 1]")
-            frozen[clean_key] = value
-        object.__setattr__(self, "probabilities", MappingProxyType(frozen))
-        if self.selected is not None and self.selected not in frozen:
+        probabilities = _probabilities(self.probabilities)
+        object.__setattr__(self, "probabilities", probabilities)
+        if self.selected is not None and self.selected not in probabilities:
             raise ValueError("selected must name one probability option")
-        if self.score is not None and (
-            isinstance(self.score, bool)
-            or not isinstance(self.score, (int, float))
-            or not isfinite(float(self.score))
-        ):
-            raise ValueError("score must be finite when supplied")
-        if self.confidence is not None and (
-            isinstance(self.confidence, bool)
-            or not isinstance(self.confidence, (int, float))
-            or not isfinite(float(self.confidence))
-            or not 0.0 <= float(self.confidence) <= 1.0
-        ):
-            raise ValueError("confidence must be in [0, 1] when supplied")
+        for value, name in ((self.score, "score"), (self.confidence, "confidence")):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(float(value))
+            ):
+                raise ValueError(f"{name} must be finite when supplied")
+        if self.confidence is not None and not 0.0 <= float(self.confidence) <= 1.0:
+            raise ValueError("confidence must be in [0, 1]")
 
     def probability(self, option: str) -> float:
         return self.probabilities.get(option, 0.0)
@@ -172,7 +154,7 @@ class DecisionAnswer:
     @property
     def yes_probability(self) -> float:
         if self.kind is not DecisionKind.BOOLEAN:
-            raise TypeError("yes_probability is only valid for BOOLEAN answers")
+            raise TypeError("yes_probability requires a BOOLEAN answer")
         return self.probability("true")
 
 
@@ -185,25 +167,19 @@ class DecisionResult:
     output_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "backend", _text(self.backend, "backend", maximum=128))
+        object.__setattr__(self, "backend", _required_text(self.backend, "backend", 128))
         object.__setattr__(
-            self,
-            "model_version",
-            _text(self.model_version, "model_version", maximum=128),
+            self, "model_version", _required_text(self.model_version, "model_version", 128)
         )
-        if not isinstance(self.answers, tuple) or not self.answers:
-            raise ValueError("answers must be a nonempty tuple")
-        if any(not isinstance(answer, DecisionAnswer) for answer in self.answers):
-            raise TypeError("answers must contain DecisionAnswer values")
-        ids = tuple(answer.question_id for answer in self.answers)
-        if len(ids) != len(set(ids)):
-            raise ValueError("answer question_id values must be unique")
-        for value, name in (
-            (self.input_tokens, "input_tokens"),
-            (self.output_tokens, "output_tokens"),
+        if not self.answers or any(
+            not isinstance(answer, DecisionAnswer) for answer in self.answers
         ):
+            raise ValueError("answers must be a nonempty DecisionAnswer tuple")
+        if len({answer.question_id for answer in self.answers}) != len(self.answers):
+            raise ValueError("answer question_id values must be unique")
+        for value in (self.input_tokens, self.output_tokens):
             if value is not None and (type(value) is not int or value < 0):
-                raise ValueError(f"{name} must be a nonnegative integer when supplied")
+                raise ValueError("token counts must be nonnegative integers")
 
     def answer(self, question_id: str) -> DecisionAnswer:
         for answer in self.answers:
