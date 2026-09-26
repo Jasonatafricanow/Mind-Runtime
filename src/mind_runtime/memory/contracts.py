@@ -25,6 +25,7 @@ class MemoryProvenance:
     evidence_refs: tuple[str, ...]
     observation_id: str
     extractor_version: str
+    interaction_id: str | None = None
 
     def __post_init__(self) -> None:
         refs = freeze_refs(self.evidence_refs, "evidence_refs")
@@ -33,6 +34,8 @@ class MemoryProvenance:
         object.__setattr__(self, "evidence_refs", tuple(sorted(refs)))
         require_non_empty(self.observation_id, "observation_id")
         require_non_empty(self.extractor_version, "extractor_version")
+        if self.interaction_id is not None:
+            require_non_empty(self.interaction_id, "interaction_id")
 
 
 @dataclass(frozen=True, slots=True)
