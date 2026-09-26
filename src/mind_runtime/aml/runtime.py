@@ -41,7 +41,10 @@ from mind_runtime.memory.providers.bm25 import (
     BM25RetrievalProvider,
     lexical_tokens,
 )
-from mind_runtime.memory.providers.dense import InMemoryDenseRetrievalProvider
+from mind_runtime.memory.providers.dense import (
+    InMemoryDenseRetrievalProvider,
+    SqliteCachedEmbeddingProvider,
+)
 from mind_runtime.memory.providers.hybrid import (
     HybridRRFProvider,
     HyDEFallbackProvider,
@@ -282,9 +285,15 @@ class AmlMemoryRuntime:
         lexical: RetrievalProvider = BM25RetrievalProvider(memories)
         provider: RetrievalProvider = lexical
         if self._embedding is not None:
+            cached_embedding = SqliteCachedEmbeddingProvider(
+                self._embedding,
+                self.root
+                / "_derived_embedding_cache"
+                / f"{key}.sqlite",
+            )
             dense = InMemoryDenseRetrievalProvider(
                 memories,
-                embedding=self._embedding,
+                embedding=cached_embedding,
             )
             provider = HybridRRFProvider(
                 (
