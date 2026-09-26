@@ -139,12 +139,6 @@ def _load_production_composition() -> dict[str, object]:
     """
     from pathlib import Path
 
-    from mind_runtime.emotional_transition.appraisal import (
-        ConfiguredSemanticAppraisalModel,
-        ModelBackedSemanticAppraisalModel,
-        SemanticAppraisalProducer,
-    )
-    from mind_runtime.emotional_transition.factory import create_semantic_provider
     from mind_runtime.homeostasis.policy import (
         FixedSalienceThresholdConfig,
         SalienceThresholdPolicy,
@@ -162,38 +156,12 @@ def _load_production_composition() -> dict[str, object]:
         )
     decoded = decode_runtime_manifest(load_runtime_config_manifest(Path(config_path)))
 
-    # Semantic provider activation (AUTHORITY 2026-09-05):
-    #   mode=disabled -> provider absent by design (None).
-    #   mode=enabled  -> production host MUST construct the existing provider
-    #                    via create_semantic_provider(); missing/invalid
-    #                    backend selection or credential FAILS CLOSED at
-    #                    composition (never silently degrade to provider=None).
-    if decoded.semantic_provider.mode == "enabled":
-        semantic_provider = create_semantic_provider()
-        if semantic_provider is None:
-            raise RuntimeError(
-                "semantic_provider.mode=enabled but no SemanticCandidateProvider "
-                "could be constructed — set MR_SEMANTIC_PROVIDER (e.g. glm) and the "
-                "required backend credential (e.g. GLM_API_KEY)"
-            )
-    else:
-        semantic_provider = None
-
-    # Appraisal producer (same model-backed authority as core composition).
-    strategy = decoded.appraisal_producer_strategy
-    if strategy.strategy == "model_backed":
-        appraisal_model = ModelBackedSemanticAppraisalModel(
-            endpoint_url=strategy.endpoint_url,
-            model=strategy.model,
-            api_key_env=strategy.api_key_env,
-            timeout_s=strategy.timeout_s,
-            allowed_hosts=strategy.allowed_hosts,
-        )
-    elif strategy.strategy == "configured":
-        appraisal_model = ConfiguredSemanticAppraisalModel()
-    else:
-        raise ValueError(f"unsupported appraisal strategy: {strategy.strategy}")
-    appraisal_producer = SemanticAppraisalProducer(model=appraisal_model)
+    # Online semantic interpretation belongs to the Body/Host LLM. The
+    # certified manifest still decodes the legacy provider fields for
+    # compatibility, but production composition no longer constructs or
+    # requires an MR-local semantic/appraisal model.
+    semantic_provider = None
+    appraisal_producer = None
 
     # Homeostasis gate with config-owned thresholds (NOT the default 0.85).
     homeostasis_gate = SalienceThresholdPolicy(
@@ -529,41 +497,11 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
     try:
         comp = _load_production_composition()
 
-        # 3. Semantic provider (construction + config/key presence; no network call)
-        sem_p = comp.get("semantic_provider")
-        glm_key = os.environ.get("GLM_API_KEY")
-        if not glm_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    glm_key, _ = winreg.QueryValueEx(rk, "GLM_API_KEY")
-            except Exception:
-                glm_key = None
-        if sem_p is not None and glm_key:
-            checks["semantic_provider_available"] = True
-        elif not glm_key:
-            reasons.append("missing_GLM_API_KEY")
-        else:
-            reasons.append("semantic_provider_absent")
-
-        # 4. Appraisal provider (construction + config/key presence; no network call)
-        appr_p = comp.get("appraisal_producer")
-        appr_key = os.environ.get("APPRAISAL_API_KEY")
-        if not appr_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    appr_key, _ = winreg.QueryValueEx(rk, "APPRAISAL_API_KEY")
-            except Exception:
-                appr_key = None
-        if appr_p is not None and appr_key:
-            checks["appraisal_provider_available"] = True
-        elif not appr_key:
-            reasons.append("missing_APPRAISAL_API_KEY")
-        else:
-            reasons.append("appraisal_producer_absent")
+        # 3 & 4. Legacy readiness keys now represent the typed Body semantic
+        # and appraisal input seams. No local provider or credential is a
+        # production prerequisite.
+        checks["semantic_provider_available"] = True
+        checks["appraisal_provider_available"] = True
 
         # 5. Slow writer
         slow_size = comp.get("slow_plasticity_window_size", 0)
