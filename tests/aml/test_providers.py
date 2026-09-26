@@ -18,7 +18,9 @@ def test_thread_semantic_decision_requires_bounded_action() -> None:
         ThreadSemanticDecision("track")
 
 
-def test_openai_thread_semantic_provider_parses_typed_hint(monkeypatch) -> None:
+def test_openai_thread_semantic_provider_parses_typed_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = OpenAICompatibleThreadSemanticProvider(
         endpoint="https://example.com/v1/chat/completions",
         api_key="key",
@@ -51,7 +53,7 @@ def test_openai_thread_semantic_provider_parses_typed_hint(monkeypatch) -> None:
 
 
 def test_openai_completion_and_embedding_parse_provider_payloads(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     completion = OpenAICompatibleCompletion(
         endpoint="https://example.com/v1/chat/completions",
