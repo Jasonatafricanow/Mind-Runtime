@@ -19,8 +19,15 @@ from tests.memory.test_contracts import memory
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
 
-def remembered(memory_id: str, content: str, evidence_id: str, observation_id: str):
+def remembered(
+    memory_id: str,
+    content: str,
+    evidence_id: str,
+    observation_id: str,
+    interaction_id: str | None = None,
+):
     item = memory()
+    source_interaction = interaction_id or f"interaction-{memory_id}"
     return replace(
         item,
         memory_id=memory_id,
@@ -29,6 +36,7 @@ def remembered(memory_id: str, content: str, evidence_id: str, observation_id: s
             item.provenance,
             evidence_refs=(evidence_id,),
             observation_id=observation_id,
+            interaction_id=source_interaction,
         ),
         sync=replace(
             item.sync,
@@ -141,6 +149,76 @@ def test_track_creates_then_updates_same_thread_and_matures(tmp_path):
     assert updated.current_support_ids == ("m1", "m2")
     assert updated.mature
     assert len(product.list_threads(memory().scope)) == 1
+    service.close()
+
+
+def test_same_interaction_multiple_memories_cannot_mature_thread(tmp_path):
+    path = tmp_path / "memory.sqlite"
+    canonical = CanonicalMemoryStore(path)
+    canonical._commit(
+        (
+            remembered("m1", "first row", "e1", "o1", "same-turn"),
+            remembered("m2", "second row", "e2", "o2", "same-turn"),
+        )
+    )
+    product = MemoryProductStore(path, canonical)
+    compiler = RecordingCompiler()
+    service = ThreadAutoUpdateService(
+        canonical=canonical,
+        product=product,
+        projection_compiler=compiler,
+    )
+
+    first = service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c1",
+                refs=("e1",),
+                action="track",
+                question="Will this line mature?",
+                summary="First support.",
+            ),
+        ),
+        at=NOW,
+    )[0]
+    assert not first.mature
+
+    second = service.apply(
+        scope=memory().scope,
+        accepted_events=(
+            event(
+                candidate_id="c2",
+                refs=("e2",),
+                action="track",
+                question="Will this line mature?",
+                summary="A second Memory row from the same turn.",
+            ),
+        ),
+        at=NOW,
+    )[0]
+    assert second.current_support_ids == ("m1", "m2")
+    assert not second.mature
+    assert compiler.calls == []
+
+    forced = event(
+        candidate_id="c3",
+        refs=("e2",),
+        action="track",
+        question="Will this line mature?",
+        summary="A mature hint cannot invent independence.",
+    )
+    forced = replace(
+        forced,
+        attributes=(*forced.attributes, ("thread_mature", "true")),
+    )
+    third = service.apply(
+        scope=memory().scope,
+        accepted_events=(forced,),
+        at=NOW,
+    )[0]
+    assert not third.mature
+    assert compiler.calls == []
     service.close()
 
 

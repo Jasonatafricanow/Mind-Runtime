@@ -35,6 +35,11 @@ raw history on every turn.
 Thread is not a second medium-term history store and is not a permanent
 longitudinal interpretation layer.
 
+Thread maturity is derived authority, not a caller-owned boolean. A Thread
+requires canonical support from at least two distinct admitted interaction
+identities before it may become mature. Multiple Memory candidates produced
+from one interaction still count as one supporting event.
+
 When a mature Thread is successfully compiled into an accepted LCE Baseline,
 the higher-level projection supersedes it and MR deletes the temporary Thread
 row. Durable lineage remains in LCE's stable `mr-thread:<thread_id>` Baseline

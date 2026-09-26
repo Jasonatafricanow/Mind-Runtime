@@ -21,7 +21,8 @@ from mind_runtime.integrations.lce import (
     open_lce_read_binding,
     open_lce_thread_handoff,
 )
-from mind_runtime.memory.product import MemoryThread, ThreadStatus
+from mind_runtime.memory.product import MemoryProductStore
+from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.runtime_binding import (
     BindingManifestMismatchError,
     RuntimeBinding,
@@ -44,7 +45,7 @@ def plane(tmp_path):
             make_evidence(evidence_id=f"source-{index}"),
             payload={"text": f"Canonical fact {index}"},
         )
-        admit(service, evidence)
+        admit(service, evidence, interaction_id=f"interaction-{index}")
     memories = store.load_all()
     assert len(memories) == 3
     store.close()
@@ -184,24 +185,40 @@ def test_real_core_durable_revision_restart_and_no_reverse_authority(plane):
     assert snapshot(plane[2]) == before
 
 
-def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
-    binding, roots, _, memories = plane
+def _durable_mature_thread(plane):
+    _, _, paths, memories = plane
     support = tuple(item.memory_id for item in memories[:2])
-    thread = MemoryThread(
-        thread_id="computer-replacement",
-        scope=make_scope(),
-        open_question="Will the computer be replaced?",
-        status=ThreadStatus.OPEN,
-        importance=7,
-        created_at=datetime(2026, 9, 20, tzinfo=UTC),
-        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
-        touch_count=2,
-        suppressed=False,
-        origin_memory_ids=(support[0],),
-        current_support_ids=support,
-        working_summary="Price delayed replacement; later performance pressure reopened it.",
-        mature=True,
-    )
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    try:
+        opened_thread = product.open_thread(
+            thread_id="computer-replacement",
+            scope=make_scope(),
+            open_question="Will the computer be replaced?",
+            supporting_memory_ids=(support[0],),
+            at=datetime(2026, 9, 20, tzinfo=UTC),
+            importance=7,
+            working_summary="Replacement remains open.",
+        )
+        assert not opened_thread.mature
+        return product.update_thread(
+            opened_thread.thread_id,
+            supporting_memory_ids=support,
+            at=datetime(2026, 9, 25, tzinfo=UTC),
+            working_summary=(
+                "Price delayed replacement; later performance pressure reopened it."
+            ),
+            mature=True,
+        )
+    finally:
+        product.close()
+        canonical.close()
+
+
+def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
+    binding, roots, _, _ = plane
+    thread = _durable_mature_thread(plane)
+    support = thread.handoff_memory_ids
 
     session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
     assert session is not None
@@ -219,35 +236,64 @@ def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
         views = session.accepted_understandings("performance replacement", limit=3)
         assert len(views) == 1
         assert views[0].baseline_id == first.baseline.baseline_id
-        assert views[0].supporting_memory_ids == support
-        assert views[0].source_refs
 
     reader = open_lce_read_binding(binding, make_scope(), enabled=True, **roots)
     assert reader is not None
+    assert not hasattr(reader, "handoff_thread")
     with reader:
         views = reader.accepted_understandings("performance", limit=3)
         assert len(views) == 1
-        assert views[0].region_id == "mr-thread:computer-replacement"
+        assert views[0].baseline_id == first.baseline.baseline_id
+        assert views[0].supporting_memory_ids == support
+        assert views[0].source_refs
+
+
+def test_thread_handoff_rejects_forged_or_stale_thread_object(plane):
+    binding, roots, paths, memories = plane
+    authoritative = _durable_mature_thread(plane)
+
+    session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
+        forged = replace(
+            authoritative,
+            working_summary="Forged caller-owned summary.",
+        )
+        with pytest.raises(ValueError, match="durable MR product state"):
+            session.handoff_thread(forged)
+
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    try:
+        current = product.update_thread(
+            authoritative.thread_id,
+            supporting_memory_ids=tuple(item.memory_id for item in memories[:3]),
+            at=datetime(2026, 9, 26, tzinfo=UTC),
+            working_summary="A newer durable Thread revision.",
+            mature=True,
+        )
+        assert current != authoritative
+    finally:
+        product.close()
+        canonical.close()
+
+    session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
+        with pytest.raises(ValueError, match="durable MR product state"):
+            session.handoff_thread(authoritative)
+
+
+def test_generic_lce_binding_cannot_claim_thread_namespace(plane):
+    with opened(plane) as session:
+        with pytest.raises(ValueError, match="reserved"):
+            session.core.consolidate("mr-thread:forged", ids(plane)[:2])
+        assert session.core.get_history("mr-thread:forged").revisions == ()
 
 
 def test_projection_compiler_returns_accepted_baseline_identity(plane):
-    binding, roots, _, memories = plane
-    support = tuple(item.memory_id for item in memories[:2])
-    thread = MemoryThread(
-        thread_id="compiler-line",
-        scope=make_scope(),
-        open_question="Will the line compile?",
-        status=ThreadStatus.OPEN,
-        importance=5,
-        created_at=datetime(2026, 9, 20, tzinfo=UTC),
-        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
-        touch_count=1,
-        suppressed=False,
-        origin_memory_ids=(support[0],),
-        current_support_ids=support,
-        working_summary="The online line has enough support to become compiled cognition.",
-        mature=True,
-    )
+    binding, roots, _, _ = plane
+    thread = _durable_mature_thread(plane)
     compiler = LceThreadProjectionCompiler(binding, enabled=True, **roots)
     baseline_id = compiler.compile(thread)
     assert baseline_id is not None
@@ -255,37 +301,45 @@ def test_projection_compiler_returns_accepted_baseline_identity(plane):
     reader = open_lce_read_binding(binding, make_scope(), enabled=True, **roots)
     assert reader is not None
     with reader:
-        views = reader.accepted_understandings("compiled cognition", limit=3)
+        views = reader.accepted_understandings("replacement", limit=3)
         assert views[0].baseline_id == baseline_id
 
 
-def test_thread_handoff_requires_mature_non_abandoned_structure(plane):
-    binding, roots, _, memories = plane
-    memory_id = memories[0].memory_id
-    base = MemoryThread(
-        thread_id="t",
-        scope=make_scope(),
-        open_question="open?",
-        status=ThreadStatus.OPEN,
-        importance=5,
-        created_at=datetime(2026, 9, 20, tzinfo=UTC),
-        updated_at=datetime(2026, 9, 25, tzinfo=UTC),
-        touch_count=0,
-        suppressed=False,
-        origin_memory_ids=(memory_id,),
-        current_support_ids=(memory_id,),
-    )
+def test_thread_handoff_requires_durable_mature_non_abandoned_structure(plane):
+    binding, roots, paths, memories = plane
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    try:
+        base = product.open_thread(
+            thread_id="t",
+            scope=make_scope(),
+            open_question="open?",
+            supporting_memory_ids=(memories[0].memory_id,),
+            at=datetime(2026, 9, 20, tzinfo=UTC),
+        )
+    finally:
+        product.close()
+        canonical.close()
+
     session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
     assert session is not None
     with session:
         with pytest.raises(ValueError, match="not mature"):
             session.handoff_thread(base)
-        abandoned = replace(
-            base,
-            status=ThreadStatus.ABANDONED,
-            working_summary="A mature-looking but abandoned line.",
-            mature=True,
-        )
+
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    try:
+        product.abandon_thread("t", at=datetime(2026, 9, 21, tzinfo=UTC))
+        abandoned = product.get_thread("t")
+        assert abandoned is not None
+    finally:
+        product.close()
+        canonical.close()
+
+    session = open_lce_thread_handoff(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
         with pytest.raises(ValueError, match="abandoned"):
             session.handoff_thread(abandoned)
 

@@ -670,7 +670,9 @@ This section distinguishes architecture from implementation.
   the already-accepted semantic event from the turn; there is no second Thread
   classifier/model call. Explicit `thread_action/thread_question/thread_summary`
   attributes are resolved back to ACTIVE canonical Memory support before a
-  Thread may open, update, mature, or resolve.
+  Thread may open, update, mature, or resolve. Maturity requires support from
+  at least two distinct admitted interaction identities; multiple Memory rows
+  from one turn do not count as independent support.
 - Thread identity/update is deterministic and bounded: exact/open-question and
   lexical overlap are currently used to choose an existing open Thread. The
   matching policy is replaceable and is not factual authority.

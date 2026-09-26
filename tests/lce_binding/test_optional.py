@@ -28,6 +28,67 @@ def test_invalid_activation_flags_fail_before_resolution(tmp_path, monkeypatch, 
     assert list(tmp_path.iterdir()) == []
 
 
+def test_generic_core_cannot_claim_thread_namespace_without_lce() -> None:
+    from mind_runtime.integrations.lce import _GenericLceCore
+
+    class FakeCore:
+        marker = "delegated"
+
+        def consolidate(self, region_id, memory_ids):
+            return region_id, memory_ids
+
+    guarded = _GenericLceCore(FakeCore())
+    with pytest.raises(ValueError, match="reserved"):
+        guarded.consolidate("mr-thread:forged", ("memory-1",))
+    assert guarded.consolidate("ordinary", ("memory-1",)) == (
+        "ordinary",
+        ("memory-1",),
+    )
+    assert guarded.marker == "delegated"
+
+
+def test_thread_handoff_revalidates_durable_product_before_lce_import(tmp_path) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from mind_runtime.integrations.lce import LceThreadHandoffSession
+    from tests.memory.test_contracts import memory
+    from tests.memory.test_product import second_memory, setup_store
+
+    path, canonical, product = setup_store(
+        tmp_path,
+        rows=(memory(), second_memory()),
+    )
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    opened = product.open_thread(
+        thread_id="durable",
+        scope=memory().scope,
+        open_question="Is this caller-owned?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="Initial.",
+    )
+    authoritative = product.update_thread(
+        opened.thread_id,
+        supporting_memory_ids=("memory-1", "memory-2"),
+        at=at,
+        working_summary="Durable authoritative summary.",
+        mature=True,
+    )
+    product.close()
+    canonical.close()
+
+    adapter = SimpleNamespace(
+        scope=memory().scope,
+        _paths=SimpleNamespace(memory_db=path),
+    )
+    session = LceThreadHandoffSession(adapter, object())
+    forged = replace(authoritative, working_summary="Caller-forged summary.")
+    with pytest.raises(ValueError, match="durable MR product state"):
+        session.handoff_thread(forged)
+
+
 def test_no_site_packages_default_composition(tmp_path):
     source = Path(__file__).resolve().parents[2] / "src"
     metadata = tmp_path / "mind_runtime-0.0.0.dist-info"

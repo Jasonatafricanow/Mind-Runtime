@@ -138,6 +138,9 @@ reuses the accepted semantic event already produced for that turn, resolves its
 references back to ACTIVE canonical Memory, and updates the bounded Thread only
 after successful turn commit. No second model call is introduced for Thread
 classification, and an aborted/replayed turn does not create a second update.
+Maturity additionally requires support spanning at least two distinct admitted
+interaction identities; multiple Memory rows derived from one interaction do
+not manufacture independent support.
 
 When LCE composition is enabled, the same post-commit projection path compiles
 mature Threads through Path A. LCE acceptance returns the Baseline identity;
