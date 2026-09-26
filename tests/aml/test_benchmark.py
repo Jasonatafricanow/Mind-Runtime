@@ -11,6 +11,7 @@ from mind_runtime.aml.contracts import (
     AmlAddRequest,
     AmlMessage,
     AmlRuntimeConfig,
+    AmlSearchItem,
     AmlSearchRequest,
 )
 from mind_runtime.aml.runtime import AmlMemoryRuntime
@@ -45,7 +46,7 @@ def test_budget_curve_measures_smallest_sufficient_context(tmp_path: Path) -> No
 
     def score(
         _: AmlSearchRequest,
-        results: tuple[object, ...],
+        results: tuple[AmlSearchItem, ...],
     ) -> float:
         return 1.0 if any(
             "alpha target fact" in getattr(item, "content", "")
@@ -55,7 +56,7 @@ def test_budget_curve_measures_smallest_sufficient_context(tmp_path: Path) -> No
     curves = run_k_sweep(
         runtime,
         (request,),
-        scorer=score,  # type: ignore[arg-type]
+        scorer=score,
         k_values=(1, 2),
     )
     assert len(curves) == 1
