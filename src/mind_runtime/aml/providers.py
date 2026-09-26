@@ -167,6 +167,10 @@ class OpenAICompatibleThreadSemanticProvider:
             raise ValueError("semantic provider question must be string or null")
         if summary is not None and not isinstance(summary, str):
             raise ValueError("semantic provider summary must be string or null")
+        if isinstance(confidence, bool) or not isinstance(
+            confidence, (int, float)
+        ):
+            raise ValueError("semantic provider confidence must be numeric")
         return ThreadSemanticDecision(
             action=action.strip().casefold(),
             question=question.strip() if isinstance(question, str) else None,
