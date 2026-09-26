@@ -55,53 +55,144 @@ They remain stateless proposal tools. They do not own facts, current state, Affe
 Persona, Memory, LCE Baseline acceptance, or action authority. Background output is
 candidate-only unless admitted by the relevant runtime owner.
 
-## Optional decision-model seam
+## Optional shared decision-model seam
 
-A decision model such as TypeSafe Jev may be added later as a replaceable backend for
-bounded semantic judgments that sit between deterministic retrieval/rules and full
-reasoning.
+A bounded decision model such as TypeSafe Jev, a locally hosted Laya model, or a
+future specialized classifier is an optional optimization capability. It is not a
+second semantic authority and is not a mandatory step in any core MR pipeline.
 
-MR must depend on a provider-neutral decision contract (for example a
-`DecisionModelPort` / System-One-style port), not on Jev-specific APIs.
+MR exposes one provider-neutral `DecisionModelPort` for this reusable capability.
+Feature modules do not own provider clients or model credentials. Instead, each
+feature projects its local bounded state into the shared BOOLEAN / CHOICE / SCORE
+decision primitives and consumes only the returned judgment probabilities.
 
-Candidate uses, in priority order:
+Conceptually:
 
-1. Thread candidate fit / continuation matching after local retrieval.
-2. Memory or accepted-cognition reranking after BM25/vector/RRF candidate discovery.
-3. LCE wake gating: whether a new delta materially changes an accepted longitudinal
-   understanding enough to justify full reasoning.
-4. Memory consolidation judgments such as duplicate / supersedes / add / unrelated.
-5. Other bounded routing or verification questions where code owns the final policy.
+```text
+feature-owned state
+    -> feature projection
+    -> shared DecisionModelPort
+    -> optional judgment result
+    -> feature-owned policy
 
-A decision model is not a replacement for Body semantic understanding or LCE
-multi-hop reasoning. It returns judgments/probabilities only; deterministic runtime
-policy owns thresholds and mutation.
+                    DecisionModelPort
+                    /       |       \
+             retrieval    Thread     LCE
+             projection  projection  projection
+```
+
+The backend is configured once at composition time. Jev, Laya, or another backend
+may replace each other without changing feature contracts.
+
+The capability is parallel and fail-open:
+
+- when no backend is configured, the original baseline pipeline runs unchanged;
+- when a backend is unavailable, times out, or returns an invalid response, the
+  original baseline pipeline runs unchanged;
+- loss of decision compute may reduce quality or increase downstream reasoning cost,
+  but must not make Memory, retrieval, Thread, LCE, Affect, or turn commit unavailable.
+
+A decision model never receives mutation authority.
+
+## Primary uses
+
+### Retrieval reranking
+
+The first production-shaped use is semantic reranking after normal retrieval and
+canonical revalidation.
+
+```text
+BM25 / vector / RRF
+    -> candidate Memory IDs
+    -> canonical Scope/lifecycle/provenance validation
+    -> optional decision rerank
+    -> bounded context
+```
+
+The decision model judges current relevance. It does not decide whether evidence is
+true, authorized, or canonical. Provider text cannot replace canonical Memory content
+inside the decision projection.
+
+### LCE reasoning-cost gate
+
+LCE may cheaply discover a candidate structure before invoking an expensive
+generative/reasoning consolidator. An optional decision projection may judge whether
+that candidate is promising enough to justify the expensive reasoning call.
+
+```text
+local/cheap structure discovery
+    -> candidate structure
+    -> optional decision gate
+    -> expensive LLM reasoning when useful
+```
+
+Without decision compute, the existing LCE policy proceeds normally. The gate is an
+economic optimization, not a correctness dependency. The decision model does not
+perform longitudinal synthesis itself and cannot accept a Baseline.
+
+### Thread fuzzy identity resolution
+
+Body/Host semantic understanding already owns the current-turn Thread signal. A
+decision model must not repeat the question of whether the turn is a Thread event.
+
+It may optionally assist only when MR already has a Thread signal but deterministic
+exact/lexical matching is ambiguous about which existing OPEN Thread is the same
+logical line. Without a decision backend, the existing matcher remains the baseline.
+
+### Future bounded projections
+
+Future Affect, Persona, tool-routing, or other features may reuse the same global
+DecisionModelPort by adding a feature-specific projection. They must not create a
+new model client, API key path, retry stack, or provider-specific contract merely
+because the business question differs.
+
+## Explicit non-uses
+
+The decision model is not used for:
+
+- canonical Memory admission or deciding whether raw/history-oriented Memory deserves
+  to exist;
+- semantic deletion or supersession of historical Memory merely because a newer fact
+  exists;
+- evidence authenticity, Scope authority, provenance validity, lifecycle validity,
+  or temporal authority;
+- Body/Host current-turn semantic understanding;
+- LCE multi-hop longitudinal synthesis;
+- time arithmetic, TTL/expiry, numeric Dynamics, slow-plasticity math;
+- provider health, quota, credentials, retry authority, or other machine facts.
+
+Canonical Memory remains history-oriented: preserve admitted facts and provenance,
+then organize, retrieve, and interpret them at higher layers.
 
 ## Jev integration policy
 
 If TypeSafe Jev is evaluated:
 
-- start in shadow mode;
+- use the same generic DecisionModelPort as every other backend;
+- start in shadow or low-consequence reranking use;
 - send only bounded, minimized candidate context;
 - never send full Memory/LCE history merely because the context window permits it;
 - keep canonical identifiers and authority inside MR;
 - pin a concrete model version after thresholds are calibrated;
-- a Jev failure must never break canonical Memory commit or turn commit;
-- do not use Jev for time arithmetic, TTL/expiry, numeric Dynamics, slow-plasticity
-  math, provider health/quota, or LCE longitudinal synthesis.
+- a Jev failure must never break canonical Memory commit, retrieval, Thread, LCE,
+  Affect, or turn commit;
+- do not use Jev for the explicit non-uses above.
 
-The first recommended experiment is Thread semantic matching, followed by an LCE
-wake gate. Production enforcement requires measurements on MR's own traces rather
-than generic benchmark scores.
+The first recommended experiment is canonical-Memory retrieval reranking, followed by
+an LCE reasoning-cost gate. Thread fuzzy matching should be added only if the existing
+deterministic matcher demonstrates a real error pattern.
+
+Production enforcement requires measurements on MR's own traces rather than generic
+benchmark scores.
 
 ## Current implementation status
 
-This ADR freezes the target boundary and the optional decision-model direction.
+The Body-owned ACTIVE semantic migration and the optional decision capability are
+separate implementation tracks.
 
 At the time of acceptance, the repository still contains legacy online semantic
 provider wiring and a model-backed appraisal composition path. Those are implementation
-debt relative to this decision, not the target architecture. The migration must
-separately:
+debt relative to this decision. Their migration must separately:
 
 1. expose a bounded Host/Body -> MR typed semantic/appraisal proposal seam;
 2. remove automatic provider construction from ACTIVE TurnOrchestrator composition;
@@ -113,5 +204,6 @@ separately:
 6. update readiness/certification tests so an internal semantic provider is not a
    production-readiness requirement.
 
-No Jev runtime wiring is authorized by this ADR. It records the replaceable option
-and the boundary it must respect.
+The optional decision-model track may be implemented independently because it does
+not alter that ACTIVE semantic ownership boundary. It must remain removable and
+must preserve the pre-existing baseline behavior when absent.
