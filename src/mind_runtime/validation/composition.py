@@ -10,6 +10,7 @@ from typing import cast
 from mind_runtime.contracts import (
     ActionPolicyResult,
     ActionReceipt,
+    AppraisalModelProposal,
     EmotionalTransitionResult,
     Evidence,
     HistoricalContextBundle,
@@ -21,17 +22,13 @@ from mind_runtime.contracts import (
     PreviousExpression,
     RuntimeState,
     Scope,
+    SemanticEventCandidate,
     StateDefinition,
     StateTransition,
     TurnCheckpoint,
 )
 from mind_runtime.dynamics.engine import DynamicsEngine
 from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
-from mind_runtime.emotional_transition.appraisal import (
-    ConfiguredSemanticAppraisalModel,
-    ModelBackedSemanticAppraisalModel,
-    SemanticAppraisalProducer,
-)
 from mind_runtime.emotional_transition.history import (
     BoundedHistoricalContextAdapter,
     HistoricalContextProvider,
@@ -243,14 +240,37 @@ class CanonicalCertificationComposition:
             "checkpoints": self._checkpoint_store.table_names(),
         }
 
-    def apply_event(self, event: SimulationEvent) -> None:
-        self._apply_event(event, include_history=True)
+    def apply_event(
+        self,
+        event: SimulationEvent,
+        *,
+        semantic_candidates: tuple[SemanticEventCandidate, ...] = (),
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
+    ) -> None:
+        self._apply_event(
+            event,
+            include_history=True,
+            semantic_candidates=semantic_candidates,
+            appraisal_proposals=appraisal_proposals,
+        )
 
     def _apply_event_without_history(self, event: SimulationEvent) -> None:
         """Apply the exact verified event while withholding its history input."""
-        self._apply_event(event, include_history=False)
+        self._apply_event(
+            event,
+            include_history=False,
+            semantic_candidates=(),
+            appraisal_proposals=(),
+        )
 
-    def _apply_event(self, event: SimulationEvent, *, include_history: bool) -> None:
+    def _apply_event(
+        self,
+        event: SimulationEvent,
+        *,
+        include_history: bool,
+        semantic_candidates: tuple[SemanticEventCandidate, ...],
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...],
+    ) -> None:
         self._require_open()
         if not isinstance(event, SimulationEvent):
             raise ValueError("event must be a SimulationEvent")
@@ -264,7 +284,11 @@ class CanonicalCertificationComposition:
             turn_id=turn_id,
         )
         self._history_provider.current = event.historical_context if include_history else None
-        self.orchestrator.begin_turn(interaction)
+        self.orchestrator.begin_turn(
+            interaction,
+            semantic_candidates=semantic_candidates,
+            appraisal_proposals=appraisal_proposals,
+        )
         try:
             for evidence in event.evidence:
                 self.orchestrator.ingest(evidence)
@@ -566,32 +590,11 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
             resolver=EffectiveStateResolver(definitions=decoded.state_definitions)
         )
         situation = decoded.situation
-        strategy_config = decoded.appraisal_producer_strategy
-        if strategy_config.strategy == "model_backed":
-            appraisal_model = ModelBackedSemanticAppraisalModel(
-                endpoint_url=strategy_config.endpoint_url,
-                model=strategy_config.model,
-                api_key_env=strategy_config.api_key_env,
-                timeout_s=strategy_config.timeout_s,
-                allowed_hosts=strategy_config.allowed_hosts,
-                transport=config.appraisal_transport,
-            )
-        elif strategy_config.strategy == "configured":
-            appraisal_model = ConfiguredSemanticAppraisalModel()
-        else:
-            raise ValueError(
-                f"unsupported appraisal strategy: {strategy_config.strategy}"
-            )
-
-        # Offline certification supplies no model transport. Its historical
-        # candidate-only path is explicitly LEGACY_NO_APPRAISAL; a configured
-        # or transport-backed producer must never fall back after rejection.
-        appraisal_producer = (
-            None
-            if strategy_config.strategy == "model_backed"
-            and config.appraisal_transport is None
-            else SemanticAppraisalProducer(model=appraisal_model)
-        )
+        # Certified ACTIVE composition follows ADR-0034: online semantic
+        # appraisal is supplied by Body/Host as bounded typed proposals.
+        # Legacy appraisal-provider config remains decodable for manifest
+        # compatibility but does not instantiate an MR-local model.
+        appraisal_producer = None
         homeostasis_config = FixedSalienceThresholdConfig(
             salience_floor_fast_apply=decoded.homeostasis.salience_floor_fast_apply,
             salience_floor_slow_accept=decoded.homeostasis.salience_floor_slow_accept,

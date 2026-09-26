@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
+from mind_runtime.contracts import AppraisalModelProposal, Scope, ScopeDomain, SemanticEventProposal, WakeSignal
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
@@ -173,6 +173,8 @@ class XiyueMRAdapter:
         session_id: str,
         message_id: str = "",
         occurred_at: datetime | None = None,
+        semantic_proposals: tuple[SemanticEventProposal, ...] = (),
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
     ) -> MrTurnHandle | None:
         """Start an MR turn for an inbound Hermes message.
 
@@ -193,6 +195,8 @@ class XiyueMRAdapter:
                 channel=channel,
                 session_id=session_id,
                 host_metadata=(("persona_id", self._persona_id or ""),),
+                semantic_proposals=semantic_proposals,
+                appraisal_proposals=appraisal_proposals,
             )
             result = self._port.begin_turn(request)
             if result.status in (HostTurnStatus.FAILED,):
