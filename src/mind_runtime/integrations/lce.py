@@ -19,6 +19,7 @@ from mind_runtime.contracts import EffectiveWindow, ObservationModality, Scope, 
 from mind_runtime.contracts.common import require_aware_utc
 from mind_runtime.facts.persistence import SqliteFactReader
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
+from mind_runtime.memory.core import MemoryCore, MemoryCoreSelectionError
 from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
@@ -142,26 +143,17 @@ class MrMemorySubstrateAdapter:
     def _selected_memories(
         self, memory_ids: tuple[str, ...]
     ) -> tuple[CommittedMemory, ...]:
-        if not isinstance(memory_ids, tuple) or not 1 <= len(memory_ids) <= MAX_SELECTED_MEMORIES:
-            raise MemorySelectionError("expected a tuple of 1 to 100 stable Memory IDs")
-        if any(not isinstance(mid, str) or not mid.strip() for mid in memory_ids):
-            raise MemorySelectionError("each Memory ID must be a non-empty string")
-        if len(set(memory_ids)) != len(memory_ids):
-            raise MemorySelectionError("duplicate Memory IDs are not permitted")
         _verify_binding(self.binding, self._paths)
-        store = CanonicalMemoryStore(self._paths.memory_db, read_only=True)
         try:
-            memories = tuple(store.get(mid) for mid in memory_ids)
-        finally:
-            store.close()
-        if any(
-            memory is None
-            or memory.scope != self.scope
-            or memory.lifecycle is not MemoryLifecycle.ACTIVE
-            for memory in memories
-        ):
-            raise MemorySelectionError("selected Memory set contains unavailable or ineligible IDs")
-        return tuple(memory for memory in memories if memory is not None)
+            with MemoryCore(self._paths.memory_db, read_only=True) as core:
+                return core.select(
+                    memory_ids,
+                    scope=self.scope,
+                    active_only=True,
+                    max_items=MAX_SELECTED_MEMORIES,
+                )
+        except MemoryCoreSelectionError as exc:
+            raise MemorySelectionError(str(exc)) from exc
 
     def get_by_ids(self, memory_ids: tuple[str, ...]) -> tuple[MemoryItemView, ...]:
         memories = self._selected_memories(memory_ids)
