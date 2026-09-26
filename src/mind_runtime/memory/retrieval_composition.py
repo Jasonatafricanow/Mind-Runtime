@@ -10,6 +10,7 @@ from pathlib import Path
 
 from mind_runtime.contracts import Observation, Scope, Situation
 from mind_runtime.contracts.historical import HistoricalContextBundle, HistoricalContextItem
+from mind_runtime.decision import DecisionCapability
 from mind_runtime.emotional_transition.history import NullHistoricalContext
 from mind_runtime.integrations.lce import open_lce_read_binding
 from mind_runtime.memory.history import MemoryHistoricalContextAdapter
@@ -64,9 +65,6 @@ def _merge_bundles(
     if lce is None and thread is None and memory is None:
         return None
 
-    # Prefer the highest available logical projection. A relevant active
-    # Thread can carry not-yet-compiled online reasoning; canonical Memory
-    # fills the remaining budget rather than reconstructing accepted logic.
     candidates: list[HistoricalContextItem] = []
     for bundle in (lce, thread, memory):
         if bundle is None:
@@ -118,6 +116,7 @@ class _BoundMemoryHistory:
     thread_enabled: bool
     production_root: Path | str | None
     lab_root: Path | str | None
+    decision: DecisionCapability | None
 
     def _verify_manifest(self) -> None:
         try:
@@ -146,7 +145,11 @@ class _BoundMemoryHistory:
         product = MemoryProductStore(self.paths.memory_db, store, read_only=True)
         try:
             return MemoryHistoricalContextAdapter(
-                MemoryRetrievalService(store=store, provider=self.provider),
+                MemoryRetrievalService(
+                    store=store,
+                    provider=self.provider,
+                    decision=self.decision,
+                ),
                 budget=self.budget,
                 product=product,
             ).read(
@@ -168,12 +171,7 @@ class _BoundMemoryHistory:
         observations: tuple[Observation, ...],
         scope: Scope,
     ) -> HistoricalContextBundle | None:
-        """Read at most one relevant active Thread projection.
-
-        The initial selector is intentionally small and replaceable. It reuses
-        lexical tokens only to avoid exposing the full active Thread set to the
-        model; retrieval quality/TTL/capacity remain separate refinement work.
-        """
+        """Read at most one relevant active Thread projection."""
         if not self.thread_enabled:
             return None
         text = _query_text(interaction_id, observations)
@@ -348,24 +346,30 @@ def build_memory_history(
     thread_enabled: bool = False,
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
+    decision: DecisionCapability | None = None,
 ) -> HistoricalContextPort:
     """Expose the Memory subsystem's single outward historical-context boundary.
 
-    Accepted compiled cognition is preferred; canonical Memory retrieval fills
-    the remaining bounded budget. Thread remains an internal temporary
-    projection and is not dumped wholesale into model context.
+    The optional shared decision capability may rerank already-authorized raw
+    Memory candidates. Its absence preserves the existing retrieval path.
     """
     if type(lce_enabled) is not bool:
         raise TypeError("lce_enabled must be bool")
     if type(thread_enabled) is not bool:
         raise TypeError("thread_enabled must be bool")
+    if decision is not None and not isinstance(decision, DecisionCapability):
+        raise TypeError("decision must be DecisionCapability when supplied")
     if (
         (provider is None or isinstance(provider, NullRetrievalProvider))
         and not lce_enabled
         and not thread_enabled
     ):
         return NullHistoricalContext()
-    paths = resolve_storage_paths(binding, production_root=production_root, lab_root=lab_root)
+    paths = resolve_storage_paths(
+        binding,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
     return _BoundMemoryHistory(
         binding,
         paths,
@@ -375,4 +379,5 @@ def build_memory_history(
         thread_enabled,
         production_root,
         lab_root,
+        decision,
     )

@@ -6,7 +6,12 @@ from math import isfinite
 from typing import Protocol
 
 from mind_runtime.contracts import Scope
+from mind_runtime.decision import DecisionCapability
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
+from mind_runtime.memory.decision_projection import (
+    MemoryRerankCandidate,
+    MemoryRetrievalDecisionProjection,
+)
 
 
 def _bound(value: int, name: str, maximum: int) -> None:
@@ -82,9 +87,57 @@ class ResolvedMemory:
 
 
 class MemoryRetrievalService:
-    def __init__(self, *, store: CanonicalMemoryReader, provider: RetrievalProvider | None = None):
+    def __init__(
+        self,
+        *,
+        store: CanonicalMemoryReader,
+        provider: RetrievalProvider | None = None,
+        decision: DecisionCapability | None = None,
+    ) -> None:
         self._store = store
         self._provider = provider if provider is not None else NullRetrievalProvider()
+        self._decision_projection = (
+            MemoryRetrievalDecisionProjection(decision)
+            if decision is not None
+            else None
+        )
+
+    def _canonical_candidates(
+        self,
+        query: MemoryRetrievalQuery,
+        hits: tuple[RetrievedMemoryCandidate, ...],
+    ) -> tuple[ResolvedMemory, ...]:
+        resolved: list[ResolvedMemory] = []
+        seen: set[str] = set()
+        for rank, hit in enumerate(hits, 1):
+            if not isinstance(hit, RetrievedMemoryCandidate) or hit.memory_id in seen:
+                continue
+            memory = self._store.get(hit.memory_id)
+            if (
+                memory is None
+                or memory.scope != query.scope
+                or memory.lifecycle != MemoryLifecycle.ACTIVE
+            ):
+                continue
+            seen.add(memory.memory_id)
+            resolved.append(ResolvedMemory(memory, hit, rank))
+        return tuple(resolved)
+
+    @staticmethod
+    def _apply_budget(
+        candidates: tuple[ResolvedMemory, ...],
+        budget: MemorySurfaceBudget,
+    ) -> tuple[ResolvedMemory, ...]:
+        result: list[ResolvedMemory] = []
+        remaining = budget.max_characters
+        for candidate in candidates:
+            if len(candidate.memory.content) > remaining:
+                continue
+            remaining -= len(candidate.memory.content)
+            result.append(candidate)
+            if len(result) >= budget.max_items:
+                break
+        return tuple(result)
 
     def search(
         self,
@@ -98,24 +151,28 @@ class MemoryRetrievalService:
             hits = tuple(islice(self._provider.search(query), query.limit))
         except Exception as exc:
             raise RetrievalProviderUnavailable("semantic Memory provider unavailable") from exc
-        result: list[ResolvedMemory] = []
-        seen: set[str] = set()
-        remaining = budget.max_characters
-        for rank, hit in enumerate(hits, 1):
-            if not isinstance(hit, RetrievedMemoryCandidate) or hit.memory_id in seen:
-                continue
-            memory = self._store.get(hit.memory_id)
-            if (
-                memory is None
-                or memory.scope != query.scope
-                or memory.lifecycle != MemoryLifecycle.ACTIVE
-            ):
-                continue
-            if len(memory.content) > remaining:
-                continue
-            seen.add(memory.memory_id)
-            remaining -= len(memory.content)
-            result.append(ResolvedMemory(memory, hit, rank))
-            if len(result) >= budget.max_items:
-                break
-        return tuple(result)
+
+        canonical = self._canonical_candidates(query, hits)
+        projection = self._decision_projection
+        if projection is None or not projection.available or len(canonical) < 2:
+            return self._apply_budget(canonical, budget)
+
+        ordered_ids = projection.rerank(
+            query=query.text,
+            candidates=tuple(
+                MemoryRerankCandidate(
+                    memory_id=item.memory.memory_id,
+                    content=item.memory.content,
+                )
+                for item in canonical
+            ),
+        )
+        by_id = {item.memory.memory_id: item for item in canonical}
+        ordered = tuple(
+            by_id[memory_id]
+            for memory_id in ordered_ids
+            if memory_id in by_id
+        )
+        if len(ordered) != len(canonical):
+            ordered = canonical
+        return self._apply_budget(ordered, budget)
