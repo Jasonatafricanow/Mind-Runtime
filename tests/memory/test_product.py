@@ -390,9 +390,19 @@ def test_mature_thread_handoff_rechecks_lifecycle_and_abandonment(tmp_path):
 
 
 def test_thread_lifecycle_state_machine_blocks_alternate_write_paths(tmp_path):
+    foreign = other_scope_memory()
+    foreign = replace(
+        foreign,
+        memory_id="memory-foreign",
+        sync=replace(
+            foreign.sync,
+            object_id="memory-foreign",
+            idempotency_key="memory-foreign",
+        ),
+    )
     _, canonical, product = setup_store(
         tmp_path,
-        rows=(memory(), second_memory(), other_scope_memory()),
+        rows=(memory(), second_memory(), foreign),
     )
     at = datetime(2026, 9, 25, tzinfo=UTC)
     opened = product.open_thread(
@@ -428,7 +438,7 @@ def test_thread_lifecycle_state_machine_blocks_alternate_write_paths(tmp_path):
     with pytest.raises(ValueError, match="exactly match thread Scope"):
         product.resolve_thread(
             "state-machine",
-            memory_id="memory-2",
+            memory_id="memory-foreign",
             at=at + timedelta(days=1),
         )
 
