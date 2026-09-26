@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mind_runtime.decision.backends.typesafe import (
-    DEFAULT_TYPESAFE_ENDPOINT,
-    TypeSafeDecisionBackend,
-)
 from mind_runtime.decision.composition import DecisionCapability
 from mind_runtime.decision.telemetry import DecisionTelemetrySink
 
@@ -45,6 +41,13 @@ def build_decision_capability(
         return DecisionCapability(telemetry=telemetry)
     if chosen.api_key is None or not chosen.api_key.strip():
         raise ValueError("typesafe decision backend requires api_key")
+
+    # Keep concrete providers outside the default MR import graph.
+    from mind_runtime.decision.backends.typesafe import (
+        DEFAULT_TYPESAFE_ENDPOINT,
+        TypeSafeDecisionBackend,
+    )
+
     backend = TypeSafeDecisionBackend(
         api_key=chosen.api_key,
         endpoint=chosen.endpoint or DEFAULT_TYPESAFE_ENDPOINT,
