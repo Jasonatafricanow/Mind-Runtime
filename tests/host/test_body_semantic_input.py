@@ -77,3 +77,8 @@ def test_appraisal_proposals_must_exactly_cover_semantic_proposals() -> None:
 def test_duplicate_body_semantic_ids_are_rejected() -> None:
     with pytest.raises(ValueError, match="semantic proposal ids must be unique"):
         _request(semantic_proposals=(_semantic("same"), _semantic("same")))
+
+
+def test_semantic_proposal_without_appraisal_sidecar_is_rejected() -> None:
+    with pytest.raises(ValueError, match="exactly cover"):
+        _request(semantic_proposals=(_semantic("body-1"),))
