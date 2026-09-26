@@ -390,8 +390,8 @@ class DeterministicIntentEngine:
         else:
             reason_codes = ("threshold_met",)
 
-        is_initiative_gated = admitted and rule.minimum_initiative is not None
-        if is_initiative_gated:
+        minimum_initiative = rule.minimum_initiative
+        if admitted and minimum_initiative is not None:
             surface = engine_input.surface
             if surface is None or surface.status != "AVAILABLE" or surface.controls is None:
                 admitted = False
@@ -439,7 +439,7 @@ class DeterministicIntentEngine:
                             f"{controls.get('recipe_version')}:"
                             f"{controls.get('recipe_digest')}"
                         )
-                        if initiative < rule.minimum_initiative:
+                        if initiative < minimum_initiative:
                             admitted = False
                             reason_codes = ("initiative_below_minimum",)
         trace = IntentScoreTrace(
