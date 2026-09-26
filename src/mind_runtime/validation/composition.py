@@ -27,11 +27,6 @@ from mind_runtime.contracts import (
 )
 from mind_runtime.dynamics.engine import DynamicsEngine
 from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
-from mind_runtime.emotional_transition.appraisal import (
-    ConfiguredSemanticAppraisalModel,
-    ModelBackedSemanticAppraisalModel,
-    SemanticAppraisalProducer,
-)
 from mind_runtime.emotional_transition.history import (
     BoundedHistoricalContextAdapter,
     HistoricalContextProvider,
@@ -566,32 +561,11 @@ def build_composition(config: CertificationRuntimeConfig) -> CanonicalCertificat
             resolver=EffectiveStateResolver(definitions=decoded.state_definitions)
         )
         situation = decoded.situation
-        strategy_config = decoded.appraisal_producer_strategy
-        if strategy_config.strategy == "model_backed":
-            appraisal_model = ModelBackedSemanticAppraisalModel(
-                endpoint_url=strategy_config.endpoint_url,
-                model=strategy_config.model,
-                api_key_env=strategy_config.api_key_env,
-                timeout_s=strategy_config.timeout_s,
-                allowed_hosts=strategy_config.allowed_hosts,
-                transport=config.appraisal_transport,
-            )
-        elif strategy_config.strategy == "configured":
-            appraisal_model = ConfiguredSemanticAppraisalModel()
-        else:
-            raise ValueError(
-                f"unsupported appraisal strategy: {strategy_config.strategy}"
-            )
-
-        # Offline certification supplies no model transport. Its historical
-        # candidate-only path is explicitly LEGACY_NO_APPRAISAL; a configured
-        # or transport-backed producer must never fall back after rejection.
-        appraisal_producer = (
-            None
-            if strategy_config.strategy == "model_backed"
-            and config.appraisal_transport is None
-            else SemanticAppraisalProducer(model=appraisal_model)
-        )
+        # Certified ACTIVE composition follows ADR-0034: online semantic
+        # appraisal is supplied by Body/Host as bounded typed proposals.
+        # Legacy appraisal-provider config remains decodable for manifest
+        # compatibility but does not instantiate an MR-local model.
+        appraisal_producer = None
         homeostasis_config = FixedSalienceThresholdConfig(
             salience_floor_fast_apply=decoded.homeostasis.salience_floor_fast_apply,
             salience_floor_slow_accept=decoded.homeostasis.salience_floor_slow_accept,
