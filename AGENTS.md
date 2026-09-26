@@ -85,6 +85,15 @@ source lines or branch numbers.
   test double solely for coverage.
 - A refactor should not preserve duplicate tests merely to keep the collected-test count
   high. Preserve distinct guarantees, not historical test volume.
+- Treat tests as attacks on invariants, not collections of bad values. A new case earns
+  its own test when it reaches the protected asset through a distinct failure path (for
+  example: alternate API/capability, durable DB replay, restart/migration, cross-scope
+  substitution, concurrency/crash window, or stale/forged persisted state).
+- More malformed values hitting the same validator are normally one parameter matrix, not
+  additional assurance. Do not confuse input-space variety with failure-path variety.
+- For authority boundaries, prefer tests that attempt to bypass the intended gate over tests
+  that merely inspect source shape or private caller names. Static source guards may support
+  an authority test, but must not be the primary proof of the invariant.
 - `research/archive/**` is frozen historical evidence, not an active runtime contract or
   default verification surface. Do not use archived harnesses, red-phase proofs, or old gate
   vocabulary as implementation authority unless an accepted current ADR explicitly revives it.
