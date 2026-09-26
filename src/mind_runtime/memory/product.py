@@ -311,6 +311,8 @@ class MemoryProductStore:
         self._writable()
         require_non_empty(thread_id, "thread_id")
         require_aware_utc(at, "at")
+        if mature:
+            raise ValueError("a new Thread cannot start mature")
         if (
             not supporting_memory_ids
             or len(supporting_memory_ids) > MAX_THREAD_ORIGIN_SUPPORT
