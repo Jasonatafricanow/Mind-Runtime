@@ -23,9 +23,16 @@ from tests.surface.spec_support import bind_persona, expect_error, sample_candid
 @pytest.mark.parametrize(
     ("node", "error"),
     [
+        ([], ValueError),
+        (["const"], ValueError),
+        (["lookup"], ValueError),
         (["lookup", "other.root"], ValueError),
         (["lookup", "agent.affect.absent"], KeyError),
         (["lookup", "persona.behavioral_disposition.absent"], KeyError),
+        (["add", ["const", 1.0]], ValueError),
+        (["sub", ["const", 1.0]], ValueError),
+        (["mul", ["const", 1.0]], ValueError),
+        (["clamp", ["const", 1.0]], ValueError),
         (["unapproved", ["const", 1.0]], ValueError),
     ],
 )
@@ -96,12 +103,17 @@ def test_ast_admission_rejects_invalid_shapes(node):
     ("path", "value", "reason"),
     [
         (("runtime_id",), "", "SURFACE_LINEAGE_MISMATCH"),
+        (("interaction_or_tick_ref",), "", "SURFACE_LINEAGE_MISMATCH"),
         (("scope", "domain"), "user", "SURFACE_SCOPE_MISMATCH"),
         (("owner", "owner_persona_id"), "other", "SURFACE_PERSONA_BINDING_MISMATCH"),
+        (("persona", "persona_version"), 0, "SURFACE_PERSONA_BINDING_MISMATCH"),
+        (("projected_dynamics", "runtime_id"), "other", "SURFACE_LINEAGE_MISMATCH"),
         (("projected_dynamics", "source_projection_id"), "", "SURFACE_SOURCE_PROJECTION_MISMATCH"),
         (("projected_dynamics", "source_phase"), "forged", "SURFACE_SOURCE_PHASE_INVALID"),
+        (("projected_dynamics", "persona_binding"), {}, "SURFACE_PERSONA_BINDING_MISMATCH"),
         (("recipe_bindings",), [], "SURFACE_RECIPE_BINDING_MISMATCH"),
         (("projected_dynamics", "states", 0, "state_id"), "", "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        (("projected_dynamics", "states", 0, "version"), 0, "SURFACE_STATE_AUTHORITY_MISMATCH"),
         (
             ("projected_dynamics", "states", 0, "value_type"),
             "categorical",
@@ -113,6 +125,7 @@ def test_ast_admission_rejects_invalid_shapes(node):
             "SURFACE_STATE_DEFINITION_MISMATCH",
         ),
         (("persona", "content", "schema_version"), 1, "SURFACE_INELIGIBLE_PERSONA"),
+        (("persona", "content", "behavioral_disposition"), None, "SURFACE_INELIGIBLE_PERSONA"),
         (("projected_dynamics",), None, "SURFACE_MISSING_STATE"),
         (("recipe",), None, "SURFACE_RECIPE_UNSUPPORTED"),
     ],
@@ -129,7 +142,12 @@ def test_surface_rejects_wrong_authority_or_wire(surface, path, value, reason):
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
+        ("state_id", None, "SURFACE_STATE_AUTHORITY_MISMATCH"),
         ("version", True, "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        ("runtime_id", "other", "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        ("scope", {}, "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        ("owner", {}, "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        ("bounds", None, "SURFACE_STATE_DEFINITION_MISMATCH"),
         ("value", True, "SURFACE_NUMERIC_TYPE"),
         ("value", 1.1, "SURFACE_RANGE"),
     ],
@@ -144,9 +162,16 @@ def test_surface_rejects_malformed_state(surface, field, value, reason):
     ("path", "value", "reason"),
     [
         (("scope",), None, "SURFACE_LINEAGE_MISMATCH"),
+        (("owner",), None, "SURFACE_LINEAGE_MISMATCH"),
         (("persona",), None, "SURFACE_INELIGIBLE_PERSONA"),
+        (("persona", "content"), None, "SURFACE_INELIGIBLE_PERSONA"),
         (("projected_dynamics", "states"), (), "SURFACE_STATE_DEFINITION_MISMATCH"),
         (("projected_dynamics", "states", 0), None, "SURFACE_STATE_AUTHORITY_MISMATCH"),
+        (
+            ("projected_dynamics", "states", 0, "dimension"),
+            None,
+            "SURFACE_STATE_AUTHORITY_MISMATCH",
+        ),
         (
             ("projected_dynamics", "states", 0, "dimension"),
             "agent.affect.unknown",
@@ -172,6 +197,8 @@ def test_surface_rejects_duplicate_state_identity(surface):
 @pytest.mark.parametrize(
     ("value", "reason"),
     [
+        (None, "SURFACE_NUMERIC_TYPE"),
+        (True, "SURFACE_NUMERIC_TYPE"),
         ("high", "SURFACE_NUMERIC_TYPE"),
         (1.5, "SURFACE_RANGE"),
     ],
@@ -202,7 +229,7 @@ def test_surface_canonical_wire_rejects_unserializable_values(value):
         canonical_surface_wire(value)
 
 
-@pytest.mark.parametrize("value", [True, float("nan"), -0.1])
+@pytest.mark.parametrize("value", [True, None, "warm", float("nan"), -0.1, 1.1])
 def test_expression_band_rejects_invalid_controls(value):
     with pytest.raises((TypeError, ValueError)):
         evaluate_control_band(value)
