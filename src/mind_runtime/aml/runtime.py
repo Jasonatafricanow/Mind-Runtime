@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from mind_runtime.aml.contracts import (
     AmlAddRequest,
+    AmlMessage,
     AmlRuntimeConfig,
     AmlSearchItem,
     AmlSearchRequest,
@@ -370,7 +371,7 @@ class AmlMemoryRuntime:
 
             evidence_ids: list[str] = []
             try:
-                visible: list[object] = []
+                visible: list[AmlMessage] = []
                 for index, message in enumerate(request.messages):
                     occurred_at = (
                         _epoch_timestamp(message.timestamp)
@@ -434,7 +435,7 @@ class AmlMemoryRuntime:
                         try:
                             semantic = self._thread_semantics.analyze(
                                 message=message,
-                                context=tuple(visible),  # type: ignore[arg-type]
+                                context=tuple(visible),
                             )
                         except Exception:
                             semantic = None
