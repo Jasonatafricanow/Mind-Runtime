@@ -220,7 +220,7 @@ def test_thread_maturity_requires_cross_interaction_support(tmp_path):
     )
     at = datetime(2026, 9, 25, tzinfo=UTC)
 
-    with pytest.raises(ValueError, match="at least two interactions"):
+    with pytest.raises(ValueError, match="cannot start mature"):
         product.open_thread(
             thread_id="forged-mature",
             scope=memory().scope,
