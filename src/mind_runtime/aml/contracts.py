@@ -67,6 +67,7 @@ class AmlSearchItem:
     score: float
     created_at: str
     layer: str
+    covers_memory_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -81,6 +82,18 @@ class AmlSearchItem:
             self.score, (int, float)
         ):
             raise TypeError("score must be numeric")
+        if (
+            not isinstance(self.covers_memory_ids, tuple)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in self.covers_memory_ids
+            )
+            or len(set(self.covers_memory_ids))
+            != len(self.covers_memory_ids)
+        ):
+            raise ValueError(
+                "covers_memory_ids must contain unique nonempty IDs"
+            )
 
 
 @dataclass(frozen=True, slots=True)
