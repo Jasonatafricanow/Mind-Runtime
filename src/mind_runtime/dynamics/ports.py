@@ -123,6 +123,7 @@ class EngineEmotionalTransitionPort:
         self._homeostasis_gate = homeostasis_gate
         self._appraisal_producer = appraisal_producer
         self._projection_journal = projection_journal
+        self._state_definitions = state_definitions
         self._projector = AppraisalProjector(
             rules=effect_rules,
             persona_profile=engine.persona,
@@ -252,7 +253,15 @@ class EngineEmotionalTransitionPort:
         cached_by_candidate = {
             record.candidate.candidate_id: record for record in cached_acceptances
         }
-        if self._appraisal_producer is not None and routing.candidates:
+        proposal_by_candidate = dict(transition_input.appraisal_proposals)
+        active_appraisal_producer = self._appraisal_producer
+        if proposal_by_candidate:
+            if self._projection_journal is None or self._state_definitions is None:
+                raise ValueError(
+                    "Body appraisal proposals require durable projection journal and definitions"
+                )
+            active_appraisal_producer = SemanticAppraisalProducer(model=None)
+        if (active_appraisal_producer is not None or cached_acceptances) and routing.candidates:
             appraisals = dict(routing.appraisals_by_candidate_id)
             for candidate in routing.candidates:
                 appraisal_ctx = SemanticAppraisalContext(
@@ -265,13 +274,16 @@ class EngineEmotionalTransitionPort:
                 try:
                     acceptance = cached_by_candidate.get(candidate.candidate_id)
                     if acceptance is None:
-                        acceptance = self._appraisal_producer.accept(
+                        if active_appraisal_producer is None:
+                            raise ValueError("appraisal producer unavailable for uncached candidate")
+                        acceptance = active_appraisal_producer.accept(
                             candidate=candidate,
                             context=appraisal_ctx,
                             interaction_id=transition_input.interaction_id,
                             persona_id=transition_input.persona_id,
                             route_abstention_reasons=routing.abstention_reasons,
                             projection_scope=projection_scope,
+                            proposal=proposal_by_candidate.get(candidate.candidate_id),
                         )
                     assembled_appraisal = acceptance.appraisal
                     appraisals[candidate.candidate_id] = assembled_appraisal
@@ -350,9 +362,10 @@ class EngineEmotionalTransitionPort:
                 + tuple(ref for candidate in routing.candidates for ref in candidate.evidence_refs)
             )
         )
-        # A producer-owned rejection/error is never a legacy caller. Only a
-        # caller with no appraisal producer may use the compatibility mapper.
-        legacy_no_appraisal = self._appraisal_producer is None
+        # A producer-owned or Body-supplied rejection/error is never a legacy
+        # caller. Only a caller with no appraisal source may use the
+        # compatibility mapper.
+        legacy_no_appraisal = active_appraisal_producer is None and not cached_acceptances
         if not legacy_no_appraisal:
             mapped = MappedEffects(
                 impulses=tuple(i for part in mapped_parts for i in part.impulses),
