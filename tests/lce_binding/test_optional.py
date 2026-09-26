@@ -28,6 +28,26 @@ def test_invalid_activation_flags_fail_before_resolution(tmp_path, monkeypatch, 
     assert list(tmp_path.iterdir()) == []
 
 
+def test_generic_lce_core_reserves_thread_namespace_without_optional_lce():
+    from mind_runtime.integrations.lce import _GenericLceCore
+
+    class FakeCore:
+        marker = "delegated"
+
+        def consolidate(self, region_id, memory_ids):
+            return region_id, memory_ids
+
+    guarded = _GenericLceCore(FakeCore())
+    with pytest.raises(ValueError, match="reserved"):
+        guarded.consolidate("mr-thread:forged", ("memory-1",))
+
+    assert guarded.consolidate("ordinary", ("memory-1",)) == (
+        "ordinary",
+        ("memory-1",),
+    )
+    assert guarded.marker == "delegated"
+
+
 def test_no_site_packages_default_composition(tmp_path):
     source = Path(__file__).resolve().parents[2] / "src"
     metadata = tmp_path / "mind_runtime-0.0.0.dist-info"
