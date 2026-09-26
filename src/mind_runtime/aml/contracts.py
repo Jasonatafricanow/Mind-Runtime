@@ -93,6 +93,7 @@ class AmlRuntimeConfig:
     thread_cap: int = 2
     lce_cap: int = 4
     retrieval_cache_users: int = 12
+    hyde_min_results: int = 20
 
     def __post_init__(self) -> None:
         for value, name, low, high in (
@@ -102,7 +103,7 @@ class AmlRuntimeConfig:
                 self.max_context_characters,
                 "max_context_characters",
                 1024,
-                117760 * 4,
+                65536,
             ),
             (self.thread_cap, "thread_cap", 0, 20),
             (self.lce_cap, "lce_cap", 0, 20),
@@ -112,6 +113,7 @@ class AmlRuntimeConfig:
                 1,
                 1024,
             ),
+            (self.hyde_min_results, "hyde_min_results", 1, 100),
         ):
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(
