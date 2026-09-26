@@ -26,16 +26,19 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import Scope, ScopeDomain
+from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
+    HostProactiveTurnResult,
     HostProviderProseRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnStatus,
+    HostWakeNotification,
 )
 from mind_runtime.host import MindRuntimeHostAdapter, MindRuntimeHostPort
 
@@ -109,9 +112,7 @@ def render_bounded_context(bounded) -> str | None:
         # SURFACE_V1 Host transports the exact renderer-admitted bytes.
         from mind_runtime.expression.renderer import DeterministicContextRenderer
 
-        DeterministicContextRenderer.verify_provider_information_isolation(
-            envelope_text
-        )
+        DeterministicContextRenderer.verify_provider_information_isolation(envelope_text)
         return envelope_text
     lines = [
         "MR CURRENT CONTEXT",
@@ -191,9 +192,7 @@ class XiyueMRAdapter:
                 user_message=message,
                 channel=channel,
                 session_id=session_id,
-                host_metadata=(
-                    ("persona_id", self._persona_id or ""),
-                ),
+                host_metadata=(("persona_id", self._persona_id or ""),),
             )
             result = self._port.begin_turn(request)
             if result.status in (HostTurnStatus.FAILED,):
@@ -226,7 +225,9 @@ class XiyueMRAdapter:
             ok = receipt.status == HostStatus.OK
             _logger.info(
                 "MR commit interaction=%s status=%s reason=%s",
-                handle.interaction_id, receipt.status, receipt.reason_codes,
+                handle.interaction_id,
+                receipt.status,
+                receipt.reason_codes,
             )
             return ok
         except Exception as exc:  # noqa: BLE001
@@ -238,9 +239,13 @@ class XiyueMRAdapter:
         if handle is None:
             return False
         try:
-            result = self._port.guard_provider_prose(HostProviderProseRequest(
-                turn_id=handle.turn_id, interaction_id=handle.interaction_id, prose=prose,
-            ))
+            result = self._port.guard_provider_prose(
+                HostProviderProseRequest(
+                    turn_id=handle.turn_id,
+                    interaction_id=handle.interaction_id,
+                    prose=prose,
+                )
+            )
             return result.status is HostStatus.OK
         except Exception as exc:  # noqa: BLE001 — Host boundary
             _logger.warning("MR provider prose guard failed: %s", exc)
@@ -261,12 +266,36 @@ class XiyueMRAdapter:
             )
             _logger.info(
                 "MR abort interaction=%s status=%s reason=%s",
-                handle.interaction_id, receipt.status, receipt.reason_codes,
+                handle.interaction_id,
+                receipt.status,
+                receipt.reason_codes,
             )
             return receipt.status == HostStatus.OK
         except Exception as exc:  # noqa: BLE001
             _logger.warning("MR abort_turn exception: %s", exc)
             return False
+
+    # ---- proactive wake / body turn boundary ----------------------------
+
+    def consume_wake(self, wake: WakeSignal) -> HostWakeNotification:
+        """Consume and admit/reject a WakeSignal."""
+        return self._port.consume_wake(wake)
+
+    def begin_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """Begin proactive Body turn following wake admission."""
+        return self._port.begin_proactive_turn(wake)
+
+    def guard_proactive_prose(self, wake_id: str, prose: str) -> HostProactiveTurnResult:
+        """Evaluate ExpressionGuard over proposed prose."""
+        return self._port.guard_proactive_prose(wake_id, prose)
+
+    def commit_proactive_turn(self, wake_id: str) -> HostProactiveTurnResult:
+        """Commit proactive turn lifecycle after delivery."""
+        return self._port.commit_proactive_turn(wake_id)
+
+    def abort_proactive_turn(self, wake_id: str, reason: str = "") -> HostProactiveTurnResult:
+        """Abort proactive turn lifecycle on delivery failure."""
+        return self._port.abort_proactive_turn(wake_id, reason)
 
     # ---- inspect (OW correlation) ---------------------------------------
 
@@ -301,6 +330,11 @@ def default_adapter(
     binding: RuntimeBinding | None = None,
     memory_enabled: bool = False,
     retrieval_provider: RetrievalProvider | None = None,
+    intent_rules: tuple[Any, ...] | None = None,
+    action_policy_config: Any | None = None,
+    policy_resources: tuple[str, ...] | None = None,
+    delivery_db: str | Path | None = None,
+    expression_guard: Any | None = None,
     lce_enabled: bool = False,
 ) -> XiyueMRAdapter:
     """Build the production XiyueMRAdapter bound to the MR host adapter.
@@ -350,6 +384,9 @@ def default_adapter(
     paths = bind_storage(binding)
     facts_db = str(paths.facts_db)
     state_db = str(paths.state_db)
+    intent_db = str(paths.root / "intents.sqlite") if intent_rules is not None else None
+    if delivery_db is None and intent_rules is not None:
+        delivery_db = str(paths.root / "delivery.sqlite")
 
     from mind_runtime.memory.retrieval_composition import build_memory_history
 
@@ -378,6 +415,12 @@ def default_adapter(
             lce_enabled=lce_enabled,
             thread_enabled=memory_enabled,
         ),
+        intent_rules=intent_rules,
+        action_policy_config=action_policy_config,
+        policy_resources=policy_resources,
+        intent_db=intent_db,
+        delivery_db=delivery_db,
+        expression_guard=expression_guard,
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)
     return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id="user")

@@ -24,6 +24,7 @@ def _run_ruff() -> list[dict[str, object]]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     if proc.returncode not in {0, 1}:

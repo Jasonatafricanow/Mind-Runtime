@@ -32,13 +32,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from mind_runtime.cognition.express import (
     ProactiveExpressionArtifact,
-    ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
     ActionDecision,
@@ -57,6 +56,7 @@ from mind_runtime.contracts import (
     Situation,
     SurfaceProjectionPort,
     SyncFields,
+    WakeSignal,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.intents.engine import DeterministicIntentEngine
@@ -64,7 +64,6 @@ from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.policy import DeterministicActionPolicy
 from mind_runtime.intents.scheduler import IntentScheduler
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator
-from mind_runtime.pipeline.ports import AgentFailure
 from mind_runtime.situation.derived import media_photo_cadence_eligible
 from mind_runtime.situation.temporal import daypart
 from mind_runtime.state.persistence import StateBackend
@@ -182,6 +181,11 @@ class CognitiveTickReport:
     state_rows_persisted: int = 0
     persistent_duplicates_skipped: int = 0
     proactive_expression: ProactiveExpressionArtifact | None = None
+    wake_signal: WakeSignal | None = None
+
+    @property
+    def proactive_wake(self) -> WakeSignal | None:
+        return self.wake_signal
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -203,6 +207,8 @@ class CognitiveTickReport:
                 if self.proactive_expression is not None
                 else None
             ),
+            "wake_signal": (self.wake_signal.as_dict() if self.wake_signal is not None else None),
+            "wake_id": (self.wake_signal.wake_id if self.wake_signal is not None else None),
         }
 
 
@@ -230,10 +236,14 @@ class CognitiveTicker:
         runtime_id: str,
         fact_reader: PolicyFactReader | None = None,
         projection_scope: Scope | None = None,
-        expression: ProactiveExpressionPreparer | None = None,
         config: CognitiveTickConfig | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
+        **kwargs: Any,
     ) -> None:
+        if "expression" in kwargs:
+            raise TypeError(
+                "CognitiveTicker cannot be constructed with an expression provider/executor"
+            )
         composed_surface_port = getattr(orchestrator, "surface_projection_port", None)
         if (
             surface_projection_port is not None
@@ -251,15 +261,16 @@ class CognitiveTicker:
         self._runtime_id = runtime_id
         self._fact_reader = fact_reader
         self._projection_scope = projection_scope
-        if expression is not None and not isinstance(expression, ProactiveExpressionPreparer):
-            raise ValueError("expression must be a ProactiveExpressionPreparer")
-        self._expression = expression
         if config is not None and not isinstance(config, CognitiveTickConfig):
             raise ValueError("config must be a CognitiveTickConfig")
         self._config = config or CognitiveTickConfig()
         self._state_backend = _resolve_state_backend(orchestrator)
         if intent_engine._runtime_id != runtime_id:
             raise ValueError("intent engine runtime_id must match ticker runtime_id")
+        self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
+
+    def get_pending_wake_context(self, wake_id: str) -> dict[str, Any] | None:
+        return self._pending_wake_contexts.get(wake_id)
 
     # ── public entrypoint ────────────────────────────────────────────────
 
@@ -320,15 +331,66 @@ class CognitiveTicker:
             situation=situation,
             candidates=engine_result.candidates,
             counters=counters,
-        )
-        expression_artifact = self._prepare_expression(
-            selection=selection,
-            situation=situation,
-            projected=projected,
-            transition_result=transition_result,
             interaction_id=interaction_id,
-            now=now,
         )
+        wake_signal: WakeSignal | None = None
+        if selection is not None:
+            intent, policy_result = selection
+            rule = getattr(self._action_policy, "_rules", {}).get(intent.kind)
+            is_proactive = rule.proactive if rule is not None else False
+            if policy_result.decision is ActionDecision.ALLOW and is_proactive:
+                permission = policy_result.permission
+                action_type = permission.action_type if permission is not None else intent.kind
+                wake_signal = WakeSignal(
+                    wake_id=f"wake-{interaction_id}",
+                    runtime_id=self._runtime_id,
+                    scope=scope,
+                    intent_id=intent.intent_id,
+                    action_type=action_type,
+                    policy_decision_ref=policy_result.policy_id,
+                    interaction_id=interaction_id,
+                    woken_at=now,
+                    reason="proactive_intent_allowed",
+                    intent_version=intent.sync.version if intent.sync else 1,
+                )
+                counters.wake_signal = wake_signal
+                self._orchestrator.trace.record(
+                    interaction_id,
+                    "wake_created",
+                    ref=wake_signal.wake_id,
+                    outcome=action_type,
+                    at=now,
+                )
+                self._orchestrator.trace.record(
+                    interaction_id,
+                    "proactive_wake_dispatched",
+                    ref=wake_signal.wake_id,
+                    outcome=action_type,
+                    at=now,
+                )
+                self._pending_wake_contexts[wake_signal.wake_id] = {
+                    "intent": intent,
+                    "policy_result": policy_result,
+                    "situation": situation,
+                    "projected": projected,
+                    "transition_result": transition_result,
+                    "assessment_trace_ref": (
+                        transition_result.assessment_trace.trace_id
+                        if transition_result is not None
+                        else "none"
+                    ),
+                    "accepted_appraisals": (
+                        transition_result.accepted_appraisals
+                        if transition_result is not None
+                        else ()
+                    ),
+                    "surface": surface_result,
+                    "state_rows": self._load_state_rows(),
+                    "persona_ref": self._persona.persona_id,
+                    "persona_version": self._persona.version,
+                    "persona_content_digest": self._persona.persona_content_digest,
+                    "now": now,
+                }
         self._orchestrator.trace.record(
             interaction_id,
             "cognitive_tick",
@@ -337,7 +399,11 @@ class CognitiveTicker:
             at=now,
         )
         return counters.freeze(
-            scope=scope, now=now, tick_ref=interaction_id, expression=expression_artifact
+            scope=scope,
+            now=now,
+            tick_ref=interaction_id,
+            expression=None,
+            wake_signal=wake_signal,
         )
 
     # ── stage 1: durable affect + elapsed wall-clock truth ───────────────
@@ -542,8 +608,10 @@ class CognitiveTicker:
         situation: Situation,
         candidates: tuple[Intent, ...],
         counters: _MutableCounters,
+        interaction_id: str | None = None,
     ) -> tuple[Intent, ActionPolicyResult] | None:
         """Run the policy gate; return the ALLOW selection for expression."""
+        actual_interaction_id = str(interaction_id or getattr(counters, "interaction_id", ""))
         lifecycle = self._intent_lifecycle
         selection: tuple[Intent, ActionPolicyResult] | None = None
         before_status = {
@@ -624,7 +692,7 @@ class CognitiveTicker:
                 )
                 counters.denied += 1
             else:
-                lifecycle.transition(
+                allowed_intent = lifecycle.transition(
                     scope,
                     candidate.intent_id,
                     IntentStatus.ALLOWED,
@@ -633,7 +701,14 @@ class CognitiveTicker:
                     f"tick-policy-allow-{candidate.intent_id}-v{candidate.sync.version}",
                 )
                 counters.allowed += 1
-                selection = (candidate, policy_result)
+                selection = (allowed_intent, policy_result)
+                self._orchestrator.trace.record(
+                    actual_interaction_id,
+                    "policy_allow",
+                    ref=candidate.intent_id,
+                    outcome=candidate.kind,
+                    at=now,
+                )
                 for lower in ordered[index + 1 :]:
                     lifecycle.transition(
                         lower.scope,
@@ -646,66 +721,6 @@ class CognitiveTicker:
                     counters.superseded += 1
                 break
         return selection
-
-    def _prepare_expression(
-        self,
-        *,
-        selection: tuple[Intent, ActionPolicyResult] | None,
-        situation: Situation,
-        projected: ProjectedMindState,
-        transition_result: EmotionalTransitionResult | None,
-        interaction_id: str,
-        now: datetime,
-    ) -> ProactiveExpressionArtifact | None:
-        """Prepare the would-send artifact for a proactive ALLOW (C5C).
-
-        Fail-closed: unwired seam -> None; a pass without a real
-        EmotionalTransition skips (no honest assessment trace to cite);
-        agent failure is recorded and never corrupts state. Preparation
-        never writes facts — counter facts stay read-only inputs.
-        """
-
-        preparer = self._expression
-        if selection is None or preparer is None:
-            return None
-        intent, policy_result = selection
-        if not preparer.handles(policy_result=policy_result):
-            return None
-        permission = policy_result.permission
-        base = ProactiveExpressionArtifact(
-            interaction_id=interaction_id,
-            intent_id=intent.intent_id,
-            action_type=permission.action_type if permission is not None else "",
-        )
-        if transition_result is None:
-            self._orchestrator.trace.record(
-                interaction_id,
-                "proactive_expression",
-                outcome="skipped:no_transition",
-                at=now,
-            )
-            return replace(base, skip_reason="no_transition")
-        try:
-            return preparer.prepare(
-                interaction_id=interaction_id,
-                intent=intent,
-                policy_result=policy_result,
-                situation=situation,
-                projected=projected,
-                assessment_trace_ref=transition_result.assessment_trace.trace_id,
-                state_rows=self._load_state_rows(),
-                persona_ref=self._persona.persona_id,
-                now=now,
-                accepted_appraisals=transition_result.accepted_appraisals,
-            )
-        except AgentFailure:
-            self._orchestrator.trace.record(
-                interaction_id,
-                "proactive_expression",
-                outcome="agent_failure",
-                at=now,
-            )
-            return replace(base, skip_reason="agent_failure")
 
     def _count_status(self, scope: Scope, status: IntentStatus) -> int:
         return sum(
@@ -738,6 +753,7 @@ class _MutableCounters:
         self.denied = 0
         self.superseded = 0
         self.deduped = 0
+        self.wake_signal: WakeSignal | None = None
 
     def freeze(
         self,
@@ -746,6 +762,7 @@ class _MutableCounters:
         now: datetime,
         tick_ref: str,
         expression: ProactiveExpressionArtifact | None = None,
+        wake_signal: WakeSignal | None = None,
     ) -> CognitiveTickReport:
         return CognitiveTickReport(
             tick_ref=tick_ref,
@@ -764,6 +781,7 @@ class _MutableCounters:
             state_rows_persisted=self.persisted_rows,
             persistent_duplicates_skipped=self.deduped,
             proactive_expression=expression,
+            wake_signal=wake_signal if wake_signal is not None else self.wake_signal,
         )
 
 
@@ -796,7 +814,6 @@ def build_cognitive_ticker(
     intent_lifecycle: IntentLifecycleService,
     runtime_id: str,
     fact_reader: PolicyFactReader | None = None,
-    expression: ProactiveExpressionPreparer | None = None,
     config: CognitiveTickConfig | None = None,
 ) -> CognitiveTicker:
     """Assemble a ticker from explicitly injected real components.
@@ -805,9 +822,7 @@ def build_cognitive_ticker(
     deterministic IntentEngine, the deterministic ActionPolicy with explicit
     PolicyResources, and a durable Intent lifecycle. The turn orchestrator's
     own stub ports are never repurposed — the C2.10 turn path stays frozen.
-    The optional C5C ``expression`` seam (ProactiveExpressionPreparer) adds
-    would-send preparation after the policy gate; without it the tick is
-    the C5B behavior.
+    The ticker terminates at WakeSignal and does not prepare expression.
     """
     if not isinstance(persona, PersonaProfile):
         raise ValueError("cognitive tick requires a PersonaProfile")
@@ -838,6 +853,5 @@ def build_cognitive_ticker(
         runtime_id=runtime_id,
         fact_reader=fact_reader or observation_fact_reader(orchestrator),
         projection_scope=projection_scope,
-        expression=expression,
         config=config,
     )

@@ -244,7 +244,7 @@ class ZenHy3Provider(SemanticCandidateProvider):
         )
         if r.status_code != 200:
             raise RuntimeError(f"Zen {r.status_code}: {r.text[:300]}")
-        j = r.json()
+        j = json.loads(r.text)
         msg = j.get("choices", [{}])[0].get("message", {})
         content = msg.get("content", "") or ""
         # strip markdown fences if present

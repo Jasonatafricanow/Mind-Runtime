@@ -23,14 +23,27 @@ from pathlib import Path
 import pytest
 
 from mind_runtime.dynamics.fast_functions import (
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
+    ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY,
+    CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT,
+    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     FAST_FUNCTION_V1_SPECS,
     FOLLOW_UP_PERSISTENCE_NOT_FREQUENCY_INVARIANT,
+    LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
+    SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY,
+    SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT,
     FastFunctionKind,
     FastFunctionRegistry,
     FastStateFunctionSpec,
     FastStateStatus,
+    validate_curiosity_anti_spam_invariant,
     validate_diligence_anti_spam_invariant,
+    validate_longing_anti_spam_invariant,
+    validate_sharing_urge_anti_spam_invariant,
 )
 from mind_runtime.dynamics.kayla_v0 import kayla_v0_profile
 
@@ -112,6 +125,27 @@ def test_f_diligence_pressure_maps_to_follow_up_persistence_not_frequency() -> N
             diligence_pressure=0.9,
             base_cooldown_seconds=300.0,
             effective_cooldown_seconds=120.0,
+        )
+
+
+def test_longing_controls_contact_pressure_without_frequency_permission() -> None:
+    assert (
+        LONGING_CONTROLS_CONTACT_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "LONGING_CONTROLS_CONTACT_PRESSURE != LONGING_CONTROLS_SEND_FREQUENCY"
+    )
+    assert (
+        validate_longing_anti_spam_invariant(
+            longing=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
+    with pytest.raises(ValueError, match="Longing anti-spam violation"):
+        validate_longing_anti_spam_invariant(
+            longing=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
         )
 
 
@@ -244,6 +278,121 @@ def test_registry_immutability_and_lookup() -> None:
         FastFunctionRegistry((spec, duplicate_kind_spec))
 
 
+def test_sharing_urge_maps_to_proactive_share() -> None:
+    """sharing_urge maps to PROACTIVE_SHARE and preserves anti-spam invariants."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.sharing_urge"]
+    assert spec.function_kind == FastFunctionKind.PROACTIVE_SHARE
+    assert spec.primary_consumer == "Intent / share path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "SHARING_URGE_CONTROLS_SHARE_PRESSURE != SHARING_URGE_CONTROLS_SEND_FREQUENCY"
+    )
+    assert (
+        SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY
+        == SHARING_URGE_CONTROLS_SHARE_PRESSURE_NOT_FREQUENCY_INVARIANT
+    )
+    assert (
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
+    with pytest.raises(ValueError, match="Sharing urge anti-spam violation"):
+        validate_sharing_urge_anti_spam_invariant(
+            sharing_urge=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
+        )
+
+
+def test_curiosity_maps_to_inquiry_exploration() -> None:
+    """curiosity maps to INQUIRY_EXPLORATION and preserves anti-spam invariants."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.curiosity"]
+    assert spec.function_kind == FastFunctionKind.INQUIRY_EXPLORATION
+    assert spec.primary_consumer == "Intent / retrieval-or-question path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+        == "CURIOSITY_CONTROLS_INQUIRY_PRESSURE != CURIOSITY_CONTROLS_QUESTION_FREQUENCY"
+    )
+    assert (
+        CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY
+        == CURIOSITY_CONTROLS_INQUIRY_PRESSURE_NOT_FREQUENCY_INVARIANT
+    )
+    assert (
+        validate_curiosity_anti_spam_invariant(
+            curiosity=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=1800.0,
+        )
+        is True
+    )
+    with pytest.raises(ValueError, match="Curiosity anti-spam violation"):
+        validate_curiosity_anti_spam_invariant(
+            curiosity=0.9,
+            base_cooldown_seconds=1800.0,
+            effective_cooldown_seconds=600.0,
+        )
+
+
+def test_anger_maps_to_boundary_confrontation() -> None:
+    """anger maps to BOUNDARY_CONFRONTATION and preserves pressure != permission invariant."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.anger"]
+    assert spec.function_kind == FastFunctionKind.BOUNDARY_CONFRONTATION
+    assert spec.primary_consumer == "Surface confrontation / expression directness path"
+    assert spec.external_action_capable is True
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+        == "ANGER_CONTROLS_BOUNDARY_PRESSURE != ANGER_GRANTS_ACTION_PERMISSION"
+    )
+    assert (
+        ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION
+        == ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT
+    )
+    assert "Surface/expression branch closed" in spec.notes
+    assert "confrontation is Intent-eligible" in spec.notes
+    assert "concrete boundary Intent branch is deferred" in spec.notes
+    assert "no authoritative boundary-event-to-Intent binding exists" in spec.notes
+
+
+def test_sadness_maps_to_initiative_suppression() -> None:
+    """sadness maps to INITIATIVE_SUPPRESSION and records truthful consumer gap notes."""
+    spec = FAST_FUNCTION_V1_REGISTRY["agent.affect.sadness"]
+    assert spec.function_kind == FastFunctionKind.INITIATIVE_SUPPRESSION
+    assert spec.primary_consumer == "Surface initiative / expression warmth path"
+    assert spec.external_action_capable is False
+    assert spec.status == FastStateStatus.ACTIVE
+
+    assert (
+        SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
+        == "SADNESS_SUPPRESSES_INITIATIVE_PRESSURE != SADNESS_GRANTS_ACTION_PERMISSION"
+    )
+    assert (
+        SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION
+        == SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT
+    )
+    assert "Surface projection exists" in spec.notes
+    assert "warmth expression branch exists" in spec.notes
+    assert "effective initiative consumer remains unbound" in spec.notes
+    assert "SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP=FOUND" in spec.notes
+
+
+def test_fast_function_v1_count_constant() -> None:
+    """FAST_FUNCTION_V1_COUNT equals 8 and matches specs and registry length."""
+    assert FAST_FUNCTION_V1_COUNT == 8
+    assert len(FAST_FUNCTION_V1_SPECS) == FAST_FUNCTION_V1_COUNT
+    assert len(FAST_FUNCTION_V1_REGISTRY) == FAST_FUNCTION_V1_COUNT
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
@@ -268,3 +417,32 @@ def test_registry_requires_present_function_binding() -> None:
     assert empty.get_by_function(FastFunctionKind.ACTIVITY_WAKE) is None
     with pytest.raises(KeyError, match="no fast function registered"):
         empty.require_by_function(FastFunctionKind.ACTIVITY_WAKE)
+
+
+def test_registry_rejects_duplicate_state_key_or_function_kind() -> None:
+    spec1 = FAST_FUNCTION_V1_SPECS[0]
+    spec1_dup_key = replace(spec1, function_kind=FastFunctionKind.ACTIVITY_WAKE)
+    with pytest.raises(ValueError, match="duplicate state key in registry"):
+        FastFunctionRegistry((spec1, spec1_dup_key))
+
+    spec1_dup_kind = replace(FAST_FUNCTION_V1_SPECS[1], function_kind=spec1.function_kind)
+    with pytest.raises(ValueError, match="duplicate function kind in registry"):
+        FastFunctionRegistry((spec1, spec1_dup_kind))
+
+
+def test_registry_requires_present_state_key() -> None:
+    empty = FastFunctionRegistry(())
+    assert empty.get("agent.affect.missing") is None
+    with pytest.raises(KeyError, match="no fast function registered for state key"):
+        empty.require("agent.affect.missing")
+
+
+def test_spec_defaults_product_label_to_semantic_label() -> None:
+    spec = FastStateFunctionSpec(
+        state_key="agent.affect.custom",
+        semantic_label="custom label",
+        function_kind=FastFunctionKind.ACTIVITY_WAKE,
+        primary_consumer="test-consumer",
+        external_action_capable=False,
+    )
+    assert spec.product_label == "custom label"

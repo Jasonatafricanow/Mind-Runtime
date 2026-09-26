@@ -8,6 +8,8 @@ These assertions enforce the W3-C contract requirements:
 - ActionPolicy authority: high Surface controls cannot bypass ActionPolicy DENY
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta

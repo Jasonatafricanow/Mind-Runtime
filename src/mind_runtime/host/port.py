@@ -22,52 +22,68 @@ from mind_runtime.contracts.host import (
     HostCommitRequest,
     HostInspectRequest,
     HostInspectResult,
+    HostProactiveTurnResult,
     HostProviderProseRequest,
     HostProviderProseResult,
     HostTurnRequest,
     HostTurnResult,
+    HostWakeNotification,
 )
+from mind_runtime.contracts.intent import WakeSignal
 
 
 @runtime_checkable
 class MindRuntimeHostPort(Protocol):
     """PUBLIC. The thin Host → MR contract.
 
-    Four operations:
+    Inbound interaction operations:
 
-      begin_turn(request)    : start a turn for a given interaction.
-                              Returns a HostTurnResult with a debug_ref
-                              and (when available) a decision_context_ref.
-      commit_turn(request)   : promote the turn's projection to canonical.
-                              Returns a HostCommitReceipt. Idempotent on
-                              the same interaction_id.
-      abort_turn(request)    : discard the cognitive projection. Durable
-                              facts survive. Returns a HostAbortReceipt.
-                              Idempotent on the same interaction_id.
-      inspect(request)       : read-only correlation view. No side
-                              effects. Returns a HostInspectResult.
+      begin_turn(request)           : start a turn for a given user interaction.
+      commit_turn(request)          : promote the turn's projection to canonical.
+      guard_provider_prose(request) : evaluate provider prose before external message delivery.
+      abort_turn(request)           : discard the cognitive projection. Durable facts survive.
+      inspect(request)              : read-only correlation view. No side effects.
 
-    `tick()` is intentionally NOT in MVP. A proactive runtime is a
-    separate ticket and would expand the surface; the HI-1 contract
-    must not grow speculatively.
+    Proactive wake operations:
+
+      consume_wake(wake)            : smallest typed consumer of proactive wake signals.
+      begin_proactive_turn(wake)    : admit wake and prepare bounded execution context for Body.
+      guard_proactive_prose(wake_id, prose) : guard Body-generated prose before delivery.
+      commit_proactive_turn(wake_id): complete proactive turn lifecycle following delivery.
+      abort_proactive_turn(wake_id, reason) : abort proactive turn lifecycle on delivery failure.
 
     The port is a Protocol so Hosts can be unit-tested with a fake
-    implementation; the production implementation is
-    `MindRuntimeHostAdapter`.
+    implementation; the production implementation is `MindRuntimeHostAdapter`.
     """
 
-    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
-        ...
+    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult: ...
 
-    def commit_turn(self, request: HostCommitRequest) -> HostCommitReceipt:
-        ...
+    def commit_turn(self, request: HostCommitRequest) -> HostCommitReceipt: ...
 
     def guard_provider_prose(self, request: HostProviderProseRequest) -> HostProviderProseResult:
         """SURFACE_V1: evaluate provider prose before external message delivery."""
         ...
 
-    def abort_turn(self, request: HostAbortRequest) -> HostAbortReceipt:
+    def abort_turn(self, request: HostAbortRequest) -> HostAbortReceipt: ...
+
+    def inspect(self, request: HostInspectRequest) -> HostInspectResult: ...
+
+    def consume_wake(self, wake: WakeSignal) -> HostWakeNotification:
+        """HI-1: Smallest typed consumer of proactive wake signals at the Host boundary."""
         ...
 
-    def inspect(self, request: HostInspectRequest) -> HostInspectResult:
+    def begin_proactive_turn(self, wake: WakeSignal) -> HostProactiveTurnResult:
+        """HI-1: Admit wake and prepare bounded execution context for external Body."""
+        ...
+
+    def guard_proactive_prose(self, wake_id: str, prose: str) -> HostProactiveTurnResult:
+        """HI-1: Guard Body-generated prose against ExpressionGuard before delivery."""
+        ...
+
+    def commit_proactive_turn(self, wake_id: str) -> HostProactiveTurnResult:
+        """HI-1: Complete proactive turn lifecycle following successful external delivery."""
+        ...
+
+    def abort_proactive_turn(self, wake_id: str, reason: str = "") -> HostProactiveTurnResult:
+        """HI-1: Abort proactive turn lifecycle on delivery failure."""
         ...

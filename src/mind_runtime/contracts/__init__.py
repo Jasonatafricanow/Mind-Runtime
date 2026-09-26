@@ -71,6 +71,13 @@ from mind_runtime.contracts.historical import (
     HistoricalContextItem,
     HistoricalContextQuery,
 )
+from mind_runtime.contracts.host import (
+    HostDecisionContext,
+    HostProactiveTurnResult,
+    HostStatus,
+    HostTurnStatus,
+    HostWakeNotification,
+)
 from mind_runtime.contracts.intent import (
     Intent,
     IntentEngineResult,
@@ -80,6 +87,7 @@ from mind_runtime.contracts.intent import (
     IntentTransition,
     IntentWake,
     ReconsiderationPolicy,
+    WakeSignal,
 )
 from mind_runtime.contracts.interaction import Interaction, InteractionStatus
 from mind_runtime.contracts.observation import Observation
@@ -170,6 +178,11 @@ __all__ = [
     "HistoricalContextBundle",
     "HistoricalContextItem",
     "HistoricalContextQuery",
+    "HostDecisionContext",
+    "HostProactiveTurnResult",
+    "HostStatus",
+    "HostTurnStatus",
+    "HostWakeNotification",
     "Interaction",
     "InteractionStatus",
     "Intent",
@@ -180,6 +193,7 @@ __all__ = [
     "IntentStatus",
     "IntentTransition",
     "IntentWake",
+    "WakeSignal",
     "Observation",
     "ObservationModality",
     "Ownership",

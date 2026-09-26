@@ -11,16 +11,16 @@ only references it via an absolute path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime, timezone
 import json
 import logging
 import os
-from pathlib import Path
 import sqlite3
 import sys
 import threading
 import urllib.request
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 _logger = logging.getLogger("xiyue.mr.seam")
@@ -68,6 +68,7 @@ def get_trace_journal(db_path: Path | str | None = None) -> Any | None:
         _logger.warning("get_trace_journal failed: %s", exc)
         return None
 
+
 # INGRESS-DECONTAMINATION (P1, 2026-09-05): the Hermes gateway wraps the
 # user message in a "[System note: ...]" recovery note when the previous
 # turn was interrupted mid-tool-tail (gateway/run.py around line 20878).
@@ -86,7 +87,7 @@ _SYSTEM_NOTE_PREFIX = (
 def _strip_host_system_note(message: str) -> str:
     """Remove the gateway's host-dialogue system-note wrapper, if present."""
     if isinstance(message, str) and message.startswith(_SYSTEM_NOTE_PREFIX):
-        stripped = message[len(_SYSTEM_NOTE_PREFIX):]
+        stripped = message[len(_SYSTEM_NOTE_PREFIX) :]
         return stripped if stripped.strip() else message
     return message
 
@@ -203,6 +204,10 @@ def _load_production_composition() -> dict[str, object]:
         )
     )
 
+    from mind_runtime.expression.guards import DeterministicExpressionGuardChain
+
+    expression_guard = DeterministicExpressionGuardChain(config=decoded.expression_guard)
+
     return {
         "persona": decoded.persona_profile,
         "situation": decoded.situation,
@@ -213,6 +218,10 @@ def _load_production_composition() -> dict[str, object]:
         "homeostasis_gate": homeostasis_gate,
         "semantic_provider": semantic_provider,
         "slow_plasticity_window_size": decoded.slow_plasticity.window_size,
+        "intent_rules": decoded.intent_engine.rules,
+        "action_policy_config": decoded.action_policy,
+        "policy_resources": decoded.policy_resources.available_actions,
+        "expression_guard": expression_guard,
     }
 
 
@@ -230,7 +239,10 @@ def get_mr_adapter():
     adapter = getattr(_local, "adapter", None)
     if adapter is None:
         if os.environ.get("MR_ENABLED", "false").strip().lower() not in {
-            "1", "true", "yes", "on",
+            "1",
+            "true",
+            "yes",
+            "on",
         }:
             adapter = None
         elif not _ensure_mr_importable():
@@ -250,6 +262,10 @@ def get_mr_adapter():
                     homeostasis_gate=composition["homeostasis_gate"],
                     semantic_provider=composition["semantic_provider"],
                     slow_plasticity_window_size=composition["slow_plasticity_window_size"],
+                    intent_rules=composition.get("intent_rules"),
+                    action_policy_config=composition.get("action_policy_config"),
+                    policy_resources=composition.get("policy_resources"),
+                    expression_guard=composition.get("expression_guard"),
                     telemetry_sink=get_trace_journal(),
                 )
                 _logger.info("XiyueMRAdapter initialized (thread %s)", threading.get_ident())
@@ -292,6 +308,7 @@ def render_bounded(bounded) -> str | None:
 # Gateway Runtime Epoch & Readiness Contracts
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class IngressVerdict:
     admitted: bool
@@ -309,19 +326,19 @@ def coerce_source_timestamp(ts: Any) -> datetime | None:
         return None
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
-            return ts.replace(tzinfo=timezone.utc)
-        return ts.astimezone(timezone.utc)
+            return ts.replace(tzinfo=UTC)
+        return ts.astimezone(UTC)
     if isinstance(ts, (int, float)):
         try:
-            return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+            return datetime.fromtimestamp(float(ts), tz=UTC)
         except Exception:
             return None
     if isinstance(ts, str):
         try:
             dt = datetime.fromisoformat(ts)
             if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
+                return dt.replace(tzinfo=UTC)
+            return dt.astimezone(UTC)
         except Exception:
             return None
     return None
@@ -335,7 +352,7 @@ def get_gateway_process_identity() -> tuple[int, str]:
         import psutil
 
         p = psutil.Process(pid)
-        dt = datetime.fromtimestamp(p.create_time(), tz=timezone.utc)
+        dt = datetime.fromtimestamp(p.create_time(), tz=UTC)
         started_iso = dt.isoformat()
     except Exception:
         started_iso = ""
@@ -344,13 +361,13 @@ def get_gateway_process_identity() -> tuple[int, str]:
 
 def save_readiness(data: dict[str, Any]) -> None:
     """Persist readiness record to disk atomically.
-    
+
     GATEWAY / TESTS ONLY: Must never be called by read-only viewers or evaluators.
     """
     target = get_readiness_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_target = target.with_suffix(".tmp")
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    data["updated_at"] = datetime.now(UTC).isoformat()
     content = json.dumps(data, indent=2)
     temp_target.write_text(content, encoding="utf-8")
     temp_target.replace(target)
@@ -358,7 +375,7 @@ def save_readiness(data: dict[str, Any]) -> None:
 
 def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -> dict[str, Any]:
     """Establish a new process epoch. Starts strictly as NOT_READY with runtime_ready_at=None.
-    
+
     GATEWAY OWNED: Only called by the real gateway process startup hook
     (or explicit test fixtures). Non-gateway processes must never call this.
     """
@@ -395,12 +412,13 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
     save_readiness(record)
     return record
 
+
 init_gateway_epoch = begin_runtime_epoch
 
 
 def load_readiness() -> dict[str, Any]:
     """Load the readiness record from disk.
-    
+
     PURE / READ-ONLY: Never creates, modifies, or repairs readiness.json.
     Calling from pytest, python -c, Observation Window, or status scripts has
     zero side effects on disk.
@@ -452,13 +470,13 @@ def load_readiness() -> dict[str, Any]:
 
 def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], list[str]]:
     """Pure, read-only evaluation of the 5 MR core components:
-    
+
     1. mr_adapter_initialized
     2. runtime_db_available
     3. semantic_provider_available
     4. appraisal_provider_available
     5. slow_writer_active
-    
+
     Zero disk side effects (never writes readiness.json).
     Zero network API requests (no LLM connectivity probes).
     Separated from gateway alive (evaluated independently by bundle supervisor/watchers).
@@ -517,6 +535,7 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
         if not glm_key:
             try:
                 import winreg
+
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
                     glm_key, _ = winreg.QueryValueEx(rk, "GLM_API_KEY")
             except Exception:
@@ -534,6 +553,7 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
         if not appr_key:
             try:
                 import winreg
+
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
                     appr_key, _ = winreg.QueryValueEx(rk, "APPRAISAL_API_KEY")
             except Exception:
@@ -556,6 +576,7 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
 
     all_ok = all(checks.values())
     return all_ok, checks, reasons
+
 
 evaluate_core_readiness = evaluate_mr_core_readiness
 
@@ -582,7 +603,7 @@ def mark_runtime_ready(
     _allow_test_write: bool = False,
 ) -> dict[str, Any]:
     """Gateway-owned transition of runtime readiness to READY or DEGRADED.
-    
+
     GATEWAY OWNED: Reads current epoch from disk. Only the gateway process
     owning the current epoch (or tests with _allow_test_write=True) may persist ready state.
     """
@@ -610,7 +631,7 @@ def mark_runtime_ready(
 
     if core_ok:
         if current.get("runtime_ready_at") is None:
-            ready_dt = force_ready_at or datetime.now(timezone.utc)
+            ready_dt = force_ready_at or datetime.now(UTC)
             current["runtime_ready_at"] = ready_dt.isoformat()
         current["bundle_state"] = "READY" if ow_up else "DEGRADED"
     else:
@@ -619,6 +640,7 @@ def mark_runtime_ready(
 
     save_readiness(current)
     return current
+
 
 evaluate_and_update_readiness = mark_runtime_ready
 
@@ -831,7 +853,7 @@ def begin_turn_clean(
                         interaction_id=f"ingress-{session_id}-{message_id}",
                         stage="USER_INGRESS",
                         status="REJECTED",
-                        occurred_at=occurred_at or datetime.now(timezone.utc),
+                        occurred_at=occurred_at or datetime.now(UTC),
                         payload={
                             "message": clean_msg,
                             "channel": channel,
@@ -855,12 +877,14 @@ def begin_turn_clean(
         journal = get_trace_journal()
         if journal is not None:
             try:
-                interaction_id = getattr(handle, "interaction_id", f"ingress-{session_id}-{message_id}")
+                interaction_id = getattr(
+                    handle, "interaction_id", f"ingress-{session_id}-{message_id}"
+                )
                 journal.record(
                     interaction_id=interaction_id,
                     stage="USER_INGRESS",
                     status="ADMITTED",
-                    occurred_at=occurred_at or datetime.now(timezone.utc),
+                    occurred_at=occurred_at or datetime.now(UTC),
                     payload={
                         "message": clean_msg,
                         "channel": channel,
@@ -883,7 +907,7 @@ def begin_turn_clean(
                     interaction_id=f"ingress-{session_id}-{message_id}",
                     stage="USER_INGRESS",
                     status="REJECTED",
-                    occurred_at=occurred_at or datetime.now(timezone.utc),
+                    occurred_at=occurred_at or datetime.now(UTC),
                     payload={
                         "message": clean_msg,
                         "channel": channel,
@@ -917,7 +941,9 @@ def on_turn_commit(
     try:
         interaction_id = getattr(handle, "interaction_id", str(handle))
         session_db = getattr(agent, "_session_db", None) if agent is not None else None
-        last_row_id = getattr(session_db, "_mr_current_assistant_msg_id", None) if session_db else None
+        last_row_id = (
+            getattr(session_db, "_mr_current_assistant_msg_id", None) if session_db else None
+        )
 
         if last_row_id is not None:
             durable_msg_id = f"hermes-msg:{last_row_id}"
@@ -928,11 +954,11 @@ def on_turn_commit(
             interaction_id=interaction_id,
             stage="ASSISTANT_RESPONSE",
             status="COMMITTED",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             payload={
                 "text": final_response,
                 "durable_message_id": durable_msg_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             },
             source_refs=((durable_msg_id,) if durable_msg_id != "UNAVAILABLE" else ()),
         )
@@ -954,7 +980,7 @@ def on_turn_abort(
             interaction_id=interaction_id,
             stage="TURN_ABORT",
             status="ABORTED",
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             payload={"reason": reason},
             source_refs=(),
         )

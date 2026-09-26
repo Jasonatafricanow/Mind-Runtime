@@ -18,11 +18,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.support.fake_clock import FakeClock
 
 from mind_runtime.contracts import (
     AffectiveDimensionProfile,
-    Interaction,
-    InteractionStatus,
     Scope,
     ScopeDomain,
 )
@@ -32,15 +31,14 @@ from mind_runtime.contracts.host import (
     HostCommitReceipt,
     HostCommitRequest,
     HostInspectRequest,
+    HostStatus,
     HostTurnRequest,
     HostTurnResult,
-    HostStatus,
     HostTurnStatus,
 )
 from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator, TurnState
 from mind_runtime.pipeline.trace import TraceRecorder
-from tests.support.fake_clock import FakeClock
 
 NOW = datetime(2026, 8, 20, 14, 0, tzinfo=UTC)
 RUNTIME_ID = "runtime-hi1"
@@ -90,7 +88,10 @@ def turn_request(user_scope) -> HostTurnRequest:
 # T1: Happy path
 # ---------------------------------------------------------------------------
 
-def test_t1_begin_turn_happy_path(adapter: MindRuntimeHostAdapter, turn_request: HostTurnRequest) -> None:
+
+def test_t1_begin_turn_happy_path(
+    adapter: MindRuntimeHostAdapter, turn_request: HostTurnRequest
+) -> None:
     result = adapter.begin_turn(turn_request)
     assert isinstance(result, HostTurnResult)
     assert result.status in (HostTurnStatus.PROCESSING, HostTurnStatus.BEGIN)
@@ -103,6 +104,7 @@ def test_t1_begin_turn_happy_path(adapter: MindRuntimeHostAdapter, turn_request:
 # T5: Commit
 # ---------------------------------------------------------------------------
 
+
 def test_t5_commit_promotes_projection(
     adapter: MindRuntimeHostAdapter, orchestrator: TurnOrchestrator, turn_request: HostTurnRequest
 ) -> None:
@@ -110,7 +112,9 @@ def test_t5_commit_promotes_projection(
     # The orchestrator may be in any of the in-flight states after begin_turn
     # (PROCESSING, DISPATCHING, AWAITING_COMMIT). We do not depend on which
     # specific one — only that commit() promotes to COMMITTED.
-    req = HostCommitRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+    req = HostCommitRequest(
+        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+    )
     receipt = adapter.commit_turn(req)
     assert isinstance(receipt, HostCommitReceipt)
     assert receipt.status is HostStatus.OK
@@ -124,11 +128,14 @@ def test_t5_commit_promotes_projection(
 # T6: Abort discards projection; commit after abort fails
 # ---------------------------------------------------------------------------
 
+
 def test_t6_abort_discards_projection(
     adapter: MindRuntimeHostAdapter, orchestrator: TurnOrchestrator, turn_request: HostTurnRequest
 ) -> None:
     adapter.begin_turn(turn_request)
-    req = HostAbortRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+    req = HostAbortRequest(
+        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+    )
     receipt = adapter.abort_turn(req)
     assert isinstance(receipt, HostAbortReceipt)
     assert receipt.status is HostStatus.OK
@@ -144,10 +151,14 @@ def test_t6_commit_after_abort_fails(
 ) -> None:
     adapter.begin_turn(turn_request)
     adapter.abort_turn(
-        HostAbortRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+        HostAbortRequest(
+            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        )
     )
     assert orchestrator.state is TurnState.ABORTED
-    commit_req = HostCommitRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+    commit_req = HostCommitRequest(
+        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+    )
     receipt = adapter.commit_turn(commit_req)
     # Once aborted, the adapter refuses to commit. The Host gets
     # FAILED + reason code; no projection is promoted.
@@ -158,6 +169,7 @@ def test_t6_commit_after_abort_fails(
 # ---------------------------------------------------------------------------
 # T4: Idempotency — double begin_turn same interaction_id → both OK
 # ---------------------------------------------------------------------------
+
 
 def test_t4_double_begin_turn_idempotent_fact_plane(
     adapter: MindRuntimeHostAdapter, user_scope: Scope, fake_clock: FakeClock
@@ -178,7 +190,9 @@ def test_t4_double_begin_turn_idempotent_fact_plane(
         channel="test",
     )
     adapter.begin_turn(req)
-    adapter.commit_turn(HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id))
+    adapter.commit_turn(
+        HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id)
+    )
     fake_clock.advance(timedelta(seconds=1))
     req2 = HostTurnRequest(
         interaction_id="idempotent-fact-int-1",
@@ -230,6 +244,7 @@ def test_t4_double_begin_turn_different_payload_fails_closed(
 # T7: Illegal numeric authority — rejects non-dict payload
 # ---------------------------------------------------------------------------
 
+
 def test_t7_rejects_non_dict_payload(user_scope: Scope) -> None:
     req = HostTurnRequest(
         interaction_id="int-illegal",
@@ -258,6 +273,7 @@ def test_t7_rejects_non_dict_payload(user_scope: Scope) -> None:
 # T9: OW correlation — decision_context_ref in HostTurnResult
 # ---------------------------------------------------------------------------
 
+
 def test_t9_decision_context_ref_present(
     adapter: MindRuntimeHostAdapter, turn_request: HostTurnRequest
 ) -> None:
@@ -281,6 +297,7 @@ def test_t9_decision_context_ref_present(
 # T2: Fact replay abstain surfaces as OK with reason code
 # ---------------------------------------------------------------------------
 
+
 def test_t2_fact_replay_idempotent_no_duplicate_fact(
     adapter: MindRuntimeHostAdapter, user_scope: Scope, fake_clock: FakeClock
 ) -> None:
@@ -303,7 +320,9 @@ def test_t2_fact_replay_idempotent_no_duplicate_fact(
     )
     result1 = adapter.begin_turn(req1)
     assert result1.outcome is HostStatus.OK
-    adapter.commit_turn(HostCommitRequest(turn_id=result1.turn_id, interaction_id=result1.interaction_id))
+    adapter.commit_turn(
+        HostCommitRequest(turn_id=result1.turn_id, interaction_id=result1.interaction_id)
+    )
     # Replay with identical bytes (same occurred_at, same payload).
     fake_clock.advance(timedelta(seconds=1))
     req2 = HostTurnRequest(
@@ -333,6 +352,7 @@ def test_t2_fact_replay_idempotent_no_duplicate_fact(
 # T3: Provider failure → DEGRADED (not crashed)
 # ---------------------------------------------------------------------------
 
+
 def test_t3_provider_failure_is_degraded_not_crash(
     adapter: MindRuntimeHostAdapter, turn_request: HostTurnRequest
 ) -> None:
@@ -350,10 +370,10 @@ def test_t3_provider_failure_is_degraded_not_crash(
 # T8 + T10: J8-E3 — DynamicsEngine.step called exactly once per begin_turn
 # ---------------------------------------------------------------------------
 
+
 def test_t8_j8e3_dynamics_engine_step_called_once(
     fake_clock: FakeClock, trace: TraceRecorder, user_scope: Scope
 ) -> None:
-    from mind_runtime.contracts import AffectiveDimensionProfile
     from mind_runtime.dynamics.engine import DynamicsEngine
     from mind_runtime.dynamics.persona import PersonaProfile
     from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
@@ -416,7 +436,6 @@ def test_t8_j8e3_dynamics_engine_step_called_once(
 def test_t10_no_extra_step_calls_after_begin_turn(
     fake_clock: FakeClock, trace: TraceRecorder, user_scope: Scope
 ) -> None:
-    from mind_runtime.contracts import AffectiveDimensionProfile
     from mind_runtime.dynamics.engine import DynamicsEngine
     from mind_runtime.dynamics.persona import PersonaProfile
     from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
@@ -441,7 +460,9 @@ def test_t10_no_extra_step_calls_after_begin_turn(
         effect_rules=(),
         semantic_router=SemanticRouter(provider=MagicMock()),
     )
-    orch = TurnOrchestrator(clock=fake_clock, trace=trace, emotional_transition=port, persona=persona)
+    orch = TurnOrchestrator(
+        clock=fake_clock, trace=trace, emotional_transition=port, persona=persona
+    )
     adapter = MindRuntimeHostAdapter(orchestrator=orch, trace=trace)
 
     step_count = 0
@@ -463,7 +484,9 @@ def test_t10_no_extra_step_calls_after_begin_turn(
         channel="test",
     )
     adapter.begin_turn(req)
-    adapter.commit_turn(HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id))
+    adapter.commit_turn(
+        HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id)
+    )
 
     # step() should have been called exactly once during begin_turn.
     # commit does not call DynamicsEngine again.
@@ -473,6 +496,7 @@ def test_t10_no_extra_step_calls_after_begin_turn(
 # ---------------------------------------------------------------------------
 # Additional sanity checks
 # ---------------------------------------------------------------------------
+
 
 def test_adapter_rejects_none_orchestrator() -> None:
     with pytest.raises(ValueError, match="orchestrator"):
@@ -484,11 +508,15 @@ def test_abort_already_aborted_is_idempotent(
 ) -> None:
     adapter.begin_turn(turn_request)
     r1 = adapter.abort_turn(
-        HostAbortRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+        HostAbortRequest(
+            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        )
     )
     assert r1.status is HostStatus.OK
     r2 = adapter.abort_turn(
-        HostAbortRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+        HostAbortRequest(
+            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        )
     )
     assert r2.status is HostStatus.OK
     assert "already_aborted" in r2.reason_codes
@@ -498,7 +526,9 @@ def test_commit_already_committed_is_idempotent(
     adapter: MindRuntimeHostAdapter, turn_request: HostTurnRequest
 ) -> None:
     adapter.begin_turn(turn_request)
-    commit_req = HostCommitRequest(turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id)
+    commit_req = HostCommitRequest(
+        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+    )
     r1 = adapter.commit_turn(commit_req)
     assert r1.status is HostStatus.OK
     r2 = adapter.commit_turn(commit_req)
@@ -676,6 +706,7 @@ def test_r5_fact_pending_degraded_regression(
 # We assert the forwarding seam produces that string, and that it is a no-op
 # when no slow-state item exists.
 
+
 class TestC2SlowStateForwarding:
     def _decision_context_with_slow(self, value: str = "0.8") -> object:
         from mind_runtime.contracts.expression import (
@@ -733,15 +764,18 @@ class TestC2SlowStateForwarding:
         ):
             bounded = _bounded_context(orchestrator)
         assert bounded is not None
-        assert "slow_state: slow_agent.longitudinal.relationship_security = 0.8" in bounded.emotional_state
+        assert (
+            "slow_state: slow_agent.longitudinal.relationship_security = 0.8"
+            in bounded.emotional_state
+        )
 
     def test_no_slow_state_is_noop(self) -> None:
-        from mind_runtime.host.runtime_adapter import _step_slow_state_summary
         from mind_runtime.contracts.expression import (
             DecisionContext,
             ExpressionContextItem,
             ExpressionContextKind,
         )
+        from mind_runtime.host.runtime_adapter import _step_slow_state_summary
 
         # No slow_* item — only a normal affect item.
         affect_item = ExpressionContextItem(
@@ -775,3 +809,138 @@ class TestC2SlowStateForwarding:
         )
         assert _step_slow_state_summary(dctx) is None
 
+
+def test_host_wake_notification_contract_validation_and_as_dict() -> None:
+    from mind_runtime.contracts.host import HostWakeNotification
+    from mind_runtime.contracts.scope import Scope, ScopeDomain
+
+    scope = Scope(domain=ScopeDomain.USER, user_id="u1")
+    now = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+
+    # Validation
+    with pytest.raises(ValueError, match="wake_id"):
+        HostWakeNotification(
+            wake_id="",
+            runtime_id="r1",
+            scope=scope,
+            intent_id="i1",
+            action_type="a1",
+            occurred_at=now,
+        )
+
+    with pytest.raises(ValueError, match="intent_version must be >= 1"):
+        HostWakeNotification(
+            wake_id="w1",
+            runtime_id="r1",
+            scope=scope,
+            intent_id="i1",
+            action_type="a1",
+            occurred_at=now,
+            intent_version=0,
+        )
+
+    # Valid as_dict
+    notif = HostWakeNotification(
+        wake_id="w1",
+        runtime_id="r1",
+        scope=scope,
+        intent_id="i1",
+        action_type="a1",
+        occurred_at=now,
+        eligible=True,
+        interaction_id="int-1",
+        policy_decision_ref="pol-1",
+        reason="ok",
+    )
+    d = notif.as_dict()
+    assert d["wake_id"] == "w1"
+    assert d["eligible"] is True
+    assert isinstance(d["scope"], dict)
+    assert d["scope"]["user_id"] == "u1"
+
+
+def test_host_proactive_turn_result_contract_validation_and_as_dict() -> None:
+    from mind_runtime.contracts.expression import ExpressionDisposition
+    from mind_runtime.contracts.host import (
+        HostDecisionContext,
+        HostProactiveTurnResult,
+        HostStatus,
+        HostTurnStatus,
+    )
+
+    # Validation: invalid status and outcome
+    with pytest.raises(ValueError, match="status must be a HostTurnStatus"):
+        HostProactiveTurnResult(
+            wake_id="w1",
+            interaction_id="i1",
+            status="INVALID",
+            outcome=HostStatus.OK,
+            decision_context_ref=None,
+            expression_ref=None,
+            debug_ref="d1",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="outcome must be a HostStatus"):
+        HostProactiveTurnResult(
+            wake_id="w1",
+            interaction_id="i1",
+            status=HostTurnStatus.PROCESSING,
+            outcome="INVALID",
+            decision_context_ref=None,
+            expression_ref=None,
+            debug_ref="d1",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="reason_codes entries"):
+        HostProactiveTurnResult(
+            wake_id="w1",
+            interaction_id="i1",
+            status=HostTurnStatus.PROCESSING,
+            outcome=HostStatus.OK,
+            decision_context_ref=None,
+            expression_ref=None,
+            debug_ref="d1",
+            reason_codes=("",),
+        )
+
+    # With bounded_context
+    b_ctx = HostDecisionContext(
+        intent_summary="summary",
+        emotional_state="calm",
+        situation_summary="situation",
+        action_taken="action",
+        next_steps="next",
+        cognitive_meaning="meaning",
+        provider_envelope_text="envelope",
+    )
+    res_full = HostProactiveTurnResult(
+        wake_id="w1",
+        interaction_id="int-1",
+        status=HostTurnStatus.PROCESSING,
+        outcome=HostStatus.OK,
+        decision_context_ref="ctx-1",
+        expression_ref="expr-1",
+        debug_ref="dbg-1",
+        bounded_context=b_ctx,
+        disposition=ExpressionDisposition.ACCEPT,
+        would_send="hello",
+        reason_codes=("code_1",),
+    )
+    d_full = res_full.as_dict()
+    assert d_full["wake_id"] == "w1"
+    assert d_full["disposition"] == "accept"
+    assert isinstance(d_full["bounded_context"], dict)
+    assert d_full["bounded_context"]["intent_summary"] == "summary"
+    assert d_full["reason_codes"] == ["code_1"]
+
+    # Without bounded_context
+    res_none = HostProactiveTurnResult(
+        wake_id="w2",
+        interaction_id="int-2",
+        status=HostTurnStatus.COMMITTED,
+        outcome=HostStatus.OK,
+        decision_context_ref=None,
+        expression_ref=None,
+        debug_ref="dbg-2",
+        bounded_context=None,
+    )
+    d_none = res_none.as_dict()
+    assert d_none["bounded_context"] is None
