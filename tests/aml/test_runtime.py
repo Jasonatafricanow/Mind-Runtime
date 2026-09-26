@@ -146,7 +146,8 @@ def test_thread_lane_is_a_projection_over_canonical_memory(tmp_path: Path) -> No
     assert results[0].layer == "thread"
     assert "[Thread working context]" in results[0].content
     assert "Support:" in results[0].content
-    assert any(item.layer == "memory" for item in results)
+    assert all(item.layer != "memory" for item in results)
+    assert "quiet beach trip" in results[0].content
 
 
 def test_options_are_search_context_not_stored_gold(tmp_path: Path) -> None:
