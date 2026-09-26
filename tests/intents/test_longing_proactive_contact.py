@@ -2239,3 +2239,174 @@ def test_wake_notification_scope_mismatch_rejected(tmp_path: Path) -> None:
     notif = adapter.consume_wake(cross_wake)
     assert notif.eligible is False
     assert notif.reason == "rejected:scope_mismatch"
+
+
+def test_proactive_turn_extended_edge_coverage(tmp_path: Path) -> None:
+    """Cover remaining proactive branches in MindRuntimeHostAdapter."""
+    from unittest.mock import MagicMock
+
+    from mind_runtime.contracts import (
+        ExpressionDisposition,
+        ExpressionGuardResult,
+        HostStatus,
+        HostTurnStatus,
+        IntentStatus,
+    )
+
+    orchestrator, clock, _, _ = _build_test_stack(
+        tmp_path, initial_longing=0.90, with_expression=True
+    )
+    user_scope = Scope(domain=ScopeDomain.USER, user_id="user-edge")
+    now = clock.now() + timedelta(minutes=5)
+    clock.advance(timedelta(minutes=5))
+
+    report = run_cognitive_tick(orchestrator, scope=user_scope, now=now)
+    wake = report.wake_signal
+    assert wake is not None
+
+    adapter = MindRuntimeHostAdapter(orchestrator=orchestrator, trace=orchestrator.trace)
+
+    # 1. consume_wake with InMemory backend scope mismatch
+    other_scope = Scope(domain=ScopeDomain.USER, user_id="user-other")
+    mock_lifecycle = MagicMock()
+    mock_lifecycle.backend = MagicMock(
+        _history={(other_scope, "intent-mem"): [MagicMock()]},
+        _conn=None,
+    )
+    mock_lifecycle.backend.history.side_effect = KeyError("missing")
+    mock_policy = MagicMock()
+    orchestrator.cognitive_tick_components["lifecycle"] = mock_lifecycle
+    orchestrator.cognitive_tick_components["action_policy"] = mock_policy
+    mem_wake = replace(wake, wake_id="mem-wake", intent_id="intent-mem", scope=user_scope)
+    mem_notif = adapter.consume_wake(mem_wake)
+    assert mem_notif.eligible is False
+    assert mem_notif.reason == "rejected:scope_mismatch"
+
+    # 2. consume_wake with unknown rule
+    mock_policy._rules = {}
+    mock_lifecycle.backend.history.side_effect = None
+    mock_lifecycle.backend.history.return_value = [
+        MagicMock(
+            kind="unsupported_kind",
+            status=IntentStatus.ALLOWED,
+            sync=MagicMock(version=wake.intent_version),
+        )
+    ]
+    unknown_notif = adapter.consume_wake(wake)
+    assert unknown_notif.eligible is False
+    assert unknown_notif.reason == "rejected:unsupported_intent_action"
+
+    # Restore components
+    orchestrator.cognitive_tick_components.pop("lifecycle", None)
+    orchestrator.cognitive_tick_components.pop("action_policy", None)
+
+    # 3. begin_proactive_turn with unwired expression preparer
+    adapter._expression_preparer = None
+    orig_prep = getattr(orchestrator, "proactive_context_preparer", None)
+    orig_expr = getattr(orchestrator, "proactive_expression_preparer", None)
+    orchestrator.proactive_context_preparer = None
+    orchestrator.proactive_expression_preparer = None
+    orig_components = orchestrator.cognitive_tick_components
+    orchestrator.cognitive_tick_components = {}
+    unwired_res = adapter.begin_proactive_turn(wake)
+    assert unwired_res.status == HostTurnStatus.FAILED
+    assert "unwired_expression_preparer" in unwired_res.reason_codes
+
+    # Restore preparer and run begin_proactive_turn
+    orchestrator.proactive_context_preparer = orig_prep
+    orchestrator.proactive_expression_preparer = orig_expr
+    orchestrator.cognitive_tick_components = orig_components
+    begin_res = adapter.begin_proactive_turn(wake)
+    assert begin_res.status == HostTurnStatus.PROCESSING
+
+    # 4. guard_proactive_prose with REWRITE disposition
+    orig_guard = getattr(orchestrator, "expression_guard", None)
+    mock_guard = MagicMock()
+    mock_guard.guard.return_value = ExpressionGuardResult(
+        guard_id="g1",
+        scope=user_scope,
+        origin_runtime_id="rt-1",
+        expression="some text",
+        disposition=ExpressionDisposition.REWRITE,
+        violations=("too_long",),
+    )
+    orchestrator.expression_guard = mock_guard
+    rewrite_res = adapter.guard_proactive_prose(wake.wake_id, "some text")
+    assert rewrite_res.status == HostTurnStatus.PROCESSING
+    assert rewrite_res.outcome == HostStatus.DEGRADED
+    assert rewrite_res.disposition == ExpressionDisposition.REWRITE
+    assert rewrite_res.reason_codes == ("too_long",)
+
+    # 5. guard_proactive_prose REJECT with normal lifecycle -> ABORTED
+    saved_exec_ctx = adapter._pending_exec_contexts[wake.wake_id]
+    mock_guard.guard.return_value = ExpressionGuardResult(
+        guard_id="g2",
+        scope=user_scope,
+        origin_runtime_id="rt-1",
+        expression="bad text",
+        disposition=ExpressionDisposition.REJECT,
+        violations=("forbidden",),
+    )
+    abort_res = adapter.guard_proactive_prose(wake.wake_id, "bad text")
+    assert abort_res.status == HostTurnStatus.ABORTED
+    assert abort_res.outcome == HostStatus.FAILED
+    assert abort_res.disposition == ExpressionDisposition.REJECT
+
+    # 5b. guard_proactive_prose REJECT with lifecycle unavailable -> FAILED
+    from mind_runtime.host.runtime_adapter import _GuardAdmission
+    adapter._pending_exec_contexts[wake.wake_id] = saved_exec_ctx
+    adapter._consumed_wakes[wake.wake_id] = wake
+    orchestrator.cognitive_tick_components["lifecycle"] = None
+    orchestrator.intent_lifecycle = None
+    orchestrator._intent_lifecycle = None
+    no_lc_guard = adapter.guard_proactive_prose(wake.wake_id, "bad text")
+    assert no_lc_guard.status == HostTurnStatus.FAILED
+    assert "intent_authority_unavailable" in no_lc_guard.reason_codes
+
+    # 6. commit_proactive_turn with lifecycle unavailable -> FAILED
+    adapter._pending_exec_contexts[wake.wake_id] = saved_exec_ctx
+    adapter._consumed_wakes[wake.wake_id] = wake
+    adapter._guard_admissions[wake.wake_id] = _GuardAdmission(
+        disposition=ExpressionDisposition.ACCEPT,
+        guard_ref="guard-test",
+        accepted_at=now,
+    )
+    no_lc_commit = adapter.commit_proactive_turn(wake.wake_id)
+    assert no_lc_commit.status == HostTurnStatus.FAILED
+    assert "intent_authority_unavailable" in no_lc_commit.reason_codes
+
+    lc = getattr(orchestrator, "_intent_lifecycle", None) or orig_components["ticker"]._intent_lifecycle
+    orchestrator.cognitive_tick_components["lifecycle"] = lc
+    orchestrator.expression_guard = orig_guard
+
+    # 7. commit_proactive_turn with intent not in ALLOWED
+    current_intent = lc.backend.history(wake.scope, wake.intent_id)[-1]
+    # Set status to SUPERSEDED
+    object.__setattr__(current_intent, "status", IntentStatus.SUPERSEDED)
+    not_allowed_commit = adapter.commit_proactive_turn(wake.wake_id)
+    assert not_allowed_commit.status == HostTurnStatus.FAILED
+    assert "intent_not_allowed" in not_allowed_commit.reason_codes[0]
+
+    # 8. commit_proactive_turn when history lookup raises
+    orig_history = lc.backend.history
+    lc.backend.history = MagicMock(side_effect=RuntimeError("disk error"))
+    lookup_fail_commit = adapter.commit_proactive_turn(wake.wake_id)
+    assert lookup_fail_commit.status == HostTurnStatus.FAILED
+    assert "intent_lookup_failed" in lookup_fail_commit.reason_codes[0]
+    lc.backend.history = orig_history
+
+    # 9. commit_proactive_turn when lifecycle.transition raises
+    allowed_intent = replace(
+        current_intent,
+        status=IntentStatus.ALLOWED,
+        sync=replace(current_intent.sync, version=wake.intent_version),
+    )
+    lc.backend.history = MagicMock(return_value=[allowed_intent])
+    orig_transition = lc.transition
+    lc.transition = MagicMock(side_effect=RuntimeError("database locked"))
+    exc_commit = adapter.commit_proactive_turn(wake.wake_id)
+    assert exc_commit.status == HostTurnStatus.FAILED
+    assert "commit_transition_failed" in exc_commit.reason_codes[0]
+    lc.transition = orig_transition
+    lc.backend.history = orig_history
+

@@ -914,3 +914,62 @@ def test_preparer_direct_prepare_skips_defense_paths(tmp_path: Path) -> None:
         reason_codes=("ok",),
     )
     assert prepare(unlisted).skip_reason == "not_proactive"
+
+    # Allowed proactive direct prepare
+    allowed_proactive = ActionPolicyResult(
+        policy_id="policy-3",
+        scope=scope,
+        origin_runtime_id="runtime-1",
+        intent_id=intent.intent_id,
+        decision=ActionDecision.ALLOW,
+        permission=ActionPermission(
+            permission_id="perm-proactive",
+            scope=scope,
+            origin_runtime_id="runtime-1",
+            action_type="proactive_message",
+            allowed=True,
+            reasons=("ok",),
+            constraints=(),
+        ),
+        reason_codes=("ok",),
+    )
+    art = prepare(allowed_proactive)
+    assert art.skip_reason is None
+    d = art.as_dict()
+    assert d["action_type"] == "proactive_message"
+    assert d["intent_id"] == intent.intent_id
+
+    # handles() branches
+    assert preparer.handles(policy_result=denied) is False
+    assert preparer.handles(policy_result=unlisted) is False
+    assert preparer.handles(policy_result=allowed_proactive) is True
+
+    # prepare_context() skips
+    assert (
+        preparer.prepare_context(
+            interaction_id="int-1",
+            intent=intent,
+            policy_result=denied,
+            situation=situation,
+            projected=projected,
+            assessment_trace_ref="trace-1",
+            state_rows=(),
+            persona_ref=None,
+            now=BASE,
+        )
+        is None
+    )
+    assert (
+        preparer.prepare_context(
+            interaction_id="int-1",
+            intent=intent,
+            policy_result=unlisted,
+            situation=situation,
+            projected=projected,
+            assessment_trace_ref="trace-1",
+            state_rows=(),
+            persona_ref=None,
+            now=BASE,
+        )
+        is None
+    )
