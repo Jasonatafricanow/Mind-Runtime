@@ -1001,6 +1001,7 @@ def tick_config_rules(args: argparse.Namespace) -> tuple[IntentRule, ...]:
                 reconsideration_policy=ReconsiderationPolicy(
                     entry.get("reconsideration_policy", "never")
                 ),
+                minimum_initiative=entry.get("minimum_initiative"),
             )
         )
     return tuple(rules)

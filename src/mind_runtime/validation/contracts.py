@@ -900,22 +900,24 @@ def _event_effect(value: object, context: str) -> EventEffectRule:
 
 
 def _intent_rule(value: object, context: str) -> IntentRule:
-    raw = _object(
-        value,
-        {
-            "rule_id",
-            "kind",
-            "base_strength",
-            "dimension_weights",
-            "event_kind",
-            "event_bonus",
-            "minimum_strength",
-            "due_at_attribute",
-            "expires_after",
-            "reconsideration_policy",
-        },
-        context,
-    )
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{context} schema drift")
+    expected = {
+        "rule_id",
+        "kind",
+        "base_strength",
+        "dimension_weights",
+        "event_kind",
+        "event_bonus",
+        "minimum_strength",
+        "due_at_attribute",
+        "expires_after",
+        "reconsideration_policy",
+    }
+    keys = set(value)
+    if keys not in (expected, expected | {"minimum_initiative"}):
+        raise ValueError(f"{context} schema drift")
+    raw = cast(Mapping[str, object], value)
     try:
         reconsideration = ReconsiderationPolicy(
             _string(raw["reconsideration_policy"], f"{context}.reconsideration_policy")
@@ -937,6 +939,11 @@ def _intent_rule(value: object, context: str) -> IntentRule:
             else _duration(raw["expires_after"], f"{context}.expires_after")
         ),
         reconsideration_policy=reconsideration,
+        minimum_initiative=(
+            None
+            if raw.get("minimum_initiative") is None
+            else _number(raw["minimum_initiative"], f"{context}.minimum_initiative")
+        ),
     )
 
 
