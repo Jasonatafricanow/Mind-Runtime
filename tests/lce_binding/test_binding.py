@@ -21,7 +21,7 @@ from mind_runtime.integrations.lce import (
     open_lce_read_binding,
     open_lce_thread_handoff,
 )
-from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
+from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.runtime_binding import (
     BindingManifestMismatchError,
