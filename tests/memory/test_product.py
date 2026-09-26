@@ -43,7 +43,21 @@ def second_memory():
         original,
         memory_id="memory-2",
         content="second",
+        provenance=replace(
+            original.provenance,
+            evidence_refs=("evidence-2",),
+            observation_id="observation-2",
+            interaction_id="interaction-2",
+        ),
         sync=replace(original.sync, object_id="memory-2", idempotency_key="memory-2"),
+    )
+
+
+def same_turn_second_memory():
+    original = second_memory()
+    return replace(
+        original,
+        provenance=replace(original.provenance, interaction_id="interaction-1"),
     )
 
 
@@ -195,6 +209,54 @@ def test_open_update_resolve_thread_is_bounded_durable_and_handoff_ready(tmp_pat
     assert resolved.mature
     assert product.thread_handoff("thread-upgrade") == resolved
     assert product.surface_threads(memory().scope, now=at + timedelta(days=6)) == ()
+    product.close()
+    canonical.close()
+
+
+def test_thread_maturity_requires_cross_interaction_support(tmp_path):
+    _, canonical, product = setup_store(
+        tmp_path,
+        rows=(memory(), same_turn_second_memory()),
+    )
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="at least two interactions"):
+        product.open_thread(
+            thread_id="forged-mature",
+            scope=memory().scope,
+            open_question="Can one turn fake maturity?",
+            supporting_memory_ids=("memory-1", "memory-2"),
+            at=at,
+            working_summary="Two rows, one interaction.",
+            mature=True,
+        )
+
+    product.open_thread(
+        thread_id="t1",
+        scope=memory().scope,
+        open_question="Can one turn fake maturity?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="Initial line.",
+    )
+    with pytest.raises(ValueError, match="at least two interactions"):
+        product.update_thread(
+            "t1",
+            supporting_memory_ids=("memory-1", "memory-2"),
+            at=at + timedelta(days=1),
+            working_summary="Still one source interaction.",
+            mature=True,
+        )
+
+    resolved = product.resolve_thread(
+        "t1",
+        memory_id="memory-2",
+        at=at + timedelta(days=2),
+        working_summary="Resolution still came from one interaction.",
+    )
+    assert not resolved.mature
+    with pytest.raises(ValueError, match="not mature"):
+        product.thread_handoff("t1")
     product.close()
     canonical.close()
 
