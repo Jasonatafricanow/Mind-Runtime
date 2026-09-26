@@ -232,7 +232,7 @@ def test_typesafe_backend_maps_generic_primitives_without_sdk_dependency() -> No
     assert len(calls) == 1
     _, headers, payload, timeout = calls[0]
     assert headers["Authorization"] == "Bearer secret"
-    assert timeout == 8.0
+    assert timeout == 2.0
     assert payload["model"] == "jev-1.13.0"
     questions = payload["questions"]
     assert isinstance(questions, dict)
