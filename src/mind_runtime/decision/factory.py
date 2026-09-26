@@ -14,7 +14,7 @@ class DecisionModelConfig:
     api_key: str | None = None
     endpoint: str | None = None
     model: str | None = None
-    timeout_seconds: float = 8.0
+    timeout_seconds: float = 2.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.backend, str) or not self.backend.strip():
