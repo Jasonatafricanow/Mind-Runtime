@@ -1,7 +1,7 @@
 """Focused tests for the optional Surface.initiative admission gate."""
 
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime
 from hashlib import sha256
 
