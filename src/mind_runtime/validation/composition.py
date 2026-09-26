@@ -10,6 +10,7 @@ from typing import cast
 from mind_runtime.contracts import (
     ActionPolicyResult,
     ActionReceipt,
+    AppraisalModelProposal,
     EmotionalTransitionResult,
     Evidence,
     HistoricalContextBundle,
@@ -21,6 +22,7 @@ from mind_runtime.contracts import (
     PreviousExpression,
     RuntimeState,
     Scope,
+    SemanticEventCandidate,
     StateDefinition,
     StateTransition,
     TurnCheckpoint,
@@ -238,14 +240,37 @@ class CanonicalCertificationComposition:
             "checkpoints": self._checkpoint_store.table_names(),
         }
 
-    def apply_event(self, event: SimulationEvent) -> None:
-        self._apply_event(event, include_history=True)
+    def apply_event(
+        self,
+        event: SimulationEvent,
+        *,
+        semantic_candidates: tuple[SemanticEventCandidate, ...] = (),
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
+    ) -> None:
+        self._apply_event(
+            event,
+            include_history=True,
+            semantic_candidates=semantic_candidates,
+            appraisal_proposals=appraisal_proposals,
+        )
 
     def _apply_event_without_history(self, event: SimulationEvent) -> None:
         """Apply the exact verified event while withholding its history input."""
-        self._apply_event(event, include_history=False)
+        self._apply_event(
+            event,
+            include_history=False,
+            semantic_candidates=(),
+            appraisal_proposals=(),
+        )
 
-    def _apply_event(self, event: SimulationEvent, *, include_history: bool) -> None:
+    def _apply_event(
+        self,
+        event: SimulationEvent,
+        *,
+        include_history: bool,
+        semantic_candidates: tuple[SemanticEventCandidate, ...],
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...],
+    ) -> None:
         self._require_open()
         if not isinstance(event, SimulationEvent):
             raise ValueError("event must be a SimulationEvent")
@@ -259,7 +284,11 @@ class CanonicalCertificationComposition:
             turn_id=turn_id,
         )
         self._history_provider.current = event.historical_context if include_history else None
-        self.orchestrator.begin_turn(interaction)
+        self.orchestrator.begin_turn(
+            interaction,
+            semantic_candidates=semantic_candidates,
+            appraisal_proposals=appraisal_proposals,
+        )
         try:
             for evidence in event.evidence:
                 self.orchestrator.ingest(evidence)
