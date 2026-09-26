@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -19,6 +19,7 @@ from mind_runtime.contracts import EffectiveWindow, ObservationModality, Scope, 
 from mind_runtime.contracts.common import require_aware_utc
 from mind_runtime.facts.persistence import SqliteFactReader
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
+from mind_runtime.memory.core import MemoryCore, MemoryCoreSelectionError
 from mind_runtime.memory.product import MemoryProductStore, MemoryThread, ThreadStatus
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
@@ -30,6 +31,7 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
+    from lce.cognition.promotion import BoundedInterpreter, PromotionPolicy
     from lce.contracts.baseline import Baseline
     from lce.contracts.consolidation import (
         CandidateBaseline,
@@ -38,7 +40,11 @@ if TYPE_CHECKING:
     )
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
+    from lce.core.projection import LceProjectionCore
+    from lce.reference_memory.contracts import RawEvidence
+    from lce.semantic.contracts import SemanticDecisionProvider
     from lce.store.sqlite_store import SqliteBaselineStore
+    from lce.structure.contracts import StructureConfig
 
 MAX_SELECTED_MEMORIES = 100
 MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY = 32
@@ -142,26 +148,17 @@ class MrMemorySubstrateAdapter:
     def _selected_memories(
         self, memory_ids: tuple[str, ...]
     ) -> tuple[CommittedMemory, ...]:
-        if not isinstance(memory_ids, tuple) or not 1 <= len(memory_ids) <= MAX_SELECTED_MEMORIES:
-            raise MemorySelectionError("expected a tuple of 1 to 100 stable Memory IDs")
-        if any(not isinstance(mid, str) or not mid.strip() for mid in memory_ids):
-            raise MemorySelectionError("each Memory ID must be a non-empty string")
-        if len(set(memory_ids)) != len(memory_ids):
-            raise MemorySelectionError("duplicate Memory IDs are not permitted")
         _verify_binding(self.binding, self._paths)
-        store = CanonicalMemoryStore(self._paths.memory_db, read_only=True)
         try:
-            memories = tuple(store.get(mid) for mid in memory_ids)
-        finally:
-            store.close()
-        if any(
-            memory is None
-            or memory.scope != self.scope
-            or memory.lifecycle is not MemoryLifecycle.ACTIVE
-            for memory in memories
-        ):
-            raise MemorySelectionError("selected Memory set contains unavailable or ineligible IDs")
-        return tuple(memory for memory in memories if memory is not None)
+            with MemoryCore(self._paths.memory_db, read_only=True) as core:
+                return core.select(
+                    memory_ids,
+                    scope=self.scope,
+                    active_only=True,
+                    max_items=MAX_SELECTED_MEMORIES,
+                )
+        except MemoryCoreSelectionError as exc:
+            raise MemorySelectionError(str(exc)) from exc
 
     def get_by_ids(self, memory_ids: tuple[str, ...]) -> tuple[MemoryItemView, ...]:
         memories = self._selected_memories(memory_ids)
@@ -278,6 +275,119 @@ class MrMemorySubstrateAdapter:
 
 
 @dataclass(frozen=True, slots=True)
+class MrCanonicalLceSource:
+    """Read-only LCE source view over authoritative MR canonical Memory."""
+
+    adapter: MrMemorySubstrateAdapter
+
+    def _memory(self, memory_id: str) -> CommittedMemory:
+        _verify_binding(self.adapter.binding, self.adapter._paths)
+        try:
+            with MemoryCore(
+                self.adapter._paths.memory_db,
+                read_only=True,
+            ) as core:
+                return core.select(
+                    (memory_id,),
+                    scope=self.adapter.scope,
+                    active_only=False,
+                    max_items=1,
+                )[0]
+        except MemoryCoreSelectionError as exc:
+            raise MemorySelectionError(str(exc)) from exc
+
+    @staticmethod
+    def _raw_from_memory(
+        memory: CommittedMemory,
+        reader: SqliteFactReader,
+    ) -> RawEvidence:
+        try:
+            from lce.reference_memory.contracts import RawEvidence
+        except ImportError as exc:
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
+
+        occurred: list[datetime] = []
+        for evidence_id in memory.provenance.evidence_refs:
+            pair = reader.find_evidence(memory.scope, evidence_id)
+            if pair is None:
+                raise MemorySelectionError(
+                    "canonical Memory has unavailable supporting Evidence"
+                )
+            occurred.append(pair[0].occurred_at)
+        if not occurred:
+            raise MemorySelectionError(
+                "canonical Memory has no supporting Evidence chronology"
+            )
+        occurred_at = max(occurred)
+        if occurred_at.tzinfo is not UTC:
+            raise MemorySelectionError(
+                "canonical Memory source chronology must be UTC"
+            )
+
+        if memory.lifecycle is MemoryLifecycle.ACTIVE:
+            state = "VALID"
+        elif memory.lifecycle is MemoryLifecycle.SUPERSEDED:
+            state = "SUPERSEDED"
+        else:
+            state = "INVALID"
+        return RawEvidence(
+            evidence_id=memory.memory_id,
+            content=memory.content,
+            occurred_at=occurred_at,
+            ordering_key=f"{occurred_at.isoformat()}::{memory.memory_id}",
+            provenance={
+                "source": "mr.canonical_memory",
+                "canonical": True,
+                "derived": False,
+                "memory_id": memory.memory_id,
+                "observation_id": memory.provenance.observation_id,
+                "evidence_refs": memory.provenance.evidence_refs,
+            },
+            state=state,
+        )
+
+    def get_evidence(self, evidence_id: str) -> RawEvidence:
+        memory = self._memory(evidence_id)
+        reader = SqliteFactReader(self.adapter._paths.facts_db)
+        try:
+            return self._raw_from_memory(memory, reader)
+        finally:
+            reader.close()
+
+    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
+        _verify_binding(self.adapter.binding, self.adapter._paths)
+        with MemoryCore(
+            self.adapter._paths.memory_db,
+            read_only=True,
+        ) as core:
+            memories = tuple(
+                memory
+                for memory in core.load_all()
+                if memory.scope == self.adapter.scope
+                and memory.lifecycle is MemoryLifecycle.ACTIVE
+            )
+        reader = SqliteFactReader(self.adapter._paths.facts_db)
+        try:
+            result = tuple(
+                self._raw_from_memory(memory, reader)
+                for memory in memories
+            )
+        finally:
+            reader.close()
+        return tuple(
+            sorted(
+                result,
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class LceAcceptedUnderstanding:
     """Current-valid accepted LCE Baseline resolved through MR Memory."""
 
@@ -387,6 +497,122 @@ class _GenericLceCore:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._core, name)
+
+
+@dataclass(frozen=True)
+class LceProjectionSession:
+    """MR-native longitudinal projection over canonical Memory."""
+
+    _adapter: MrMemorySubstrateAdapter
+    _source: MrCanonicalLceSource
+    _core: LceProjectionCore
+
+    def process_memory(self, memory_id: str) -> Any:
+        return self._core.process(self._source.get_evidence(memory_id))
+
+    def process_memories(
+        self, memory_ids: tuple[str, ...]
+    ) -> tuple[Any, ...]:
+        materials = tuple(
+            self._source.get_evidence(memory_id)
+            for memory_id in dict.fromkeys(memory_ids)
+        )
+        ordered = tuple(
+            sorted(
+                materials,
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            )
+        )
+        return tuple(self._core.run_batch(ordered))
+
+    def sync(self) -> tuple[Any, ...]:
+        materials = self._source.list_current_valid_evidence()
+        if not materials:
+            return ()
+        return tuple(self._core.run_batch(materials))
+
+    def source_changed_and_rebuild(
+        self,
+        memory_id: str,
+        *,
+        cutoff: datetime | None = None,
+    ) -> Any:
+        return self._core.source_changed_and_rebuild(
+            memory_id,
+            cutoff=cutoff,
+        )
+
+    def accepted_understandings(
+        self,
+        current_context: str | None,
+        *,
+        limit: int = 4,
+    ) -> tuple[LceAcceptedUnderstanding, ...]:
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError("limit must be an integer in [0, 100]")
+        if limit == 0:
+            return ()
+        query_tokens = set(lexical_tokens(current_context or ""))
+        candidates: list[LceAcceptedUnderstanding] = []
+        for view in self._core.query(current_context):
+            support_ids = tuple(view.supporting_source_refs)
+            if not support_ids:
+                continue
+            try:
+                memories = self._adapter.get_by_ids(support_ids)
+            except MemorySelectionError:
+                continue
+            searchable = " ".join(
+                [view.content, *(memory.content for memory in memories)]
+            )
+            searchable_tokens = set(lexical_tokens(searchable))
+            if query_tokens:
+                overlap = len(query_tokens & searchable_tokens)
+                if overlap == 0:
+                    continue
+                relevance = overlap / len(query_tokens)
+            else:
+                relevance = 1.0
+            source_refs = tuple(
+                sorted(
+                    {
+                        ref
+                        for memory in memories
+                        for ref in memory.source_refs
+                    }
+                )
+            )
+            candidates.append(
+                LceAcceptedUnderstanding(
+                    content=view.content,
+                    baseline_id=view.baseline_id,
+                    region_id=view.region_id,
+                    revision_number=view.revision_number,
+                    supporting_memory_ids=support_ids,
+                    source_refs=source_refs,
+                    relevance=min(1.0, relevance),
+                )
+            )
+        candidates.sort(
+            key=lambda item: (
+                -item.relevance,
+                item.region_id,
+                -item.revision_number,
+            )
+        )
+        return tuple(candidates[:limit])
+
+    def close(self) -> None:
+        self._core.close()
+
+    def __enter__(self) -> LceProjectionSession:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -594,12 +820,81 @@ class LceThreadProjectionCompiler:
             return None
         with session:
             result = session.handoff_thread(thread)
-        return result.baseline.baseline_id
+        baseline_id = result.baseline.baseline_id
+        if not isinstance(baseline_id, str) or not baseline_id:
+            raise LceIntegrationUnavailable(
+                "LCE handoff returned an invalid baseline identity"
+            )
+        return baseline_id
 
 
 def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
     scope_address = hashlib.sha256(scope_json(adapter.scope).encode("utf-8")).hexdigest()
     return adapter._paths.lce_root / scope_address
+
+
+def open_lce_projection_binding(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    semantic_provider: SemanticDecisionProvider | None = None,
+    interpreter: BoundedInterpreter | None = None,
+    policy: PromotionPolicy | None = None,
+    structure_config: StructureConfig | None = None,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceProjectionSession | None:
+    """Open the MR-native canonical-Memory -> LCE projection pipeline."""
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    CanonicalMemoryStore(
+        adapter._paths.memory_db,
+        read_only=True,
+    ).close()
+    source = MrCanonicalLceSource(adapter)
+    try:
+        from lce.core.projection import LceProjectionCore
+        from lce.reference_memory import (
+            ProjectionSubstrate,
+            SqliteProjectionStateStore,
+        )
+    except ImportError as exc:
+        raise LceIntegrationUnavailable(
+            "install an LCE build with external projection substrate support"
+        ) from exc
+
+    root = _scope_lce_root(adapter) / "projection-v1"
+    state = SqliteProjectionStateStore(root / "state")
+    substrate = ProjectionSubstrate(
+        source,
+        state,
+        close_source=False,
+        close_state=True,
+    )
+    try:
+        core = LceProjectionCore(
+            root / "runtime",
+            memory=substrate,
+            provider=semantic_provider,
+            policy=policy,
+            structure_config=structure_config,
+            interpreter=interpreter,
+            close_memory=True,
+        )
+    except BaseException:
+        substrate.close()
+        raise
+    return LceProjectionSession(adapter, source, core)
 
 
 def open_lce_thread_handoff(

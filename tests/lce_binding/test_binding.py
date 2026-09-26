@@ -18,6 +18,7 @@ from mind_runtime.integrations.lce import (
     MemorySelectionError,
     MrMemorySubstrateAdapter,
     open_lce_binding,
+    open_lce_projection_binding,
     open_lce_read_binding,
     open_lce_thread_handoff,
 )
@@ -212,6 +213,44 @@ def _durable_mature_thread(plane):
         )
     finally:
         product.close()
+        canonical.close()
+
+
+def test_projection_binding_reads_canonical_memory_without_copying_source_rows(
+    plane,
+):
+    binding, roots, paths, _ = plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        results = session.process_memories(ids(plane))
+        assert len(results) == len(ids(plane))
+
+    projection_dbs = tuple(
+        paths.lce_root.rglob("projection_state.sqlite")
+    )
+    assert len(projection_dbs) == 1
+    with sqlite3.connect(projection_dbs[0]) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert "raw_evidence" not in tables
+    assert "semantic_blocks" in tables
+
+    canonical = CanonicalMemoryStore(paths.memory_db, read_only=True)
+    try:
+        assert tuple(item.memory_id for item in canonical.load_all()) == ids(
+            plane
+        )
+    finally:
         canonical.close()
 
 
