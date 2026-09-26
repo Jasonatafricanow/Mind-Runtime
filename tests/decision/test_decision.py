@@ -89,6 +89,22 @@ class DownBackend:
         raise DecisionModelUnavailable("offline")
 
 
+class CrashBackend:
+    @property
+    def backend_name(self) -> str:
+        return "crash"
+
+    def evaluate(self, value: DecisionRequest) -> DecisionResult:
+        del value
+        raise RuntimeError("unexpected backend bug")
+
+
+class ExplodingTelemetry:
+    def record(self, trace) -> None:
+        del trace
+        raise RuntimeError("telemetry must not break the pipeline")
+
+
 class BadBackend:
     @property
     def backend_name(self) -> str:
@@ -119,6 +135,14 @@ def test_optional_capability_absence_and_outage_are_fail_open() -> None:
     assert down.evaluate(request()) is None
     assert telemetry.traces[-1].status is DecisionCallStatus.UNAVAILABLE
     assert telemetry.traces[-1].backend == "down"
+
+    crashed = DecisionCapability(CrashBackend(), telemetry=telemetry)
+    assert crashed.evaluate(request()) is None
+    assert telemetry.traces[-1].status is DecisionCallStatus.UNAVAILABLE
+    assert telemetry.traces[-1].error_type == "RuntimeError"
+
+    silent = DecisionCapability(GoodBackend(), telemetry=ExplodingTelemetry())
+    assert silent.evaluate(request()) is not None
 
 
 def test_capability_validates_backend_shape_once_for_all_features() -> None:
