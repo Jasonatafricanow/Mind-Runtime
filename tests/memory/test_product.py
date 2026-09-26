@@ -300,6 +300,45 @@ def test_legacy_memory_without_interaction_provenance_cannot_mature(tmp_path):
     canonical.close()
 
 
+def test_persisted_forged_mature_thread_fails_final_handoff_gate(tmp_path):
+    path, canonical, product = setup_store(
+        tmp_path,
+        rows=(memory(), same_turn_second_memory()),
+    )
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    product.open_thread(
+        thread_id="tampered",
+        scope=memory().scope,
+        open_question="Can persisted state forge maturity?",
+        supporting_memory_ids=("memory-1",),
+        at=at,
+        working_summary="One real interaction only.",
+    )
+    product.close()
+    canonical.close()
+
+    with sqlite3.connect(path) as conn:
+        payload = conn.execute(
+            "SELECT payload FROM memory_threads WHERE thread_id='tampered'"
+        ).fetchone()[0]
+        data = json.loads(payload)
+        data["current_support_ids"] = ["memory-1", "memory-2"]
+        data["mature"] = True
+        conn.execute(
+            "UPDATE memory_threads SET payload=? WHERE thread_id='tampered'",
+            (json.dumps(data, sort_keys=True, ensure_ascii=False),),
+        )
+
+    canonical = CanonicalMemoryStore(path)
+    product = MemoryProductStore(path, canonical)
+    forged = product.get_thread("tampered")
+    assert forged is not None and forged.mature
+    with pytest.raises(ValueError, match="lacks independent interaction support"):
+        product.thread_handoff("tampered")
+    product.close()
+    canonical.close()
+
+
 def test_thread_working_state_validation_and_legacy_event_collapse(tmp_path):
     path, canonical, product = setup_store(tmp_path, rows=(memory(), second_memory()))
     at = datetime(2026, 9, 25, tzinfo=UTC)
