@@ -20,7 +20,12 @@ def memory():
         memory_id="memory-1",
         scope=scope,
         content="hello",
-        provenance=MemoryProvenance(("evidence-1",), "observation-1", "text-v1"),
+        provenance=MemoryProvenance(
+            ("evidence-1",),
+            "observation-1",
+            "text-v1",
+            interaction_id="interaction-1",
+        ),
         origin_runtime_id="runtime-1",
         committed_at=datetime(2026, 9, 7, tzinfo=UTC),
         sync=SyncFields(scope, "runtime-1", "memory-1", 1, "memory-1"),
