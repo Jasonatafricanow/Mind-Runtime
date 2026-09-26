@@ -146,6 +146,7 @@ __all__ = [
     "AssessmentTrace",
     "AffectiveDimensionProfile",
     "AmbiguityAssessment",
+    "AppraisalModelProposal",
     "AppraisalPath",
     "AppraisalRouteDecision",
     "Authority",
