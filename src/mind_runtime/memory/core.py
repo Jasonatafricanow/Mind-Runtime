@@ -120,7 +120,7 @@ class MemoryCore:
         self._canonical.close()
         self._closed = True
 
-    def __enter__(self) -> "MemoryCore":
+    def __enter__(self) -> MemoryCore:
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
