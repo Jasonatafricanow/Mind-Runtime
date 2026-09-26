@@ -45,6 +45,15 @@ def _validate_result(request: DecisionRequest, result: DecisionResult) -> None:
             )
 
 
+def _record_safely(telemetry: DecisionTelemetrySink, trace: DecisionTrace) -> None:
+    try:
+        telemetry.record(trace)
+    except Exception:
+        # Observability is never allowed to turn optional decision compute
+        # into a core pipeline dependency.
+        return
+
+
 class DecisionCapability:
     """One shared optional decision-model capability.
 
@@ -70,7 +79,7 @@ class DecisionCapability:
             raise TypeError("request must be DecisionRequest")
         started = perf_counter()
         if self._backend is None:
-            self._telemetry.record(
+            _record_safely(self._telemetry, 
                 DecisionTrace(
                     feature=request.feature,
                     projection_version=request.projection_version,
@@ -86,7 +95,7 @@ class DecisionCapability:
             result = self._backend.evaluate(request)
             _validate_result(request, result)
         except DecisionModelError as exc:
-            self._telemetry.record(
+            _record_safely(self._telemetry, 
                 DecisionTrace(
                     feature=request.feature,
                     projection_version=request.projection_version,
@@ -99,7 +108,7 @@ class DecisionCapability:
                 )
             )
             return None
-        self._telemetry.record(
+        _record_safely(self._telemetry, 
             DecisionTrace(
                 feature=request.feature,
                 projection_version=request.projection_version,
