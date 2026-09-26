@@ -53,6 +53,7 @@ class AmlThreadSemanticPort(Protocol):
         *,
         message: AmlMessage,
         context: tuple[AmlMessage, ...],
+        active_threads: tuple[str, ...] = (),
     ) -> ThreadSemanticDecision:
         ...
 
@@ -121,10 +122,12 @@ class OpenAICompatibleThreadSemanticProvider:
         *,
         message: AmlMessage,
         context: tuple[AmlMessage, ...],
+        active_threads: tuple[str, ...] = (),
     ) -> ThreadSemanticDecision:
         transcript = "\n".join(
             f"{item.role}: {item.content}" for item in context[-8:]
         )[-12000:]
+        thread_context = "\n".join(active_threads[-8:])[-8000:]
         prompt = (
             "You are the host-side semantic adapter for a memory system. "
             "Judge only whether the CURRENT message opens/continues an unresolved "
@@ -135,6 +138,7 @@ class OpenAICompatibleThreadSemanticProvider:
             "summary is the current state of that line. mature may be true only "
             "when the visible transcript contains repeated independent support. "
             "Use null for unavailable question/summary.\n\n"
+            f"Existing active working lines:\n{thread_context or '(none)'}\n\n"
             f"Visible transcript:\n{transcript}\n\n"
             f"CURRENT:\n{message.role}: {message.content}"
         )
