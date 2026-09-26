@@ -247,3 +247,21 @@ In strict adherence to the audit mandate:
 - **No worktrees were pruned.**
 - **No git reset, cherry-pick, force-update, or merge operations were executed.**
 - All 21 worktrees and all historical branches remain intact for maintainer inspection.
+
+---
+
+## 12. Post-Migration Test Re-Expansion Sub-Audit (Issue #27 Scope Resolution)
+
+Per repository owner instructions on Issue #27 (Comment 4), a dedicated read-only sub-audit was executed comparing the PR #25 test-slimming baseline (`d393a1af90a62cc529f13380c409cfb26db883e9`, 3,582 passed) against the Gate B4 merge commit (`d21cbcf3f83429192869b02a1f19600b843eda5e`, 3,820 passed).
+
+### Summary of Sub-Audit Findings
+- **Full Report Published:** [`docs/audits/MR_POST_MIGRATION_TEST_REEXPANSION_AUDIT_2026-09-26.md`](file:///c:/projects/mind-runtime-main-merge/docs/audits/MR_POST_MIGRATION_TEST_REEXPANSION_AUDIT_2026-09-26.md)
+- **Net Test Increase:** **+238 passed** (+214 added test cases across 8 files, +24 vector memory integration tests executed under full environment).
+- **Classification (2026-09-26 Adversarial Failure-Path Standard):**
+  - **`DISTINCT_FAILURE_PATH`**: **147 tests (4,524 LOC)** — Must preserve 100%. (Includes defect regression for `abort_proactive_turn` pending_exec control flow, wake admission fail-closed gates, curiosity retrieval deferral authority, anger pressure != permission boundary, and sadness initiative zero-leakage).
+  - **`SAME_PATH_DUPLICATION`**: **42 tests (850 LOC)** — Candidate for removal / collapse.
+  - **`COVERAGE_ONLY`**: **8 tests (217 LOC)** — Candidate for pruning.
+  - **`HISTORICAL_CERTIFICATION`**: **17 tests (394 LOC)** — Certified manifests & audit gap markers.
+- **Slimming Blueprint:** Potential reduction of **-55 test functions** and **~1,417 LOC** without modifying any distinct failure path.
+- **Acceptance Status:** `POST_MIGRATION_TEST_REEXPANSION_AUDITED`
+
