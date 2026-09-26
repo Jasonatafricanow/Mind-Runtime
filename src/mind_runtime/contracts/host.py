@@ -118,16 +118,16 @@ class HostTurnRequest:
         if self.session_id is not None:
             require_non_empty(self.session_id, "session_id")
         semantic_ids: list[str] = []
-        for proposal in self.semantic_proposals:
-            if not isinstance(proposal, SemanticEventProposal):
+        for semantic_proposal in self.semantic_proposals:
+            if not isinstance(semantic_proposal, SemanticEventProposal):
                 raise ValueError("semantic_proposals must contain SemanticEventProposal")
-            semantic_ids.append(proposal.candidate_id)
+            semantic_ids.append(semantic_proposal.candidate_id)
         if len(set(semantic_ids)) != len(semantic_ids):
             raise ValueError("semantic proposal ids must be unique")
         appraisal_ids: list[str] = []
-        for candidate_id, proposal in self.appraisal_proposals:
+        for candidate_id, appraisal_proposal in self.appraisal_proposals:
             require_non_empty(candidate_id, "appraisal proposal candidate_id")
-            if not isinstance(proposal, AppraisalModelProposal):
+            if not isinstance(appraisal_proposal, AppraisalModelProposal):
                 raise ValueError("appraisal_proposals must contain AppraisalModelProposal")
             appraisal_ids.append(candidate_id)
         if len(set(appraisal_ids)) != len(appraisal_ids):
