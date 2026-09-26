@@ -10,7 +10,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     )
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
+    from lce.core.projection import LceProjectionCore
+    from lce.reference_memory.contracts import RawEvidence
     from lce.store.sqlite_store import SqliteBaselineStore
 
 MAX_SELECTED_MEMORIES = 100
@@ -267,6 +269,119 @@ class MrMemorySubstrateAdapter:
             return tuple(views)
         finally:
             reader.close()
+
+
+@dataclass(frozen=True, slots=True)
+class MrCanonicalLceSource:
+    """Read-only LCE source view over authoritative MR canonical Memory."""
+
+    adapter: MrMemorySubstrateAdapter
+
+    def _memory(self, memory_id: str) -> CommittedMemory:
+        _verify_binding(self.adapter.binding, self.adapter._paths)
+        try:
+            with MemoryCore(
+                self.adapter._paths.memory_db,
+                read_only=True,
+            ) as core:
+                return core.select(
+                    (memory_id,),
+                    scope=self.adapter.scope,
+                    active_only=False,
+                    max_items=1,
+                )[0]
+        except MemoryCoreSelectionError as exc:
+            raise MemorySelectionError(str(exc)) from exc
+
+    @staticmethod
+    def _raw_from_memory(
+        memory: CommittedMemory,
+        reader: SqliteFactReader,
+    ) -> RawEvidence:
+        try:
+            from lce.reference_memory.contracts import RawEvidence
+        except ImportError as exc:
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
+
+        occurred: list[datetime] = []
+        for evidence_id in memory.provenance.evidence_refs:
+            pair = reader.find_evidence(memory.scope, evidence_id)
+            if pair is None:
+                raise MemorySelectionError(
+                    "canonical Memory has unavailable supporting Evidence"
+                )
+            occurred.append(pair[0].occurred_at)
+        if not occurred:
+            raise MemorySelectionError(
+                "canonical Memory has no supporting Evidence chronology"
+            )
+        occurred_at = max(occurred)
+        if occurred_at.tzinfo is not UTC:
+            raise MemorySelectionError(
+                "canonical Memory source chronology must be UTC"
+            )
+
+        if memory.lifecycle is MemoryLifecycle.ACTIVE:
+            state = "VALID"
+        elif memory.lifecycle is MemoryLifecycle.SUPERSEDED:
+            state = "SUPERSEDED"
+        else:
+            state = "INVALID"
+        return RawEvidence(
+            evidence_id=memory.memory_id,
+            content=memory.content,
+            occurred_at=occurred_at,
+            ordering_key=f"{occurred_at.isoformat()}::{memory.memory_id}",
+            provenance={
+                "source": "mr.canonical_memory",
+                "canonical": True,
+                "derived": False,
+                "memory_id": memory.memory_id,
+                "observation_id": memory.provenance.observation_id,
+                "evidence_refs": memory.provenance.evidence_refs,
+            },
+            state=state,
+        )
+
+    def get_evidence(self, evidence_id: str) -> RawEvidence:
+        memory = self._memory(evidence_id)
+        reader = SqliteFactReader(self.adapter._paths.facts_db)
+        try:
+            return self._raw_from_memory(memory, reader)
+        finally:
+            reader.close()
+
+    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
+        _verify_binding(self.adapter.binding, self.adapter._paths)
+        with MemoryCore(
+            self.adapter._paths.memory_db,
+            read_only=True,
+        ) as core:
+            memories = tuple(
+                memory
+                for memory in core.load_all()
+                if memory.scope == self.adapter.scope
+                and memory.lifecycle is MemoryLifecycle.ACTIVE
+            )
+        reader = SqliteFactReader(self.adapter._paths.facts_db)
+        try:
+            result = tuple(
+                self._raw_from_memory(memory, reader)
+                for memory in memories
+            )
+        finally:
+            reader.close()
+        return tuple(
+            sorted(
+                result,
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
