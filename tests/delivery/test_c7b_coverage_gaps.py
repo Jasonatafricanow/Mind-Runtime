@@ -31,6 +31,9 @@ from mind_runtime.delivery import (
 )
 from mind_runtime.delivery.daemon import DaemonPass
 from mind_runtime.delivery.kill_switch import open_kill_switch
+from mind_runtime.delivery.persistence import (
+    DurableRequestRow,
+)
 from mind_runtime.delivery.retry import RetryDecision, RetryDecisionKind
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -452,6 +455,65 @@ def test_persistence_record_receipt_validation(
     backend.close()
 
 
+def test_persistence_get_durable_receipt_missing(
+    tmp_path: Path,
+) -> None:
+    """get_durable_receipt returns None when the receipt is absent."""
+
+    db_path = tmp_path / "c7b_gr.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        assert backend.get_durable_receipt("absent") is None
+    finally:
+        backend.close()
+
+
+def test_persistence_get_attempt_missing(
+    tmp_path: Path,
+) -> None:
+    """get_attempt returns None when the attempt is absent."""
+
+    db_path = tmp_path / "c7b_ga.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        assert backend.get_attempt("absent") is None
+    finally:
+        backend.close()
+
+
+def test_persistence_table_names_lists_four(
+    tmp_path: Path,
+) -> None:
+    """table_names includes the four C7B tables."""
+
+    db_path = tmp_path / "c7b_tables.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        names = set(backend.table_names())
+        for required in (
+            "delivery_requests", "delivery_receipts",
+            "delivery_attempts", "delivery_kill_switch",
+        ):
+            assert required in names
+    finally:
+        backend.close()
+
+
+def test_persistence_kill_switch_returns_same_instance(
+    tmp_path: Path,
+) -> None:
+    """kill_switch() returns a stable handle for the same backend."""
+
+    db_path = tmp_path / "c7b_ks_handle.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        ks1 = backend.kill_switch()
+        ks2 = backend.kill_switch()
+        assert ks1 is ks2
+    finally:
+        backend.close()
+
+
 def test_persistence_record_request_rejects_bad_state(
     tmp_path: Path,
 ) -> None:
@@ -503,6 +565,20 @@ def test_persistence_record_attempt_idempotent(
     backend.close()
 
 
+def test_persistence_attempts_for_request_empty(
+    tmp_path: Path,
+) -> None:
+    """attempts_for_request returns an empty tuple when no attempts."""
+
+    db_path = tmp_path / "c7b_att_empty.db"
+    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
+    backend = _backend_with_pending_request(db_path, request)
+    try:
+        assert backend.attempts_for_request(request.request_id) == ()
+    finally:
+        backend.close()
+
+
 def test_persistence_unfinished_requests_excludes_terminal(
     tmp_path: Path,
 ) -> None:
@@ -552,6 +628,24 @@ def test_persistence_unfinished_requests_excludes_terminal(
         assert rejected_req.request_id not in ids
     finally:
         backend.close()
+
+
+def test_durable_request_row_dataclass() -> None:
+    """DurableRequestRow is a frozen dataclass with the expected
+    fields.
+    """
+
+    request = _request(request_id="deliv-row")
+    row = DurableRequestRow(
+        request=request,
+        lifecycle_state=DeliveryLifecycleState.PENDING,
+        attempt_count=0,
+        last_attempt_at=None,
+        last_reconcile_at=None,
+        last_provider_receipt_ref=None,
+    )
+    assert row.request is request
+    assert row.lifecycle_state is DeliveryLifecycleState.PENDING
 
 
 def test_persistence_durable_request_rejects_naive_datetime(
@@ -1018,6 +1112,17 @@ def test_persistence_attempt_reason_codes_load_failure(
         SqliteDeliveryBackend(db_path)
 
 
+def test_persistence_path_property(tmp_path: Path) -> None:
+    """The path property exposes the on-disk path."""
+
+    db_path = tmp_path / "c7b_path.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        assert backend.path == str(db_path)
+    finally:
+        backend.close()
+
+
 def test_persistence_set_lifecycle_state_at_validation(
     tmp_path: Path,
 ) -> None:
@@ -1080,6 +1185,7 @@ def test_persistence_get_durable_request_idempotent_record(
 
 
 # ----------------------------------------------------------- more persistence
+
 
 
 # ----------------------------------------------------------- persistence load errors
@@ -1176,6 +1282,30 @@ def test_persistence_kill_switch_corrupt_channel_blocks_bad_json(
 # ----------------------------------------------------------- direct module tests
 
 
+def test_persistence_to_json_non_serializable(
+    tmp_path: Path,
+) -> None:
+    """_to_json raises ValueError for non-JSON-serializable values."""
+
+    from mind_runtime.delivery.persistence import _to_json
+    with pytest.raises(ValueError, match="JSON-serializable"):
+        _to_json({1, 2, 3})  # sets are not JSON-serializable
+
+
+def test_persistence_validate_sync_payload_version_not_int(
+    tmp_path: Path,
+) -> None:
+    """_validate_sync_payload rejects a non-integer version."""
+
+    from mind_runtime.delivery.persistence import _validate_sync_payload
+    with pytest.raises(ValueError, match="version must be an integer"):
+        _validate_sync_payload(
+            '{"scope": "user", "origin_runtime_id": "x", "object_id": "y",'
+            ' "version": "v1", "idempotency_key": "z"}',
+            "row-x", "delivery_requests",
+        )
+
+
 def test_persistence_kill_switch_block_map_non_str_raw(
     tmp_path: Path,
 ) -> None:
@@ -1184,6 +1314,20 @@ def test_persistence_kill_switch_block_map_non_str_raw(
     from mind_runtime.delivery.kill_switch import _validate_block_map
     with pytest.raises(ValueError, match="must be a JSON object string"):
         _validate_block_map(123, "channel_blocks")  # type: ignore[arg-type]
+
+
+def test_persistence_get_durable_request_returns_none_for_unknown(
+    tmp_path: Path,
+) -> None:
+    """get_durable_request returns None for an unknown request_id."""
+
+    db_path = tmp_path / "c7b_get_none.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        result = backend.get_durable_request("nonexistent")
+        assert result is None
+    finally:
+        backend.close()
 
 
 def test_persistence_record_receipt_returns_false_on_idempotent(
@@ -1217,6 +1361,84 @@ def test_persistence_record_receipt_returns_false_on_idempotent(
 # ----------------------------------------------------------- direct module tests 2
 
 
+def test_persistence_attempt_from_row_non_list_reason_codes() -> None:
+    """_attempt_from_row raises on non-list reason_codes."""
+
+    import sqlite3 as _sqlite3
+
+    from mind_runtime.delivery.persistence import _attempt_from_row
+
+    conn = _sqlite3.connect(":memory:")
+    conn.row_factory = _sqlite3.Row
+    conn.execute(
+        "CREATE TABLE delivery_attempts ("
+        "attempt_id TEXT, request_id TEXT, attempt INTEGER,"
+        " started_at TEXT, ended_at TEXT, outcome TEXT,"
+        " provider_receipt_ref TEXT, reason_codes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO delivery_attempts VALUES (?,?,?,?,?,?,?,?)",
+        ("a1", "r1", 1, "2026-01-01T00:00:00+00:00",
+         None, "failed_retryable", None, '"a-string"'),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM delivery_attempts").fetchone()
+    with pytest.raises(ValueError, match="is not a JSON array"):
+        _attempt_from_row(row)
+    conn.close()
+
+
+def test_persistence_validate_sync_payload_empty_string_field(
+    tmp_path: Path,
+) -> None:
+    """_validate_sync_payload rejects empty string fields."""
+
+    from mind_runtime.delivery.persistence import _validate_sync_payload
+    with pytest.raises(ValueError, match="sync.origin_runtime_id"):
+        _validate_sync_payload(
+            '{"scope": "user", "origin_runtime_id": "",'
+            ' "object_id": "y", "version": 1, "idempotency_key": "z"}',
+            "row-x", "delivery_requests",
+        )
+    with pytest.raises(ValueError, match="sync.object_id"):
+        _validate_sync_payload(
+            '{"scope": "user", "origin_runtime_id": "x",'
+            ' "object_id": "", "version": 1, "idempotency_key": "z"}',
+            "row-x", "delivery_requests",
+        )
+    with pytest.raises(ValueError, match="sync.idempotency_key"):
+        _validate_sync_payload(
+            '{"scope": "user", "origin_runtime_id": "x",'
+            ' "object_id": "y", "version": 1, "idempotency_key": ""}',
+            "row-x", "delivery_requests",
+        )
+
+
+def test_persistence_get_attempt_returns_row(
+    tmp_path: Path,
+) -> None:
+    """get_attempt returns a DurableAttemptRow when the row exists."""
+
+    db_path = tmp_path / "c7b_get_att.db"
+    request = _request(request_id=make_request_id(SCOPE, "intent-1", "k1"))
+    backend = _backend_with_pending_request(db_path, request)
+    backend.record_attempt(
+        attempt_id="att-1", request_id=request.request_id, attempt=1,
+        started_at=datetime.now(tz=UTC),
+        ended_at=datetime.now(tz=UTC),
+        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
+        provider_receipt_ref=None,
+        reason_codes=("x",),
+    )
+    try:
+        row = backend.get_attempt("att-1")
+        assert row is not None
+        assert row.attempt_id == "att-1"
+        assert row.attempt == 1
+    finally:
+        backend.close()
+
+
 def test_daemon_apply_receipt_sent_no_delivered_at(
     tmp_path: Path,
 ) -> None:
@@ -1240,3 +1462,20 @@ def test_daemon_apply_receipt_sent_no_delivered_at(
     backend.close()
 
 
+def test_kill_switch_close_no_op_when_connection_not_owned(
+    tmp_path: Path,
+) -> None:
+    """A kill switch that shares a connection with a backend does
+    not close the connection on .close().
+    """
+
+    db_path = tmp_path / "c7b_ks_shared.db"
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        # The switch here is owned by the backend; .close() is a
+        # no-op.
+        backend.kill_switch().close()
+        # The backend's connection is still usable.
+        backend.kill_switch().state()
+    finally:
+        backend.close()
