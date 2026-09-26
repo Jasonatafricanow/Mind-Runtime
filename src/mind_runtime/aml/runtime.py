@@ -611,6 +611,7 @@ class AmlMemoryRuntime:
                         user.paths, item.memory
                     ).isoformat(),
                     layer="memory",
+                    covers_memory_ids=(item.memory.memory_id,),
                 )
                 for rank, item in enumerate(resolved, 1)
             )
@@ -685,6 +686,9 @@ class AmlMemoryRuntime:
                             score=2.0 + relevance,
                             created_at=thread.updated_at.isoformat(),
                             layer="thread",
+                            covers_memory_ids=tuple(
+                                memory.memory_id for memory in support
+                            ),
                         ),
                     )
                 )
@@ -773,6 +777,9 @@ class AmlMemoryRuntime:
                         score=3.0 + view.relevance,
                         created_at=created_at.isoformat(),
                         layer="lce",
+                        covers_memory_ids=tuple(
+                            memory.memory_id for memory in support
+                        ),
                     )
                 )
         return tuple(items)
@@ -802,12 +809,21 @@ class AmlMemoryRuntime:
             )
             selected: list[AmlSearchItem] = []
             seen: set[str] = set()
+            covered_memory_ids: set[str] = set()
             remaining = self.config.max_context_characters
             for item in candidates:
-                if item.id in seen or len(item.content) > remaining:
+                if (
+                    item.id in seen
+                    or (
+                        item.layer == "memory"
+                        and item.id in covered_memory_ids
+                    )
+                    or len(item.content) > remaining
+                ):
                     continue
                 seen.add(item.id)
                 selected.append(item)
+                covered_memory_ids.update(item.covers_memory_ids)
                 remaining -= len(item.content)
                 if len(selected) >= output_limit:
                     break
