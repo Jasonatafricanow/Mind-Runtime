@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mind_runtime.aml.api import build_runtime_from_env, create_app
@@ -69,7 +70,7 @@ def test_http_contract_echoes_add_ids_and_returns_declared_search_fields(
 
 def test_env_factory_keeps_competition_policy_outside_core(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AML_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AML_RESULT_CAP", "7")
