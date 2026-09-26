@@ -132,7 +132,7 @@ class HostTurnRequest:
             appraisal_ids.append(candidate_id)
         if len(set(appraisal_ids)) != len(appraisal_ids):
             raise ValueError("appraisal proposal candidate ids must be unique")
-        if appraisal_ids and set(appraisal_ids) != set(semantic_ids):
+        if set(appraisal_ids) != set(semantic_ids):
             raise ValueError(
                 "appraisal proposals must exactly cover supplied semantic proposals"
             )
