@@ -20,8 +20,9 @@ class _ThreadSemantics:
         *,
         message: AmlMessage,
         context: tuple[AmlMessage, ...],
+        active_threads: tuple[str, ...] = (),
     ) -> ThreadSemanticDecision:
-        del context
+        del context, active_threads
         return ThreadSemanticDecision(
             action="track",
             question="Where should the user travel?",
