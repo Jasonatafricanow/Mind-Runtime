@@ -29,7 +29,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import AppraisalModelProposal, Scope, ScopeDomain, SemanticEventProposal, WakeSignal
+from mind_runtime.contracts import (
+    AppraisalModelProposal,
+    Scope,
+    ScopeDomain,
+    SemanticEventProposal,
+    WakeSignal,
+)
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
