@@ -13,6 +13,7 @@ from typing import Protocol
 
 from mind_runtime.aml.contracts import AmlMessage
 from mind_runtime.emotional_transition.provider import UrllibChatTransport
+from mind_runtime.memory.embedding import EmbeddingIdentity, validate_vector
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,3 +207,68 @@ class OpenAICompatibleCompletion:
             self._timeout,
         )
         return _chat_text(response)
+
+
+
+class OpenAICompatibleEmbedding:
+    """OpenAI-compatible embedding adapter for AML deployment profiles."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        api_key: str,
+        model: str,
+        dimension: int,
+        revision: str,
+        timeout_seconds: float = 12.0,
+        allowed_hosts: tuple[str, ...] = (),
+    ) -> None:
+        if not endpoint.strip() or not api_key.strip() or not model.strip():
+            raise ValueError("endpoint, api_key and model must be nonempty")
+        self._identity = EmbeddingIdentity(
+            "openai-compatible",
+            model,
+            dimension,
+            revision,
+        )
+        self._endpoint = endpoint
+        self._api_key = api_key
+        self._model = model
+        self._timeout = float(timeout_seconds)
+        self._transport = UrllibChatTransport(allowed_hosts=allowed_hosts)
+
+    @property
+    def identity(self) -> EmbeddingIdentity:
+        return self._identity
+
+    def embed(self, text: str) -> tuple[float, ...]:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("embedding input must be nonempty")
+        response = self._transport.post_json(
+            self._endpoint,
+            {
+                "model": self._model,
+                "input": [text],
+                "_headers": {
+                    "Authorization": f"Bearer {self._api_key}",
+                },
+            },
+            self._timeout,
+        )
+        try:
+            data = response["data"]
+            if not isinstance(data, list) or len(data) != 1:
+                raise ValueError
+            row = data[0]
+            if not isinstance(row, dict):
+                raise ValueError
+            vector = row["embedding"]
+            if not isinstance(vector, list):
+                raise ValueError
+            values = tuple(float(value) for value in vector)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "embedding provider returned an invalid vector response"
+            ) from exc
+        return validate_vector(values, self._identity)
