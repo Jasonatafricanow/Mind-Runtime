@@ -263,7 +263,7 @@ def test_retire_compiled_thread_rejects_invalid_projection_states(tmp_path):
     with pytest.raises(ValueError, match="abandoned"):
         product.retire_compiled_thread("abandoned", baseline_id="baseline-2")
 
-    with pytest.raises(ValueError, match="nonempty"):
+    with pytest.raises(ValueError, match="non-empty"):
         product.retire_compiled_thread("immature", baseline_id="")
 
     product.close()
