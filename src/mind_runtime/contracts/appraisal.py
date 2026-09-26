@@ -95,6 +95,29 @@ class SemanticAppraisal:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticEventProposal:
+    """Body-owned semantic proposal before MR binds system authority fields."""
+
+    candidate_id: str
+    kind: str
+    attributes: tuple[tuple[str, str], ...]
+    confidence: float
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.candidate_id, "candidate_id")
+        require_non_empty(self.kind, "kind")
+        seen: set[str] = set()
+        for key, value in self.attributes:
+            require_non_empty(key, "attribute keys")
+            require_non_empty(value, "attribute values")
+            if key in seen:
+                raise ValueError("semantic proposal attribute keys must be unique")
+            seen.add(key)
+        if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
+            raise ValueError("confidence must be in [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticEventCandidate:
     """A provider-neutral typed event candidate; never an affect or action verdict.
 
