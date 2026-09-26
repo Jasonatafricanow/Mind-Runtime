@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from mind_runtime.contracts import Scope, ScopeDomain
+from mind_runtime.contracts import Scope, ScopeDomain, SyncFields
 from mind_runtime.memory.contracts import (
     CommittedMemory,
     MemoryLifecycle,
@@ -40,6 +40,13 @@ def _memory(memory_id: str, content: str, user_id: str = "u") -> CommittedMemory
         lifecycle=MemoryLifecycle.ACTIVE,
         committed_at=datetime(2026, 1, 1, tzinfo=UTC),
         origin_runtime_id="runtime",
+        sync=SyncFields(
+            scope,
+            "runtime",
+            memory_id,
+            1,
+            f"idem-{memory_id}",
+        ),
     )
 
 
