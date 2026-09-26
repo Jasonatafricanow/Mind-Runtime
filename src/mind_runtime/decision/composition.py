@@ -1,0 +1,81 @@
+"""Fail-open composition for the optional parallel decision capability."""
+
+from __future__ import annotations
+
+from time import perf_counter
+
+from mind_runtime.decision.contracts import DecisionRequest, DecisionResult
+from mind_runtime.decision.port import DecisionModelError, DecisionModelPort
+from mind_runtime.decision.telemetry import (
+    DecisionCallStatus,
+    DecisionTelemetrySink,
+    DecisionTrace,
+    NullDecisionTelemetry,
+)
+
+
+class DecisionCapability:
+    """One shared optional decision-model capability.
+
+    Absence or backend failure returns None. Callers must preserve their
+    original baseline path when this happens.
+    """
+
+    def __init__(
+        self,
+        backend: DecisionModelPort | None = None,
+        *,
+        telemetry: DecisionTelemetrySink | None = None,
+    ) -> None:
+        self._backend = backend
+        self._telemetry = telemetry or NullDecisionTelemetry()
+
+    @property
+    def available(self) -> bool:
+        return self._backend is not None
+
+    def evaluate(self, request: DecisionRequest) -> DecisionResult | None:
+        if not isinstance(request, DecisionRequest):
+            raise TypeError("request must be DecisionRequest")
+        started = perf_counter()
+        if self._backend is None:
+            self._telemetry.record(
+                DecisionTrace(
+                    feature=request.feature,
+                    projection_version=request.projection_version,
+                    request_fingerprint=request.fingerprint,
+                    status=DecisionCallStatus.ABSENT,
+                    backend=None,
+                    model_version=None,
+                    latency_ms=(perf_counter() - started) * 1000,
+                )
+            )
+            return None
+        try:
+            result = self._backend.evaluate(request)
+        except DecisionModelError as exc:
+            self._telemetry.record(
+                DecisionTrace(
+                    feature=request.feature,
+                    projection_version=request.projection_version,
+                    request_fingerprint=request.fingerprint,
+                    status=DecisionCallStatus.UNAVAILABLE,
+                    backend=self._backend.backend_name,
+                    model_version=None,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error_type=type(exc).__name__,
+                )
+            )
+            return None
+        self._telemetry.record(
+            DecisionTrace(
+                feature=request.feature,
+                projection_version=request.projection_version,
+                request_fingerprint=request.fingerprint,
+                status=DecisionCallStatus.SUCCESS,
+                backend=result.backend,
+                model_version=result.model_version,
+                latency_ms=(perf_counter() - started) * 1000,
+            )
+        )
+        return result
