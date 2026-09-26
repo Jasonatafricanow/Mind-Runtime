@@ -146,6 +146,37 @@ def _evidence_from_request(request: HostTurnRequest) -> Evidence:
     )
 
 
+def _body_semantics_from_request(
+    request: HostTurnRequest,
+    evidence: Evidence,
+) -> tuple[
+    tuple[SemanticEventCandidate, ...],
+    tuple[tuple[str, object], ...],
+]:
+    """Bind Body-owned proposals to MR-owned scope/runtime/evidence authority."""
+
+    semantic_candidates = tuple(
+        SemanticEventCandidate(
+            candidate_id=proposal.candidate_id,
+            scope=request.scope,
+            origin_runtime_id=request.runtime_id,
+            kind=proposal.kind,
+            attributes=proposal.attributes,
+            confidence=proposal.confidence,
+            evidence_refs=(evidence.id,),
+        )
+        for proposal in request.semantic_proposals
+    )
+    appraisal_proposals = tuple(
+        (
+            candidate_id,
+            replace(proposal, supporting_evidence_refs=(evidence.id,)),
+        )
+        for candidate_id, proposal in request.appraisal_proposals
+    )
+    return semantic_candidates, appraisal_proposals
+
+
 def _decision_context_ref(orchestrator: TurnOrchestrator) -> str | None:
     ctx = orchestrator.decision_context
     return ctx.context_id if ctx is not None else None
@@ -385,24 +416,9 @@ class MindRuntimeHostAdapter:
 
         interaction = _interaction_from_request(request)
         evidence = _evidence_from_request(request)
-        semantic_candidates = tuple(
-            SemanticEventCandidate(
-                candidate_id=proposal.candidate_id,
-                scope=request.scope,
-                origin_runtime_id=request.runtime_id,
-                kind=proposal.kind,
-                attributes=proposal.attributes,
-                confidence=proposal.confidence,
-                evidence_refs=(evidence.id,),
-            )
-            for proposal in request.semantic_proposals
-        )
-        appraisal_proposals = tuple(
-            (
-                candidate_id,
-                replace(proposal, supporting_evidence_refs=(evidence.id,)),
-            )
-            for candidate_id, proposal in request.appraisal_proposals
+        semantic_candidates, appraisal_proposals = _body_semantics_from_request(
+            request,
+            evidence,
         )
         try:
             self._orchestrator.begin_turn(
