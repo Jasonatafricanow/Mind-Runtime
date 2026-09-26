@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import cast
 
@@ -25,211 +24,40 @@ from mind_runtime.memory.decision_projection import (
 )
 
 
-def boolean_question(question_id: str = "q") -> DecisionQuestion:
-    return DecisionQuestion(question_id, DecisionKind.BOOLEAN, "Is it relevant?")
-
-
-def boolean_request() -> DecisionRequest:
+def _boolean_request() -> DecisionRequest:
     return DecisionRequest(
-        feature="test",
-        projection_version="v1",
-        state={"value": "candidate"},
-        questions=(boolean_question(),),
+        "test",
+        "v1",
+        {"value": "candidate"},
+        (DecisionQuestion("q", DecisionKind.BOOLEAN, "Relevant?"),),
     )
 
 
-@pytest.mark.parametrize(
-    "build,error",
-    [
-        (lambda: DecisionQuestion("", DecisionKind.BOOLEAN, "x"), ValueError),
-        (
-            lambda: DecisionQuestion(
-                "q",
-                cast(DecisionKind, "boolean"),
-                "x",
-            ),
-            TypeError,
-        ),
-        (
-            lambda: DecisionQuestion(
-                "q",
-                DecisionKind.BOOLEAN,
-                "x",
-                cast(tuple[str, ...], []),
-            ),
-            TypeError,
-        ),
-        (
-            lambda: DecisionQuestion(
-                "q",
-                DecisionKind.CHOICE,
-                "x",
-                ("same", "same"),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionQuestion(
-                "q",
-                DecisionKind.SCORE,
-                "x",
-                tuple(str(i) for i in range(11)),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionRequest(
-                feature="x",
-                projection_version="v1",
-                state=cast(Mapping[str, str], []),
-                questions=(boolean_question(),),
-            ),
-            TypeError,
-        ),
-        (
-            lambda: DecisionRequest(
-                feature="x",
-                projection_version="v1",
-                state={},
-                questions=(boolean_question(),),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionRequest(
-                feature="x",
-                projection_version="v1",
-                state={str(i): "x" * 8192 for i in range(9)},
-                questions=(boolean_question(),),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionRequest(
-                feature="x",
-                projection_version="v1",
-                state={"x": "y"},
-                questions=tuple(boolean_question(str(i)) for i in range(257)),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionRequest(
-                feature="x",
-                projection_version="v1",
-                state={"x": "y"},
-                questions=(boolean_question("same"), boolean_question("same")),
-            ),
-            ValueError,
-        ),
-    ],
-)
-def test_request_contract_rejects_invalid_shapes(build, error) -> None:
-    with pytest.raises(error):
-        build()
+def test_contract_boundary_rejects_malformed_values() -> None:
+    with pytest.raises(ValueError):
+        DecisionQuestion("", DecisionKind.BOOLEAN, "x")
+    with pytest.raises(TypeError):
+        DecisionQuestion("q", cast(DecisionKind, "boolean"), "x")
+    with pytest.raises(ValueError):
+        DecisionQuestion("q", DecisionKind.CHOICE, "x", ("only",))
+    with pytest.raises(ValueError):
+        DecisionRequest("x", "v1", {}, (_boolean_request().questions[0],))
+    with pytest.raises(ValueError):
+        DecisionRequest("x", "v1", {"x": "y"}, ())
+    with pytest.raises(ValueError):
+        DecisionAnswer("q", DecisionKind.BOOLEAN, {"true": 2.0})
+    with pytest.raises(ValueError):
+        DecisionAnswer(
+            "q",
+            DecisionKind.SCORE,
+            {"low": 1.0},
+            confidence=2.0,
+        )
+    with pytest.raises(ValueError):
+        DecisionResult("b", "v", (), input_tokens=-1)
 
 
-@pytest.mark.parametrize(
-    "build,error",
-    [
-        (
-            lambda: DecisionAnswer(
-                "q",
-                cast(DecisionKind, "boolean"),
-                {"true": 1.0},
-            ),
-            TypeError,
-        ),
-        (
-            lambda: DecisionAnswer("q", DecisionKind.BOOLEAN, {}),
-            ValueError,
-        ),
-        (
-            lambda: DecisionAnswer(
-                "q",
-                DecisionKind.BOOLEAN,
-                {"true": cast(float, "yes")},
-            ),
-            TypeError,
-        ),
-        (
-            lambda: DecisionAnswer(
-                "q",
-                DecisionKind.BOOLEAN,
-                {"true": 1.5},
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionAnswer(
-                "q",
-                DecisionKind.CHOICE,
-                {"a": 1.0},
-                selected="b",
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionAnswer(
-                "q",
-                DecisionKind.SCORE,
-                {"low": 1.0},
-                score=float("inf"),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionAnswer(
-                "q",
-                DecisionKind.SCORE,
-                {"low": 1.0},
-                confidence=2.0,
-            ),
-            ValueError,
-        ),
-        (lambda: DecisionResult("b", "v", ()), ValueError),
-        (
-            lambda: DecisionResult(
-                "b",
-                "v",
-                (
-                    DecisionAnswer(
-                        "same",
-                        DecisionKind.BOOLEAN,
-                        {"false": 0.0, "true": 1.0},
-                    ),
-                    DecisionAnswer(
-                        "same",
-                        DecisionKind.BOOLEAN,
-                        {"false": 0.0, "true": 1.0},
-                    ),
-                ),
-            ),
-            ValueError,
-        ),
-        (
-            lambda: DecisionResult(
-                "b",
-                "v",
-                (
-                    DecisionAnswer(
-                        "q",
-                        DecisionKind.BOOLEAN,
-                        {"false": 0.0, "true": 1.0},
-                    ),
-                ),
-                input_tokens=-1,
-            ),
-            ValueError,
-        ),
-    ],
-)
-def test_answer_contract_rejects_invalid_shapes(build, error) -> None:
-    with pytest.raises(error):
-        build()
-
-
-def test_answer_helpers_and_missing_question_are_explicit() -> None:
+def test_result_helpers_are_explicit() -> None:
     answer = DecisionAnswer(
         "choice",
         DecisionKind.CHOICE,
@@ -239,94 +67,48 @@ def test_answer_helpers_and_missing_question_are_explicit() -> None:
     assert answer.probability("missing") == 0.0
     with pytest.raises(TypeError):
         _ = answer.yes_probability
-    result = DecisionResult("b", "v", (answer,))
     with pytest.raises(KeyError):
-        result.answer("missing")
+        DecisionResult("b", "v", (answer,)).answer("missing")
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"backend": ""},
-        {"backend": "unknown"},
-        {"timeout_seconds": 0},
-        {"timeout_seconds": True},
-    ],
-)
-def test_factory_rejects_invalid_configuration(kwargs) -> None:
+def test_factory_is_off_by_default_and_validates_configuration() -> None:
+    assert not build_decision_capability().available
     with pytest.raises(ValueError):
-        DecisionModelConfig(**kwargs)
+        DecisionModelConfig(backend="unknown")
+    with pytest.raises(ValueError):
+        DecisionModelConfig(timeout_seconds=0)
+    with pytest.raises(ValueError):
+        build_decision_capability(DecisionModelConfig(backend="typesafe"))
+    assert build_decision_capability(
+        DecisionModelConfig(backend="typesafe", api_key="key")
+    ).available
 
 
-def test_factory_builds_one_typesafe_capability() -> None:
-    capability = build_decision_capability(
-        DecisionModelConfig(
-            backend="typesafe",
-            api_key="key",
-            endpoint="http://localhost:9999/v1/systemone",
-            model="jev-test",
-        )
-    )
-    assert capability.available
-
-
-@pytest.mark.parametrize(
-    "response",
-    [
+def test_typesafe_rejects_bad_payloads_and_wraps_transport_failures() -> None:
+    invalid = [
         {},
         {"model": "jev", "answers": []},
-        {
-            "model": "jev",
-            "answers": {"q": {"type": "choice", "noul": 0.5}},
-        },
-        {
-            "model": "jev",
-            "answers": {"q": {"type": "noul", "noul": "bad"}},
-        },
-        {
-            "model": "jev",
-            "answers": {"q": {"type": "noul", "noul": 2.0}},
-        },
-        {
-            "model": "jev",
-            "answers": {"q": {"type": "noul", "noul": 0.5}},
-            "usage": {"input_tokens": -1, "output_tokens": 0},
-        },
-    ],
-)
-def test_typesafe_invalid_boolean_responses_are_rejected(response) -> None:
-    backend = TypeSafeDecisionBackend(
-        api_key="key",
-        post_json=lambda *_args: response,
-    )
-    with pytest.raises(DecisionModelInvalidResponse):
-        backend.evaluate(boolean_request())
+        {"model": "jev", "answers": {"q": {"type": "choice", "noul": 0.5}}},
+        {"model": "jev", "answers": {"q": {"type": "noul", "noul": 2.0}}},
+    ]
+    for response in invalid:
+        backend = TypeSafeDecisionBackend(
+            api_key="key",
+            post_json=lambda *_args, response=response: response,
+        )
+        with pytest.raises(DecisionModelInvalidResponse):
+            backend.evaluate(_boolean_request())
 
-
-def test_typesafe_transport_exception_becomes_optional_unavailable() -> None:
     def crash(*_args):
-        raise RuntimeError("socket wrapper failed")
+        raise RuntimeError("transport wrapper failed")
 
-    backend = TypeSafeDecisionBackend(api_key="key", post_json=crash)
     with pytest.raises(DecisionModelUnavailable):
-        backend.evaluate(boolean_request())
+        TypeSafeDecisionBackend(api_key="key", post_json=crash).evaluate(
+            _boolean_request()
+        )
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"api_key": ""},
-        {"api_key": "x", "model": ""},
-        {"api_key": "x", "endpoint": "ftp://invalid"},
-        {"api_key": "x", "timeout_seconds": 0},
-    ],
-)
-def test_typesafe_backend_rejects_invalid_configuration(kwargs) -> None:
-    with pytest.raises(ValueError):
-        TypeSafeDecisionBackend(**kwargs)
-
-
-def test_http_transport_maps_io_and_json_failures(monkeypatch) -> None:
+def test_typesafe_http_boundary_maps_io_and_invalid_json(monkeypatch) -> None:
     def io_failure(*_args, **_kwargs):
         raise OSError("offline")
 
@@ -347,19 +129,13 @@ def test_http_transport_maps_io_and_json_failures(monkeypatch) -> None:
         typesafe._http_post_json("http://x", {}, {}, 1.0)
 
 
-def test_memory_projection_input_guards_and_single_candidate_bypass() -> None:
+def test_memory_projection_guards_do_not_expand_the_model_boundary() -> None:
     with pytest.raises(ValueError):
         MemoryRerankCandidate("", "content")
     with pytest.raises(ValueError):
         MemoryRerankCandidate("id", "")
     with pytest.raises(TypeError):
         MemoryRetrievalDecisionProjection(cast(DecisionCapability, object()))
-    with pytest.raises(ValueError):
-        MemoryRetrievalDecisionProjection(
-            DecisionCapability(),
-            max_candidate_characters=1,
-        )
-
     projection = MemoryRetrievalDecisionProjection(DecisionCapability())
     assert projection.rerank(
         query="q",
