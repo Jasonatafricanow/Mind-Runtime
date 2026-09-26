@@ -8,7 +8,7 @@ from mind_runtime.decision.contracts import (
     DecisionRequest,
     DecisionResult,
 )
-from mind_runtime.decision.port import (
+from mind_runtime.decision.factory import (\n    DecisionModelConfig,\n    build_decision_capability,\n)\nfrom mind_runtime.decision.port import (
     DecisionModelError,
     DecisionModelInvalidResponse,
     DecisionModelPort,
@@ -19,7 +19,7 @@ __all__ = [
     "DecisionAnswer",
     "DecisionCapability",
     "DecisionKind",
-    "DecisionModelError",
+    "DecisionModelConfig",\n    "DecisionModelError",
     "DecisionModelInvalidResponse",
     "DecisionModelPort",
     "DecisionModelUnavailable",
