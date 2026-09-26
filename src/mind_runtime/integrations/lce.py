@@ -510,6 +510,24 @@ class LceProjectionSession:
     def process_memory(self, memory_id: str) -> Any:
         return self._core.process(self._source.get_evidence(memory_id))
 
+    def process_memories(
+        self, memory_ids: tuple[str, ...]
+    ) -> tuple[Any, ...]:
+        materials = tuple(
+            self._source.get_evidence(memory_id)
+            for memory_id in dict.fromkeys(memory_ids)
+        )
+        ordered = tuple(
+            sorted(
+                materials,
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            )
+        )
+        return tuple(self._core.run_batch(ordered))
+
     def sync(self) -> tuple[Any, ...]:
         materials = self._source.list_current_valid_evidence()
         if not materials:
