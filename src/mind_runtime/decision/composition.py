@@ -54,6 +54,13 @@ def _record_safely(telemetry: DecisionTelemetrySink, trace: DecisionTrace) -> No
         return
 
 
+def _backend_name(backend: DecisionModelPort) -> str | None:
+    try:
+        return backend.backend_name
+    except Exception:
+        return None
+
+
 class DecisionCapability:
     """One shared optional decision-model capability.
 
@@ -79,7 +86,8 @@ class DecisionCapability:
             raise TypeError("request must be DecisionRequest")
         started = perf_counter()
         if self._backend is None:
-            _record_safely(self._telemetry, 
+            _record_safely(
+                self._telemetry,
                 DecisionTrace(
                     feature=request.feature,
                     projection_version=request.projection_version,
@@ -88,27 +96,48 @@ class DecisionCapability:
                     backend=None,
                     model_version=None,
                     latency_ms=(perf_counter() - started) * 1000,
-                )
+                ),
             )
             return None
+
         try:
             result = self._backend.evaluate(request)
             _validate_result(request, result)
         except DecisionModelError as exc:
-            _record_safely(self._telemetry, 
+            _record_safely(
+                self._telemetry,
                 DecisionTrace(
                     feature=request.feature,
                     projection_version=request.projection_version,
                     request_fingerprint=request.fingerprint,
                     status=DecisionCallStatus.UNAVAILABLE,
-                    backend=self._backend.backend_name,
+                    backend=_backend_name(self._backend),
                     model_version=None,
                     latency_ms=(perf_counter() - started) * 1000,
                     error_type=type(exc).__name__,
-                )
+                ),
             )
             return None
-        _record_safely(self._telemetry, 
+        except Exception as exc:
+            # A buggy or unexpectedly failing optimization backend is still an
+            # optional capability. The core caller keeps its baseline path.
+            _record_safely(
+                self._telemetry,
+                DecisionTrace(
+                    feature=request.feature,
+                    projection_version=request.projection_version,
+                    request_fingerprint=request.fingerprint,
+                    status=DecisionCallStatus.UNAVAILABLE,
+                    backend=_backend_name(self._backend),
+                    model_version=None,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error_type=type(exc).__name__,
+                ),
+            )
+            return None
+
+        _record_safely(
+            self._telemetry,
             DecisionTrace(
                 feature=request.feature,
                 projection_version=request.projection_version,
@@ -117,6 +146,6 @@ class DecisionCapability:
                 backend=result.backend,
                 model_version=result.model_version,
                 latency_ms=(perf_counter() - started) * 1000,
-            )
+            ),
         )
         return result
