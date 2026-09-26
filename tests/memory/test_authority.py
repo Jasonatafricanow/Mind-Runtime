@@ -11,12 +11,13 @@ def test_canonical_memory_write_seams_have_no_unowned_production_references():
     calls, so aliases/getattr do not trivially evade the guard.
     """
     root = Path(__file__).resolve().parents[2] / "src" / "mind_runtime"
+    # These names are Memory-specific capability seams. Generic private names
+    # such as _commit/_insert are deliberately excluded: matching them across
+    # unrelated stores would test spelling, not Memory authority.
     write_seams = {
         "_register_job",
         "_freeze_job",
         "_complete_job",
-        "_commit",
-        "_insert",
     }
     allowed = {
         "memory/store.py",
