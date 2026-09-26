@@ -49,6 +49,7 @@ from mind_runtime.contracts import (
     IntentStatus,
     Interaction,
     InteractionStatus,
+    SemanticEventCandidate,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -384,8 +385,31 @@ class MindRuntimeHostAdapter:
 
         interaction = _interaction_from_request(request)
         evidence = _evidence_from_request(request)
+        semantic_candidates = tuple(
+            SemanticEventCandidate(
+                candidate_id=proposal.candidate_id,
+                scope=request.scope,
+                origin_runtime_id=request.runtime_id,
+                kind=proposal.kind,
+                attributes=proposal.attributes,
+                confidence=proposal.confidence,
+                evidence_refs=(evidence.id,),
+            )
+            for proposal in request.semantic_proposals
+        )
+        appraisal_proposals = tuple(
+            (
+                candidate_id,
+                replace(proposal, supporting_evidence_refs=(evidence.id,)),
+            )
+            for candidate_id, proposal in request.appraisal_proposals
+        )
         try:
-            self._orchestrator.begin_turn(interaction)
+            self._orchestrator.begin_turn(
+                interaction,
+                semantic_candidates=semantic_candidates,
+                appraisal_proposals=appraisal_proposals,
+            )
             ingest_outcome = self._orchestrator.ingest(evidence)
             if ingest_outcome is None and evidence.id not in (
                 ev.id for ev in self._orchestrator.observations
