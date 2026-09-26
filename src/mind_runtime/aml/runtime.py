@@ -433,9 +433,25 @@ class AmlMemoryRuntime:
                         and self._thread_semantics is not None
                     ):
                         try:
+                            active_threads = tuple(
+                                " :: ".join(
+                                    part
+                                    for part in (
+                                        thread.open_question,
+                                        thread.working_summary,
+                                    )
+                                    if part
+                                )
+                                for thread in product.list_threads(
+                                    user.scope,
+                                    status=ThreadStatus.OPEN,
+                                    include_suppressed=False,
+                                )
+                            )
                             semantic = self._thread_semantics.analyze(
                                 message=message,
                                 context=tuple(visible),
+                                active_threads=active_threads,
                             )
                         except Exception:
                             semantic = None
