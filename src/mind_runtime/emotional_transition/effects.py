@@ -110,7 +110,7 @@ class MappedEffects:
     abstention_reasons: tuple[str, ...] = ()
 
 
-_BODY_FACTOR_MAX_DELTA = 0.20
+_BODY_FACTOR_MAX_STEP_FRACTION = 0.20
 
 
 def _body_factor_drive(
@@ -304,10 +304,17 @@ class AppraisalProjector:
             assert owner is not None
             allowed = set(owner.dimension_keys())
             for effect in result.effects:
+                profile = owner.for_dimension(effect.dimension)
+                max_step = (
+                    (profile.ceiling - profile.floor) * _BODY_FACTOR_MAX_STEP_FRACTION
+                    if profile is not None
+                    else -1.0
+                )
                 if (
                     effect.dimension not in allowed
                     or effect.operation != "delta"
-                    or abs(effect.amount) > _BODY_FACTOR_MAX_DELTA
+                    or max_step < 0
+                    or abs(effect.amount) > max_step + 1e-12
                     or effect.target_domain != StateDomain.AGENT.value
                     or effect.target_scope != acceptance.projection_scope
                 ):
@@ -554,7 +561,6 @@ class AppraisalProjector:
             acceptance.candidate.confidence,
             appraisal.confidence,
         )
-        gain = _BODY_FACTOR_MAX_DELTA * appraisal.salience * certainty
         impulses: list[Impulse] = []
         confidences: list[tuple[str, float]] = []
         salience_by_source: dict[str, float | None] = {}
@@ -564,10 +570,10 @@ class AppraisalProjector:
             drive = _body_factor_drive(profile.dimension, factors)
             if drive is None or abs(drive) <= 1e-12:
                 continue
-            amount = max(
-                -_BODY_FACTOR_MAX_DELTA,
-                min(_BODY_FACTOR_MAX_DELTA, gain * drive),
-            )
+            dimension_span = profile.ceiling - profile.floor
+            max_step = dimension_span * _BODY_FACTOR_MAX_STEP_FRACTION
+            gain = max_step * appraisal.salience * certainty
+            amount = max(-max_step, min(max_step, gain * drive))
             source = f"appraisal:{appraisal.appraisal_id}:{profile.dimension}"
             impulses.append(Impulse(profile.dimension, amount, source))
             confidences.append((source, appraisal.confidence))
