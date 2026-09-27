@@ -8,6 +8,7 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     SemanticAppraisalContext,
+    encode_body_factor_attributes,
     SemanticEventCandidate,
     Situation,
     StateDefinition,
@@ -75,7 +76,7 @@ def _acceptance(
         scope=USER_SCOPE,
         origin_runtime_id="runtime-1",
         kind="__body_semantic__",
-        attributes=attributes,
+        attributes=encode_body_factor_attributes(factors) + attributes,
         confidence=0.9,
         evidence_refs=("ev-1",),
     )
