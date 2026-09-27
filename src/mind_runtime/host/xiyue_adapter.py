@@ -7,15 +7,16 @@ DynamicsEngine, Memory admission). It speaks only the public
 
 Responsibilities (HI-2 §1):
   * map a Hermes message/session to a HostTurnRequest
-  * call begin_turn synchronously BEFORE the Hermes LLM invocation
-  * render HostTurnResult.bounded_context into a prompt-safe block
+  * expose the previous bounded MR context before the Hermes LLM invocation
+  * consume the current Body semantic sidecar after that same LLM inference
   * call commit_turn after the Hermes delivery-success boundary
   * call abort_turn on the terminal-failure path
   * fail soft: any MR failure must never block the Hermes reply
 
 Hard rules:
   * MR_ENABLED=false → the adapter is inert (seam restores legacy behavior)
-  * Hermes never supplies appraisal/affect/memory authority
+  * Hermes may supply non-authoritative semantic/appraisal proposals, never
+    affect deltas, final state, memory authority, or policy authority
   * stable interaction_id from Hermes identity (same message → same id)
 """
 
