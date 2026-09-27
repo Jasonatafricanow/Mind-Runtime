@@ -169,9 +169,10 @@ The first receiver-side draft incorrectly made event-shaped semantic proposals p
 HostTurnRequest. That ingress coupling has been removed. The Host now has a two-phase
 lifecycle inside one MR turn: prepare/ingest before the one normal Body inference,
 then same-inference sidecar submission before the single MR resolution pass. The
-branch stays draft because the real Body provider has not yet proven native sidecar
-emission and the general affect projection still lacks an open-appraisal algorithm
-beyond legacy event_kind -> base_amount compatibility recipes.
+branch stays draft because live provider evidence has not yet certified the
+same-inference sidecar contract and the general affect projection still lacks an
+open-appraisal algorithm beyond legacy event_kind -> base_amount compatibility
+recipes.
 
 Relevant evidence:
 
