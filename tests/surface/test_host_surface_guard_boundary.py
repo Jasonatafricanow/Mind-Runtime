@@ -86,12 +86,12 @@ def test_host_prose_guard_fails_closed_on_port_exception(monkeypatch):
 
 def test_host_does_not_start_failed_turn(monkeypatch):
     port = FakePort()
-    original = port.begin_turn
+    original = port.prepare_turn
 
     def failed(request):
         return replace(original(request), status=HostTurnStatus.FAILED)
 
-    port.begin_turn = failed
+    port.prepare_turn = failed
     monkeypatch.setenv("MR_ENABLED", "true")
     adapter = XiyueMRAdapter(port)
     assert adapter.begin_turn(message="hello", channel="chat", session_id="s") is None
