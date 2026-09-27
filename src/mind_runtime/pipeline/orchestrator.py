@@ -951,7 +951,20 @@ class TurnOrchestrator:
             assert frame.valence is not None
             assert frame.relationship_relevance is not None
             assert frame.appraisal_confidence is not None
-            selected_refs = frame.supporting_evidence_refs or turn.evidence_refs
+            evidence_handles = {
+                f"o{index}": evidence_ref
+                for index, evidence_ref in enumerate(turn.evidence_refs)
+            }
+            if frame.supporting_evidence_handles:
+                try:
+                    selected_refs = tuple(
+                        evidence_handles[handle]
+                        for handle in frame.supporting_evidence_handles
+                    )
+                except KeyError as exc:
+                    raise ValueError("unknown Body evidence handle") from exc
+            else:
+                selected_refs = turn.evidence_refs
             proposals.append(
                 (
                     hint.candidate_id,
