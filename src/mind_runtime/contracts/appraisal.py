@@ -57,6 +57,69 @@ class AmbiguityAssessment:
 
 
 @dataclass(frozen=True, slots=True)
+class BodySemanticFrame:
+    """Open semantic sidecar item from the Body's normal inference.
+
+    This is not an event taxonomy. Meanings stay open text; factors are sparse
+    bounded appraisal causes. Missing factors mean "not asserted", never zero.
+    The Body cannot supply affect deltas, final affect values, state dimensions,
+    policy outcomes, or authority fields. event_hint is legacy metadata only.
+    """
+
+    frame_id: str
+    meanings: tuple[str, ...]
+    confidence: float
+    valence: str
+    salience: float | None
+    appraisal_confidence: float
+    factors: tuple[tuple[str, float], ...] = ()
+    supporting_evidence_refs: tuple[str, ...] = ()
+    event_hint: str | None = None
+    attributes: tuple[tuple[str, str], ...] = ()
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.frame_id, "frame_id")
+        if self.schema_version != 1:
+            raise ValueError("unsupported Body semantic schema_version")
+        if not self.meanings:
+            raise ValueError("meanings must not be empty")
+        for meaning in self.meanings:
+            require_non_empty(meaning, "meanings entries")
+        if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
+            raise ValueError("confidence must be in [0, 1]")
+        require_non_empty(self.valence, "valence")
+        if self.salience is not None and (
+            isinstance(self.salience, bool) or not 0 <= self.salience <= 1
+        ):
+            raise ValueError("salience must be in [0, 1] or None")
+        if (
+            isinstance(self.appraisal_confidence, bool)
+            or not 0 <= self.appraisal_confidence <= 1
+        ):
+            raise ValueError("appraisal_confidence must be in [0, 1]")
+        seen_factors: set[str] = set()
+        for name, value in self.factors:
+            require_non_empty(name, "factor names")
+            if name in seen_factors:
+                raise ValueError("factor names must be unique")
+            seen_factors.add(name)
+            if isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValueError("factor values must be in [0, 1]")
+        for ref in self.supporting_evidence_refs:
+            require_non_empty(ref, "supporting_evidence_refs entries")
+        if self.event_hint is not None:
+            require_non_empty(self.event_hint, "event_hint")
+        seen_attrs: set[str] = set()
+        for key, value in self.attributes:
+            require_non_empty(key, "attribute keys")
+            require_non_empty(value, "attribute values")
+            if key in seen_attrs:
+                raise ValueError("attribute keys must be unique")
+            seen_attrs.add(key)
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticAppraisal:
     """Semantic interpretation only; never carries final affect numbers.
 
