@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
+from mind_runtime.contracts import BodySemanticSidecar, Scope, ScopeDomain, WakeSignal
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
