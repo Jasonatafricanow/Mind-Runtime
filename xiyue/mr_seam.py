@@ -890,6 +890,8 @@ def body_semantic_prompt_contract() -> str:
         "meaning_confidence [0,1], optional salience [0,1], optional "
         "appraisal_confidence [0,1], optional valence, optional "
         "relationship_relevance, and supporting_evidence_handles. "
+        "Use turn-local evidence handles only; o0 denotes the current user message. "
+        "Never invent or copy canonical Evidence IDs. "
         "Do NOT emit affect deltas, final affect values, state-transition amounts, "
         "Intent, Policy, or authority claims. typed_event_hint must be omitted unless "
         "the Host explicitly supplied a recognized typed-event vocabulary; no such "
