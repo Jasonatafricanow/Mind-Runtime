@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,10 +41,11 @@ if TYPE_CHECKING:
     from lce.contracts.external_memory import MemoryItemView
     from lce.core.engine import LceCore
     from lce.core.projection import LceProjectionCore
-    from lce.reference_memory.contracts import RawEvidence
+    from lce.reference_memory.contracts import RawEvidence, SemanticBlock
     from lce.semantic.contracts import SemanticDecisionProvider
     from lce.store.sqlite_store import SqliteBaselineStore
     from lce.structure.contracts import StructureConfig
+    from lce.structure.frontier import FrontierDiscoveryConfig
 
 MAX_SELECTED_MEMORIES = 100
 MAX_TEMPORAL_OBSERVATIONS_PER_MEMORY = 32
@@ -842,6 +843,11 @@ def open_lce_projection_binding(
     interpreter: BoundedInterpreter | None = None,
     policy: PromotionPolicy | None = None,
     structure_config: StructureConfig | None = None,
+    frontier_config: FrontierDiscoveryConfig | None = None,
+    block_embedder: Callable[
+        [SemanticBlock], tuple[float, ...]
+    ] | None = None,
+    block_embedding_version: str = "lce-vector-v1",
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
 ) -> LceProjectionSession | None:
@@ -888,7 +894,10 @@ def open_lce_projection_binding(
             provider=semantic_provider,
             policy=policy,
             structure_config=structure_config,
+            frontier_config=frontier_config,
             interpreter=interpreter,
+            block_embedder=block_embedder,
+            block_embedding_version=block_embedding_version,
             close_memory=True,
         )
     except BaseException:
