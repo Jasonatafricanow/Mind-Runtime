@@ -8,6 +8,7 @@ from typing import cast
 
 from mind_runtime.contracts.appraisal import (
     AppraisalModelProposal,
+    decode_body_factor_attributes,
     SemanticAppraisal,
     SemanticAppraisalContext,
     SemanticAppraisalModelPort,
@@ -269,6 +270,14 @@ class SemanticAppraisalProducer:
         if not isinstance(proposal, AppraisalModelProposal):
             return (default_failure, False)
 
+        if candidate.kind == "__body_semantic__":
+            try:
+                encoded_factors = decode_body_factor_attributes(candidate.attributes)
+            except ValueError:
+                return (default_failure, False)
+            if encoded_factors != proposal.factors:
+                return (default_failure, False)
+
         if not proposal.meanings or any(not m.strip() for m in proposal.meanings):
             return (default_failure, False)
 
@@ -340,7 +349,6 @@ class SemanticAppraisalProducer:
                 confidence=proposal.appraisal_confidence,
                 evidence_refs=evidence_refs,
                 salience=proposal.salience,
-                factors=proposal.factors,
             ),
             True,
         )
