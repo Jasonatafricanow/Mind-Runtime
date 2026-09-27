@@ -365,6 +365,51 @@ def render_bounded(bounded) -> str | None:
         return None
 
 
+def _ensure_agent_tracking(agent: Any = None) -> None:
+    """Install assistant-message tracking before the single Body inference."""
+
+    if agent is None:
+        return
+    try:
+        session_db = getattr(agent, "_session_db", None)
+        if session_db is None:
+            return
+        session_db._mr_current_assistant_msg_id = None
+        if getattr(session_db, "_mr_tracked", False):
+            return
+        original_append = session_db.append_message
+
+        def _tracking_append(*args, **kwargs):
+            row_id = original_append(*args, **kwargs)
+            role = kwargs.get("role")
+            if role is None and len(args) >= 2:
+                role = args[1]
+            if role == "assistant":
+                session_db._mr_current_assistant_msg_id = row_id
+            return row_id
+
+        session_db.append_message = _tracking_append
+        session_db._mr_tracked = True
+    except Exception as exc:
+        _logger.debug("Failed to wrap session_db.append_message (fail-soft): %s", exc)
+
+
+def prepare_single_pass_prompt(agent: Any = None) -> str:
+    """Return prior MR context plus the one-inference semantic sidecar contract."""
+
+    _ensure_agent_tracking(agent)
+    parts: list[str] = []
+    adapter = get_mr_adapter()
+    if adapter is not None and hasattr(adapter, "previous_bounded_context"):
+        previous = adapter.previous_bounded_context()
+        if previous is not None:
+            rendered = render_bounded(previous)
+            if rendered:
+                parts.append(rendered)
+    parts.append(single_pass_semantic_instruction())
+    return "\n\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Gateway Runtime Epoch & Readiness Contracts
 # ---------------------------------------------------------------------------
@@ -846,28 +891,7 @@ def begin_turn_clean(
             error_message="Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
         )
 
-    # Wrap agent._session_db.append_message if available to capture exact assistant message id
-    if agent is not None:
-        try:
-            session_db = getattr(agent, "_session_db", None)
-            if session_db is not None:
-                session_db._mr_current_assistant_msg_id = None
-                if not getattr(session_db, "_mr_tracked", False):
-                    _orig_append = session_db.append_message
-
-                    def _tracking_append(*args, **kwargs):
-                        row_id = _orig_append(*args, **kwargs)
-                        role = kwargs.get("role")
-                        if role is None and len(args) >= 2:
-                            role = args[1]
-                        if role == "assistant":
-                            session_db._mr_current_assistant_msg_id = row_id
-                        return row_id
-
-                    session_db.append_message = _tracking_append
-                    session_db._mr_tracked = True
-        except Exception as _wrap_exc:
-            _logger.debug("Failed to wrap session_db.append_message (fail-soft): %s", _wrap_exc)
+    _ensure_agent_tracking(agent)
 
     clean_msg = _strip_host_system_note(message)
     try:
