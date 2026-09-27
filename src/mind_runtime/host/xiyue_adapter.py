@@ -169,8 +169,14 @@ class XiyueMRAdapter:
         self._user_id = user_id
         self._persona_id = persona_id
         self._scope = Scope(domain=ScopeDomain.USER, user_id=user_id)
+        self._last_bounded_context: object | None = None
 
     # ---- begin -----------------------------------------------------------
+
+    def previous_bounded_context(self) -> object | None:
+        """Return the last committed/processed bounded context for next-turn prompting."""
+
+        return self._last_bounded_context
 
     def begin_turn(
         self,
@@ -212,6 +218,8 @@ class XiyueMRAdapter:
                 _logger.warning("MR begin_turn FAILED: %s", result.reason_codes)
                 return None
             bounded = result.bounded_context
+            if bounded is not None:
+                self._last_bounded_context = bounded
             _mr_thread_trace("BEGIN_TURN_RETURN", self, interaction_id=result.interaction_id)
             return MrTurnHandle(
                 interaction_id=result.interaction_id,
