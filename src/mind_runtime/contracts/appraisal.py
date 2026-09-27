@@ -96,7 +96,7 @@ class SemanticAppraisal:
 
 @dataclass(frozen=True, slots=True)
 class SemanticEventProposal:
-    """Body-owned semantic proposal before MR binds system authority fields."""
+    """Optional typed-event hint for compatibility with mapped event recipes.\n\n    This is NOT the primary Body semantic protocol. Natural-language meaning\n    must not be forced into a finite event taxonomy merely to enter MR.\n    Hosts may omit this hint entirely when no stable typed event applies.\n    """
 
     candidate_id: str
     kind: str
@@ -116,6 +116,75 @@ class SemanticEventProposal:
         if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be in [0, 1]")
 
+
+@dataclass(frozen=True, slots=True)
+class BodySemanticFrame:
+    """One open semantic interpretation produced by the Body in its normal turn.
+
+    meanings is the primary payload and remains open-ended natural-language
+    semantics. Numeric values here describe uncertainty/importance only; they
+    are never affect deltas or final state values. typed_event_hint is
+    optional compatibility metadata for an existing deterministic event recipe.
+    """
+
+    frame_id: str
+    meanings: tuple[str, ...]
+    meaning_confidence: float
+    salience: float | None = None
+    valence: str | None = None
+    relationship_relevance: str | None = None
+    supporting_evidence_refs: tuple[str, ...] = ()
+    typed_event_hint: SemanticEventProposal | None = None
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.frame_id, "frame_id")
+        if not self.meanings:
+            raise ValueError("meanings must not be empty")
+        for meaning in self.meanings:
+            require_non_empty(meaning, "meanings entries")
+        if (
+            isinstance(self.meaning_confidence, bool)
+            or not 0 <= self.meaning_confidence <= 1
+        ):
+            raise ValueError("meaning_confidence must be in [0, 1]")
+        if self.salience is not None and (
+            isinstance(self.salience, bool) or not 0 <= self.salience <= 1
+        ):
+            raise ValueError("salience must be in [0, 1] or None")
+        if self.valence is not None:
+            require_non_empty(self.valence, "valence")
+        if self.relationship_relevance is not None:
+            require_non_empty(self.relationship_relevance, "relationship_relevance")
+        for ref in self.supporting_evidence_refs:
+            require_non_empty(ref, "supporting_evidence_refs entries")
+        if self.typed_event_hint is not None and not isinstance(
+            self.typed_event_hint, SemanticEventProposal
+        ):
+            raise ValueError("typed_event_hint must be SemanticEventProposal or None")
+
+
+@dataclass(frozen=True, slots=True)
+class BodySemanticSidecar:
+    """Structured semantic by-product of one normal Body model invocation.
+
+    The Host obtains this sidecar from the SAME Body inference that produces the
+    user-visible response. MR must never require a second online model call just
+    to obtain it. Empty frames is valid for turns with no material semantic update.
+    """
+
+    schema_version: int
+    frames: tuple[BodySemanticFrame, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.schema_version, bool) or self.schema_version != 1:
+            raise ValueError("unsupported Body semantic sidecar schema_version")
+        seen: set[str] = set()
+        for frame in self.frames:
+            if not isinstance(frame, BodySemanticFrame):
+                raise ValueError("frames must contain BodySemanticFrame")
+            if frame.frame_id in seen:
+                raise ValueError("Body semantic frame ids must be unique")
+            seen.add(frame.frame_id)
 
 @dataclass(frozen=True, slots=True)
 class SemanticEventCandidate:
