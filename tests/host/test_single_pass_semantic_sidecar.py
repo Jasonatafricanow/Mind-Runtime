@@ -93,7 +93,7 @@ def test_missing_or_invalid_sidecar_fails_soft_without_extra_processing() -> Non
         )
     }
     visible, frames = seam.extract_single_pass_semantics(broken)
-    assert visible == broken["final_response"]
+    assert visible == "Plain response."
     assert frames == ()
 
 
