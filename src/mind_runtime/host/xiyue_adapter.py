@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from mind_runtime.contracts import (
     AppraisalModelProposal,
+    BodySemanticFrame,
     Scope,
     ScopeDomain,
     SemanticEventProposal,
@@ -179,6 +180,7 @@ class XiyueMRAdapter:
         session_id: str,
         message_id: str = "",
         occurred_at: datetime | None = None,
+        body_semantic_frames: tuple[BodySemanticFrame, ...] = (),
         semantic_proposals: tuple[SemanticEventProposal, ...] = (),
         appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
     ) -> MrTurnHandle | None:
@@ -201,6 +203,7 @@ class XiyueMRAdapter:
                 channel=channel,
                 session_id=session_id,
                 host_metadata=(("persona_id", self._persona_id or ""),),
+                body_semantic_frames=body_semantic_frames,
                 semantic_proposals=semantic_proposals,
                 appraisal_proposals=appraisal_proposals,
             )
