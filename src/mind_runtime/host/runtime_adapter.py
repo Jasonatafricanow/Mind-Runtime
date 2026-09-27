@@ -33,7 +33,7 @@ Hard rules:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,7 +42,6 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
-    AppraisalModelProposal,
     Authority,
     AuthorityLevel,
     Evidence,
@@ -50,7 +49,6 @@ from mind_runtime.contracts import (
     IntentStatus,
     Interaction,
     InteractionStatus,
-    SemanticEventCandidate,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -145,41 +143,6 @@ def _evidence_from_request(request: HostTurnRequest) -> Evidence:
         payload={"text": request.user_message},
         sync=sync,
     )
-
-
-def _body_semantics_from_request(
-    request: HostTurnRequest,
-    evidence: Evidence,
-) -> tuple[
-    tuple[SemanticEventCandidate, ...],
-    tuple[tuple[str, AppraisalModelProposal], ...],
-]:
-    """Bind Body-owned proposals to MR-owned scope/runtime/evidence authority."""
-
-    semantic_candidates = tuple(
-        SemanticEventCandidate(
-            candidate_id=proposal.candidate_id,
-            scope=request.scope,
-            origin_runtime_id=request.runtime_id,
-            kind=proposal.kind,
-            attributes=proposal.attributes,
-            confidence=proposal.confidence,
-            evidence_refs=(evidence.id,),
-        )
-        for proposal in request.semantic_proposals
-    )
-    appraisal_proposals = tuple(
-        (
-            candidate_id,
-            (
-                proposal
-                if proposal.supporting_evidence_refs
-                else replace(proposal, supporting_evidence_refs=(evidence.id,))
-            ),
-        )
-        for candidate_id, proposal in request.appraisal_proposals
-    )
-    return semantic_candidates, appraisal_proposals
 
 
 def _decision_context_ref(orchestrator: TurnOrchestrator) -> str | None:
@@ -421,16 +384,8 @@ class MindRuntimeHostAdapter:
 
         interaction = _interaction_from_request(request)
         evidence = _evidence_from_request(request)
-        semantic_candidates, appraisal_proposals = _body_semantics_from_request(
-            request,
-            evidence,
-        )
         try:
-            self._orchestrator.begin_turn(
-                interaction,
-                semantic_candidates=semantic_candidates,
-                appraisal_proposals=appraisal_proposals,
-            )
+            self._orchestrator.begin_turn(interaction)
             ingest_outcome = self._orchestrator.ingest(evidence)
             if ingest_outcome is None and evidence.id not in (
                 ev.id for ev in self._orchestrator.observations
