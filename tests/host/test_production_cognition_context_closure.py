@@ -94,6 +94,10 @@ def test_production_composition_consumes_persisted_slow_state_in_host_context(
         occurred_at=datetime(2026, 9, 9, 8, 1, tzinfo=UTC),
     )
     assert handle is not None
+    assert adapter.submit_semantic_sidecar(
+        handle,
+        BodySemanticSidecar(schema_version=1, frames=()),
+    )
 
     context = orchestrator.decision_context
     assert context is not None
