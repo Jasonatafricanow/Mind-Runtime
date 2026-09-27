@@ -46,6 +46,9 @@ def test_typed_event_is_optional_compatibility_hint() -> None:
         frame_id="frame-1",
         meanings=("The arrangement is now concrete.",),
         meaning_confidence=0.9,
+        valence="positive",
+        relationship_relevance="relevant",
+        appraisal_confidence=0.87,
         typed_event_hint=hint,
     )
     assert frame.typed_event_hint == hint
@@ -82,3 +85,18 @@ def test_sidecar_numeric_fields_are_importance_uncertainty_not_affect_delta() ->
         )
 
 
+
+def test_typed_event_hint_requires_explicit_compatibility_appraisal() -> None:
+    hint = SemanticEventProposal(
+        candidate_id="hint-1",
+        kind="plan_confirmed",
+        attributes=(),
+        confidence=0.88,
+    )
+    with pytest.raises(ValueError, match="typed_event_hint requires"):
+        BodySemanticFrame(
+            frame_id="frame-1",
+            meanings=("The arrangement is now concrete.",),
+            meaning_confidence=0.9,
+            typed_event_hint=hint,
+        )
