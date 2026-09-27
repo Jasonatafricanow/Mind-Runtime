@@ -34,7 +34,11 @@ from datetime import datetime
 from enum import StrEnum
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
-from mind_runtime.contracts.appraisal import AppraisalModelProposal, SemanticEventProposal
+from mind_runtime.contracts.appraisal import (
+    AppraisalModelProposal,
+    BodySemanticFrame,
+    SemanticEventProposal,
+)
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
 
@@ -90,7 +94,8 @@ class HostTurnRequest:
     Fields are deliberately narrow. A Host cannot supply:
       * numeric affect deltas
       * final affect values
-      * shock / salience / urgency / timescale
+      * authoritative affect deltas or final affect values
+      * authoritative shock / salience / urgency / timescale
       * persona mutation
       * memory authority results
       * authoritative appraisal results
@@ -104,6 +109,7 @@ class HostTurnRequest:
     channel: str = "default"
     session_id: str | None = None
     host_metadata: tuple[tuple[str, str], ...] = ()
+    body_semantic_frames: tuple[BodySemanticFrame, ...] = ()
     semantic_proposals: tuple[SemanticEventProposal, ...] = ()
     appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
 
@@ -117,6 +123,17 @@ class HostTurnRequest:
         # session_id may be None (some Hosts do not have a session concept)
         if self.session_id is not None:
             require_non_empty(self.session_id, "session_id")
+        frame_ids: list[str] = []
+        for frame in self.body_semantic_frames:
+            if not isinstance(frame, BodySemanticFrame):
+                raise ValueError("body_semantic_frames must contain BodySemanticFrame")
+            frame_ids.append(frame.frame_id)
+        if len(set(frame_ids)) != len(frame_ids):
+            raise ValueError("Body semantic frame ids must be unique")
+        if self.body_semantic_frames and (self.semantic_proposals or self.appraisal_proposals):
+            raise ValueError(
+                "Body semantic frames cannot be mixed with legacy semantic/appraisal proposals"
+            )
         semantic_ids: list[str] = []
         for semantic_proposal in self.semantic_proposals:
             if not isinstance(semantic_proposal, SemanticEventProposal):
