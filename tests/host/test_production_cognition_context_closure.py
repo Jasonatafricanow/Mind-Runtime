@@ -134,6 +134,10 @@ def test_production_composition_consumes_persisted_slow_state_in_host_context(
         occurred_at=datetime(2026, 9, 9, 8, 2, tzinfo=UTC),
     )
     assert restarted_handle is not None
+    assert restarted_adapter.submit_semantic_sidecar(
+        restarted_handle,
+        BodySemanticSidecar(schema_version=1, frames=()),
+    )
     restarted_context = restarted_orchestrator.decision_context
     assert restarted_context is not None
     assert any(
