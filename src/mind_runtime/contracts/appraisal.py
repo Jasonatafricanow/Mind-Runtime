@@ -7,7 +7,6 @@ from typing import Protocol, runtime_checkable
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.scope import Scope
 
-
 BODY_FACTOR_ATTRIBUTE_PREFIX = "__body_factor__:"
 BODY_EVENT_HINT_ATTRIBUTE = "__event_hint__"
 BODY_VALENCE_VALUES = frozenset({"positive", "negative", "neutral", "mixed"})
