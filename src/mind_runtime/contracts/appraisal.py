@@ -139,6 +139,7 @@ class SemanticAppraisal:
     confidence: float
     evidence_refs: tuple[str, ...]
     salience: float | None = None
+    factors: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         require_non_empty(self.appraisal_id, "appraisal_id")
@@ -155,6 +156,14 @@ class SemanticAppraisal:
         if self.salience is not None:
             if isinstance(self.salience, bool) or not 0 <= self.salience <= 1:
                 raise ValueError("salience must be in [0, 1]")
+        seen_factors: set[str] = set()
+        for name, value in self.factors:
+            require_non_empty(name, "factor names")
+            if name in seen_factors:
+                raise ValueError("factor names must be unique")
+            seen_factors.add(name)
+            if isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValueError("factor values must be in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +267,7 @@ class AppraisalModelProposal:
     salience: float | None
     appraisal_confidence: float
     supporting_evidence_refs: tuple[str, ...]
+    factors: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.meanings:
@@ -276,6 +286,14 @@ class AppraisalModelProposal:
             raise ValueError("appraisal_confidence must be in [0, 1]")
         for ref in self.supporting_evidence_refs:
             require_non_empty(ref, "supporting_evidence_refs entries")
+        seen_factors: set[str] = set()
+        for name, value in self.factors:
+            require_non_empty(name, "factor names")
+            if name in seen_factors:
+                raise ValueError("factor names must be unique")
+            seen_factors.add(name)
+            if isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValueError("factor values must be in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
