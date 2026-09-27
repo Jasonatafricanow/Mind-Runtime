@@ -65,6 +65,42 @@ def _rewrite_current(source: str, repo_root: Path, hermes_site_packages: Path) -
         r"r'C:\projects\mind-runtime-main-merge\xiyue'",
         _literal(repo_root / "xiyue"),
     )
+
+    # Upgrade an already-patched Hermes seam to the single-inference semantic
+    # sidecar lifecycle. The Body still performs exactly one run_conversation()
+    # call; the transform hook strips machine metadata before persistence.
+    old_fake_sidecar = """                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
+                    # Resolve the SAME MR turn from semantic metadata emitted by
+                    # this same Body inference. No second model/provider call.
+                    if _mr_handle is not None and _mr_seam is not None:
+                        _mr_seam.submit_body_semantics(
+                            _mr_handle,
+                            result.get("mr_semantic_sidecar"),
+                        )
+"""
+    plain_run = "                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)\n"
+    single_inference = """                    if _mr_handle is not None and _mr_seam is not None:
+                        try:
+                            if _mr_seam.install_hermes_semantic_transform_hook():
+                                _mr_contract = _mr_seam.body_semantic_prompt_contract()
+                                if _mr_contract not in (agent.ephemeral_system_prompt or ""):
+                                    agent.ephemeral_system_prompt = (
+                                        (agent.ephemeral_system_prompt or "") + "\\n\\n" + _mr_contract
+                                    ).strip()
+                        except Exception:
+                            pass
+                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
+                    if _mr_handle is not None and _mr_seam is not None:
+                        _mr_seam.submit_body_semantics(
+                            _mr_handle,
+                            _mr_seam.take_body_semantic_sidecar(session_id or ""),
+                        )
+"""
+    if "take_body_semantic_sidecar(session_id or" not in source:
+        if old_fake_sidecar in source:
+            source = source.replace(old_fake_sidecar, single_inference, 1)
+        elif plain_run in source:
+            source = source.replace(plain_run, single_inference, 1)
     return source
 
 
@@ -93,6 +129,10 @@ def _check(source: str, repo_root: Path) -> list[str]:
         errors.append("Hermes run anchor is missing")
     if 'final_response = result.get("final_response")' not in source:
         errors.append("Hermes commit anchor is missing")
+    if "install_hermes_semantic_transform_hook" not in source:
+        errors.append("same-inference semantic transform hook is missing")
+    if "take_body_semantic_sidecar(session_id or" not in source:
+        errors.append("same-inference semantic sidecar handoff is missing")
     return errors
 
 
