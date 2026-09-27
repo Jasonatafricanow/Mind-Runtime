@@ -111,9 +111,11 @@ class BodySemanticFrame:
         if self.event_hint is not None:
             require_non_empty(self.event_hint, "event_hint")
         seen_attrs: set[str] = set()
-        for key, value in self.attributes:
+        for key, attr_value in self.attributes:
             require_non_empty(key, "attribute keys")
-            require_non_empty(value, "attribute values")
+            require_non_empty(attr_value, "attribute values")
+            if key.startswith("__"):
+                raise ValueError("Body attributes cannot use reserved names")
             if key in seen_attrs:
                 raise ValueError("attribute keys must be unique")
             seen_attrs.add(key)
