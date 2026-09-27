@@ -18,6 +18,8 @@ from mind_runtime.contracts.affect import (
     BehavioralDisposition,
 )
 from mind_runtime.contracts.appraisal import (
+    BODY_EVENT_HINT_ATTRIBUTE,
+    BODY_FACTOR_ATTRIBUTE_PREFIX,
     AmbiguityAssessment,
     AppraisalModelProposal,
     AppraisalPath,
@@ -29,6 +31,8 @@ from mind_runtime.contracts.appraisal import (
     SemanticEventCandidate,
     SemanticEventProposal,
     SemanticRoutingResult,
+    decode_body_factor_attributes,
+    encode_body_factor_attributes,
 )
 from mind_runtime.contracts.behavior import (
     ActionPolicyInput,
@@ -153,6 +157,10 @@ __all__ = [
     "Authority",
     "AuthorityLevel",
     "BehavioralDisposition",
+    "encode_body_factor_attributes",
+    "decode_body_factor_attributes",
+    "BODY_FACTOR_ATTRIBUTE_PREFIX",
+    "BODY_EVENT_HINT_ATTRIBUTE",
     "BodySemanticFrame",
     "BehavioralPriorContribution",
     "DISPOSITION_TRAIT_NAMES",
