@@ -43,6 +43,7 @@ from mind_runtime.cognition.express import (
 )
 from mind_runtime.contracts import (
     AppraisalModelProposal,
+    BODY_EVENT_HINT_ATTRIBUTE,
     Authority,
     AuthorityLevel,
     Evidence,
@@ -51,6 +52,7 @@ from mind_runtime.contracts import (
     Interaction,
     InteractionStatus,
     SemanticEventCandidate,
+    encode_body_factor_attributes,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -166,10 +168,13 @@ def _body_semantics_from_request(
                 # does not require or consume a finite event taxonomy.
                 kind="__body_semantic__",
                 attributes=(
-                    (("__event_hint__", frame.event_hint),)
+                    (
+                        (BODY_EVENT_HINT_ATTRIBUTE, frame.event_hint),
+                    )
                     if frame.event_hint is not None
                     else ()
                 )
+                + encode_body_factor_attributes(frame.factors)
                 + frame.attributes,
                 confidence=frame.confidence,
                 evidence_refs=(evidence.id,),
