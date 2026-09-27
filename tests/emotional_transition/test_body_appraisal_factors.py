@@ -8,12 +8,12 @@ from mind_runtime.contracts import (
     Scope,
     ScopeDomain,
     SemanticAppraisalContext,
-    encode_body_factor_attributes,
     SemanticEventCandidate,
     Situation,
     StateDefinition,
     StateDomain,
     StateValueType,
+    encode_body_factor_attributes,
 )
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.appraisal import SemanticAppraisalProducer
