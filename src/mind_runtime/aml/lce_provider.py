@@ -223,16 +223,23 @@ class OpenAICompatibleBoundedInterpreter:
             if package.previous_baseline is not None
             else None
         )
+        bounded_context = json.dumps(
+            dict(package.context),
+            ensure_ascii=False,
+            default=str,
+        )
         prompt = (
             "Interpret only the bounded longitudinal evidence below. Return "
             "exactly one JSON object with status, content, supporting_block_ids. "
             "status must be PROPOSED, UNKNOWN, or REJECTED. Use UNKNOWN when "
             "the relation is underdetermined. A PROPOSED content must state a "
             "specific longitudinal conclusion supported by the selected blocks. "
-            "supporting_block_ids may contain only IDs shown below. Do not add "
-            "outside knowledge.\n\n"
+            "supporting_block_ids may contain only IDs shown below. Compiled "
+            "frontier summaries in bounded context are derived context, not "
+            "additional factual authority. Do not add outside knowledge.\n\n"
             f"Candidate relation: {package.candidate.relation_type}\n"
             f"Previous accepted understanding: {previous}\n"
+            f"Bounded context: {bounded_context}\n"
             f"Blocks: {json.dumps(blocks, ensure_ascii=False)}"
         )
         data = self._chat.call(prompt, max_tokens=700)
