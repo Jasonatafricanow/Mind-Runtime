@@ -202,32 +202,43 @@ benchmark scores.
 
 ## Current implementation status
 
-The semantic migration is intentionally **not merge-ready yet**.
+The semantic migration remains **DRAFT / not merge-ready**.
 
-Completed receiver-side groundwork:
+Implemented on this branch:
 
-1. ACTIVE composition no longer needs an MR-owned online semantic model as the
-   intended end-state.
-2. Open semantic sidecar contracts now exist for the Body's normal one-inference
-   output.
-3. Typed event proposals are explicitly compatibility hints rather than the primary
-   semantic protocol.
-4. Host turn ingress no longer accepts event-shaped semantic/appraisal payloads.
-5. Body still cannot author Scope, runtime identity, canonical evidence authority,
-   affect deltas, final affect values, Intent, Policy, or commit authority.
+1. The primary Body contract is now an open `BodySemanticSidecar`, not a
+   closed event taxonomy. Each `BodySemanticFrame` preserves open natural-
+   language meanings; a typed event is optional compatibility metadata only.
+2. Body-side numeric fields are bounded uncertainty/importance estimates.
+   There is no Body field for affect delta, final affect value, or direct
+   state-transition amount.
+3. Reactive Host lifecycle is split inside one logical MR turn:
+   `prepare_turn()` opens/ingests the user evidence; the normal Body call runs
+   once; `submit_semantic_sidecar()` binds metadata from that same inference
+   and performs the single MR `run()`.
+4. Xiyue/Hermes seam reads an optional `mr_semantic_sidecar` from the existing
+   `agent.run_conversation()` result. Missing or malformed metadata degrades to
+   an empty sidecar. No second Body/model/provider call is authorized or added.
+5. Open frames without a typed-event hint are retained on the turn and are not
+   forced through `EventEffectRule`. Typed-event hints may still use the legacy
+   compatibility recipe path.
+6. ACTIVE composition no longer needs an MR-owned online GLM/Zen semantic model
+   or model-backed appraisal provider merely to process an interactive turn.
 
-Still required before this ADR is considered fully implemented:
+Still required before merge:
 
-1. Host lifecycle support for receiving the semantic sidecar **after the same Body
-   inference that generated the response**, without a second model call.
-2. A bounded MR consumer that preserves open meaning and only uses optional typed
-   event hints on the legacy mapped-event path.
-3. Replacement or demotion of `event_kind -> base_amount` as the general affect
-   projection rule. It may remain a compatibility recipe for known typed events,
-   but it is not sufficient for arbitrary natural-language meaning.
-4. End-to-end proof that one user turn performs one Body model invocation while the
-   resulting sidecar updates MR/Reality/Memory/Thread consumers under their own
-   authority rules.
+1. The real Hermes/Body provider path must actually emit
+   `mr_semantic_sidecar` as metadata from the SAME normal model inference.
+   Receiver plumbing exists; provider-side emission is not yet proven.
+2. Open meaning needs a bounded MR cognition consumer independent of typed-event
+   recipes, so accepted meaning is useful even when no affect recipe exists.
+3. The general semantic/appraisal -> affect projection must be designed and
+   validated. The current `event_kind -> base_amount` recipes remain legacy
+   compatibility behavior, not the universal algorithm for natural language.
+4. End-to-end evidence must prove one Body provider invocation per user turn,
+   sidecar validation, MR resolution, guard/commit, and zero fallback semantic
+   model calls.
 
-Until those items are closed, the branch remains draft and must not be described as
-a completed ACTIVE semantic cutover.
+Until these items are closed, this branch must not be described as a completed
+ACTIVE semantic cutover.
+
