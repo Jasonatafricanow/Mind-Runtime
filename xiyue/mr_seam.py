@@ -867,6 +867,123 @@ def begin_turn_clean(
         return None, IngressVerdict(admitted=True, status="READY", reason="fail_soft_non_xiyue")
 
 
+def _coerce_body_semantic_sidecar(value: Any):
+    """Validate same-inference Body metadata without invoking any model."""
+
+    from mind_runtime.contracts import (
+        BodySemanticFrame,
+        BodySemanticSidecar,
+        SemanticEventProposal,
+    )
+
+    if isinstance(value, BodySemanticSidecar):
+        return value
+    if value is None:
+        return BodySemanticSidecar(schema_version=1, frames=())
+    if not isinstance(value, dict):
+        raise ValueError("mr_semantic_sidecar must be an object")
+
+    allowed_top = {"schema_version", "frames"}
+    if set(value) - allowed_top:
+        raise ValueError("mr_semantic_sidecar contains unsupported fields")
+    if value.get("schema_version") != 1:
+        raise ValueError("mr_semantic_sidecar.schema_version must be 1")
+    raw_frames = value.get("frames")
+    if not isinstance(raw_frames, (list, tuple)):
+        raise ValueError("mr_semantic_sidecar.frames must be a list")
+
+    frames = []
+    allowed_frame = {
+        "frame_id",
+        "meanings",
+        "meaning_confidence",
+        "appraisal_confidence",
+        "salience",
+        "valence",
+        "relationship_relevance",
+        "supporting_evidence_refs",
+        "typed_event_hint",
+    }
+    allowed_hint = {"candidate_id", "kind", "attributes", "confidence"}
+
+    for raw in raw_frames:
+        if not isinstance(raw, dict):
+            raise ValueError("semantic frame must be an object")
+        if set(raw) - allowed_frame:
+            raise ValueError("semantic frame contains unsupported fields")
+
+        meanings = raw.get("meanings")
+        if not isinstance(meanings, (list, tuple)):
+            raise ValueError("semantic frame meanings must be a list")
+        supporting = raw.get("supporting_evidence_refs", ())
+        if not isinstance(supporting, (list, tuple)):
+            raise ValueError("supporting_evidence_refs must be a list")
+
+        hint = None
+        raw_hint = raw.get("typed_event_hint")
+        if raw_hint is not None:
+            if not isinstance(raw_hint, dict):
+                raise ValueError("typed_event_hint must be an object")
+            if set(raw_hint) - allowed_hint:
+                raise ValueError("typed_event_hint contains unsupported fields")
+            raw_attrs = raw_hint.get("attributes", ())
+            if not isinstance(raw_attrs, (list, tuple)):
+                raise ValueError("typed_event_hint.attributes must be a list")
+            attrs = []
+            for item in raw_attrs:
+                if (
+                    not isinstance(item, (list, tuple))
+                    or len(item) != 2
+                    or not all(isinstance(part, str) for part in item)
+                ):
+                    raise ValueError("typed_event_hint attributes must be string pairs")
+                attrs.append((item[0], item[1]))
+            hint = SemanticEventProposal(
+                candidate_id=raw_hint.get("candidate_id"),
+                kind=raw_hint.get("kind"),
+                attributes=tuple(attrs),
+                confidence=raw_hint.get("confidence"),
+            )
+
+        frames.append(
+            BodySemanticFrame(
+                frame_id=raw.get("frame_id"),
+                meanings=tuple(meanings),
+                meaning_confidence=raw.get("meaning_confidence"),
+                appraisal_confidence=raw.get("appraisal_confidence"),
+                salience=raw.get("salience"),
+                valence=raw.get("valence"),
+                relationship_relevance=raw.get("relationship_relevance"),
+                supporting_evidence_refs=tuple(supporting),
+                typed_event_hint=hint,
+            )
+        )
+
+    return BodySemanticSidecar(schema_version=1, frames=tuple(frames))
+
+
+def submit_body_semantics(handle: Any, raw_sidecar: Any = None) -> bool:
+    """Resolve a prepared MR turn from metadata emitted by the same Body call.
+
+    Missing or malformed metadata degrades to an empty semantic sidecar. This
+    function never calls a language model or semantic provider.
+    """
+
+    if handle is None:
+        return False
+    adapter = get_mr_adapter()
+    if adapter is None:
+        return False
+    try:
+        sidecar = _coerce_body_semantic_sidecar(raw_sidecar)
+    except Exception as exc:
+        _logger.warning("Invalid Body semantic sidecar; using empty sidecar: %s", exc)
+        from mind_runtime.contracts import BodySemanticSidecar
+
+        sidecar = BodySemanticSidecar(schema_version=1, frames=())
+    return bool(adapter.submit_semantic_sidecar(handle, sidecar))
+
+
 def on_turn_commit(
     handle: Any,
     agent: Any = None,
