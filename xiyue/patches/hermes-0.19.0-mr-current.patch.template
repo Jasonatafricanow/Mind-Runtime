@@ -108,6 +108,13 @@ __PATCH_CONTEXT_BLANK_1__
 +                    }
 +                else:
 +                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
++                    # Resolve the SAME MR turn from semantic metadata emitted by
++                    # this same Body inference. No second model/provider call.
++                    if _mr_handle is not None and _mr_seam is not None:
++                        _mr_seam.submit_body_semantics(
++                            _mr_handle,
++                            result.get("mr_semantic_sidecar"),
++                        )
              finally:
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
