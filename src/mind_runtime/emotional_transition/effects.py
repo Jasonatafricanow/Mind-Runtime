@@ -545,7 +545,15 @@ class AppraisalProjector:
                 (), (), (), abstention_reasons=("missing_projection_authority",)
             )
 
-        gain = _BODY_FACTOR_MAX_DELTA * appraisal.salience * appraisal.confidence
+        # Both judgments must be credible: semantic attribution confidence
+        # and appraisal confidence are independent uncertainties. The weaker
+        # one bounds the effect rather than letting a confident appraisal
+        # amplify a poorly identified meaning.
+        certainty = min(
+            acceptance.candidate.confidence,
+            appraisal.confidence,
+        )
+        gain = _BODY_FACTOR_MAX_DELTA * appraisal.salience * certainty
         impulses: list[Impulse] = []
         confidences: list[tuple[str, float]] = []
         salience_by_source: dict[str, float | None] = {}
