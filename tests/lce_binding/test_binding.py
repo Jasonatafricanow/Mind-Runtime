@@ -254,6 +254,42 @@ def test_projection_binding_reads_canonical_memory_without_copying_source_rows(
         canonical.close()
 
 
+def test_projection_binding_uses_injected_block_embedding_space(plane):
+    binding, roots, paths, _ = plane
+    calls: list[str] = []
+
+    def embed(block) -> tuple[float, ...]:
+        calls.append(block.content)
+        return (1.0, 0.0, 0.0)
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        block_embedder=embed,
+        block_embedding_version="mr-test-embedding-v1",
+        **roots,
+    )
+    assert session is not None
+    with session:
+        session.process_memories(ids(plane))
+
+    assert calls
+    projection_dbs = tuple(
+        paths.lce_root.rglob("projection_state.sqlite")
+    )
+    assert len(projection_dbs) == 1
+    with sqlite3.connect(projection_dbs[0]) as conn:
+        versions = {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT index_version "
+                "FROM vector_state_projections"
+            )
+        }
+    assert versions == {"mr-test-embedding-v1"}
+
+
 def test_mature_thread_handoff_reuses_online_reasoning_and_readback(plane):
     binding, roots, _, _ = plane
     thread = _durable_mature_thread(plane)
