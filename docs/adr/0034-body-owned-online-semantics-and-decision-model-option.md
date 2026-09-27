@@ -222,6 +222,9 @@ Implemented on this branch:
    assistant text is persisted or delivered, then submits the captured sidecar
    to the already prepared MR turn. Missing or malformed metadata degrades to
    an empty sidecar. No second Body/model/provider call is authorized or added.
+   The MR stripping transform must be first in Hermes' transform chain because
+   Hermes accepts the first replacement string; otherwise another transform
+   could prevent the machine block from being removed before persistence.
 5. Open frames without a typed-event hint are retained on the turn and are not
    forced through `EventEffectRule`. Typed-event hints may still use the legacy
    compatibility recipe path.
