@@ -8,10 +8,10 @@ from mind_runtime.contracts import (
     AssessmentContribution,
     HistoricalContextBundle,
     ScopeDomain,
-    decode_body_factor_attributes,
     SemanticRoutingResult,
     StateDomain,
     StateValueType,
+    decode_body_factor_attributes,
 )
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.late_projection import AcceptedAppraisal, AppraisalProjectionResult
