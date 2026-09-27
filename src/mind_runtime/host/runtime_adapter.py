@@ -156,6 +156,44 @@ def _body_semantics_from_request(
 ]:
     """Bind Body-owned proposals to MR-owned scope/runtime/evidence authority."""
 
+    if request.body_semantic_frames:
+        semantic_candidates = tuple(
+            SemanticEventCandidate(
+                candidate_id=frame.frame_id,
+                scope=request.scope,
+                origin_runtime_id=request.runtime_id,
+                # Internal compatibility carrier only. ACTIVE Body semantics
+                # does not require a finite event taxonomy.
+                kind=frame.event_hint or "__open_semantic__",
+                attributes=frame.attributes,
+                confidence=frame.confidence,
+                evidence_refs=(evidence.id,),
+            )
+            for frame in request.body_semantic_frames
+        )
+        appraisal_proposals = tuple(
+            (
+                frame.frame_id,
+                AppraisalModelProposal(
+                    meanings=frame.meanings,
+                    valence=frame.valence,
+                    relationship_relevance="open",
+                    salience=frame.salience,
+                    appraisal_confidence=frame.appraisal_confidence,
+                    supporting_evidence_refs=(
+                        frame.supporting_evidence_refs
+                        if frame.supporting_evidence_refs
+                        else (evidence.id,)
+                    ),
+                    factors=frame.factors,
+                ),
+            )
+            for frame in request.body_semantic_frames
+        )
+        return semantic_candidates, appraisal_proposals
+
+    # Legacy typed-event compatibility path. Kept for LAB/replay fixtures;
+    # ACTIVE Body integration uses body_semantic_frames above.
     semantic_candidates = tuple(
         SemanticEventCandidate(
             candidate_id=proposal.candidate_id,
