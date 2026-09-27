@@ -96,7 +96,12 @@ class SemanticAppraisal:
 
 @dataclass(frozen=True, slots=True)
 class SemanticEventProposal:
-    """Optional typed-event hint for compatibility with mapped event recipes.\n\n    This is NOT the primary Body semantic protocol. Natural-language meaning\n    must not be forced into a finite event taxonomy merely to enter MR.\n    Hosts may omit this hint entirely when no stable typed event applies.\n    """
+    """Optional typed-event hint for compatibility with mapped event recipes.
+
+    This is NOT the primary Body semantic protocol. Natural-language meaning
+    must not be forced into a finite event taxonomy merely to enter MR.
+    Hosts may omit this hint entirely when no stable typed event applies.
+    """
 
     candidate_id: str
     kind: str
