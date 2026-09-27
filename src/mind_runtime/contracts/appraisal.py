@@ -157,6 +157,11 @@ class BodySemanticFrame:
             isinstance(self.salience, bool) or not 0 <= self.salience <= 1
         ):
             raise ValueError("salience must be in [0, 1] or None")
+        if self.appraisal_confidence is not None and (
+            isinstance(self.appraisal_confidence, bool)
+            or not 0 <= self.appraisal_confidence <= 1
+        ):
+            raise ValueError("appraisal_confidence must be in [0, 1] or None")
         if self.valence is not None:
             require_non_empty(self.valence, "valence")
         if self.relationship_relevance is not None:
