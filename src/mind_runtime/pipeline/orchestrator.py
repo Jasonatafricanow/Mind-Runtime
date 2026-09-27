@@ -909,6 +909,48 @@ class TurnOrchestrator:
             at=self._clock.now(),
         )
 
+    def bind_body_semantics(
+        self,
+        *,
+        semantic_candidates: tuple[SemanticEventCandidate, ...],
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...],
+    ) -> None:
+        """Bind Body semantic sidecar data before the turn is resolved.
+
+        This mutates only the still-open in-memory turn. It is valid after
+        begin/ingest and before run(); it never calls a model and never writes
+        canonical state by itself.
+        """
+
+        turn = self._require_turn()
+        if self.state not in (TurnState.BEGIN, TurnState.INGESTING):
+            raise ValueError("Body semantics must be bound before turn processing")
+        if turn.semantic_candidates or turn.appraisal_proposals:
+            raise ValueError("Body semantics already bound for this turn")
+
+        candidate_ids: list[str] = []
+        for candidate in semantic_candidates:
+            if candidate.scope != turn.interaction.scope:
+                raise ValueError("Body semantic candidate scope must match interaction scope")
+            if candidate.origin_runtime_id != self._runtime_id:
+                raise ValueError("Body semantic candidate origin must match runtime")
+            candidate_ids.append(candidate.candidate_id)
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("Body semantic candidate ids must be unique")
+
+        proposal_ids: list[str] = []
+        for candidate_id, proposal in appraisal_proposals:
+            if not isinstance(proposal, AppraisalModelProposal):
+                raise ValueError("Body appraisal proposal must be AppraisalModelProposal")
+            proposal_ids.append(candidate_id)
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("Body appraisal proposal candidate ids must be unique")
+        if set(proposal_ids) != set(candidate_ids):
+            raise ValueError("Body appraisal proposals must exactly cover semantic candidates")
+
+        turn.semantic_candidates = semantic_candidates
+        turn.appraisal_proposals = appraisal_proposals
+
     def ingest(self, evidence: Evidence, *, defer_admission: bool = False) -> Observation | None:
         """Canonical or deferred evidence ingest.
 
