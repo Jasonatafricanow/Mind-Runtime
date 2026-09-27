@@ -37,7 +37,7 @@ def test_open_semantic_frame_requires_no_event_label() -> None:
 
 def test_typed_event_is_optional_compatibility_hint() -> None:
     hint = SemanticEventProposal(
-        candidate_id="hint-1",
+        candidate_id="frame-1",
         kind="plan_confirmed",
         attributes=(),
         confidence=0.88,
@@ -88,7 +88,7 @@ def test_sidecar_numeric_fields_are_importance_uncertainty_not_affect_delta() ->
 
 def test_typed_event_hint_requires_explicit_compatibility_appraisal() -> None:
     hint = SemanticEventProposal(
-        candidate_id="hint-1",
+        candidate_id="frame-1",
         kind="plan_confirmed",
         attributes=(),
         confidence=0.88,
