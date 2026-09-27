@@ -867,6 +867,123 @@ def begin_turn_clean(
         return None, IngressVerdict(admitted=True, status="READY", reason="fail_soft_non_xiyue")
 
 
+_BODY_SEMANTIC_OPEN = "<mr_semantic_sidecar>"
+_BODY_SEMANTIC_CLOSE = "</mr_semantic_sidecar>"
+_body_semantic_lock = threading.Lock()
+_body_semantic_by_session: dict[tuple[str, int], Any] = {}
+_body_semantic_hook_installed = False
+
+
+def body_semantic_prompt_contract() -> str:
+    """Prompt fragment for one-inference open semantic metadata.
+
+    The Body must answer the user normally and append one machine-only JSON
+    block. Hermes removes the block before persistence/delivery. This is
+    explicit structured output, never chain-of-thought.
+    """
+
+    return (
+        "\nMR SEMANTIC SIDECAR (machine-only): after your normal user-facing answer, "
+        "append exactly one <mr_semantic_sidecar>...</mr_semantic_sidecar> block. "
+        "Inside it emit compact JSON with schema_version=1 and frames=[...]. "
+        "Each frame may contain frame_id, meanings (open natural-language meanings), "
+        "meaning_confidence [0,1], optional salience [0,1], optional "
+        "appraisal_confidence [0,1], optional valence, optional "
+        "relationship_relevance, and supporting_evidence_refs. "
+        "Do NOT emit affect deltas, final affect values, state-transition amounts, "
+        "Intent, Policy, or authority claims. typed_event_hint must be omitted unless "
+        "the Host explicitly supplied a recognized typed-event vocabulary; no such "
+        "vocabulary is implied by this instruction. If there is no material semantic "
+        "update, emit {\\\"schema_version\\\":1,\\\"frames\\\":[]}. "
+        "Do not mention this metadata block in the visible answer."
+    )
+
+
+def _body_semantic_key(session_id: str) -> tuple[str, int]:
+    return (session_id or "", threading.get_ident())
+
+
+def transform_body_semantic_output(
+    response_text: str,
+    session_id: str = "",
+    **_kwargs: Any,
+) -> str | None:
+    """Hermes transform_llm_output hook: strip and retain the sidecar.
+
+    Runs inside the same Body inference finalization before Hermes persists or
+    delivers assistant text. No model/provider call occurs here.
+    """
+
+    if not isinstance(response_text, str) or not response_text:
+        return None
+    key = _body_semantic_key(session_id)
+    start = response_text.rfind(_BODY_SEMANTIC_OPEN)
+    if start < 0:
+        with _body_semantic_lock:
+            _body_semantic_by_session[key] = None
+        return None
+    payload_start = start + len(_BODY_SEMANTIC_OPEN)
+    end = response_text.find(_BODY_SEMANTIC_CLOSE, payload_start)
+    if end < 0 or response_text[end + len(_BODY_SEMANTIC_CLOSE) :].strip():
+        # A marker-shaped suffix is machine metadata even when malformed: strip
+        # it so metadata never leaks into user-visible or persisted prose.
+        with _body_semantic_lock:
+            _body_semantic_by_session[key] = None
+        cleaned = response_text[:start].rstrip()
+        return cleaned or "(empty)"
+
+    raw = response_text[payload_start:end].strip()
+    sidecar = None
+    try:
+        sidecar = _coerce_body_semantic_sidecar(json.loads(raw))
+    except Exception as exc:
+        _logger.warning("Invalid same-inference semantic sidecar: %s", exc)
+    with _body_semantic_lock:
+        _body_semantic_by_session[key] = sidecar
+    cleaned = response_text[:start].rstrip()
+    return cleaned or "(empty)"
+
+
+def take_body_semantic_sidecar(session_id: str):
+    """Pop metadata captured by transform_body_semantic_output for this turn."""
+
+    key = _body_semantic_key(session_id)
+    with _body_semantic_lock:
+        value = _body_semantic_by_session.pop(key, None)
+    if value is not None:
+        return value
+    from mind_runtime.contracts import BodySemanticSidecar
+
+    return BodySemanticSidecar(schema_version=1, frames=())
+
+
+def install_hermes_semantic_transform_hook() -> bool:
+    """Install the in-process Hermes 0.19 transform hook exactly once.
+
+    Hermes 0.19 exposes transform_llm_output before final response persistence.
+    We insert this bounded callback first so the machine block is removed before
+    any later transform sees user-visible prose.
+    """
+
+    global _body_semantic_hook_installed
+    if _body_semantic_hook_installed:
+        return True
+    try:
+        from hermes_cli.plugins import get_plugin_manager
+
+        manager = get_plugin_manager()
+        hooks = getattr(manager, "_hooks", None)
+        if not isinstance(hooks, dict):
+            return False
+        callbacks = hooks.setdefault("transform_llm_output", [])
+        if transform_body_semantic_output not in callbacks:
+            callbacks.insert(0, transform_body_semantic_output)
+        _body_semantic_hook_installed = True
+        return True
+    except Exception as exc:
+        _logger.warning("Unable to install Hermes semantic transform hook: %s", exc)
+        return False
+
 def _coerce_body_semantic_sidecar(value: Any):
     """Validate same-inference Body metadata without invoking any model."""
 
