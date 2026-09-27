@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -68,6 +69,7 @@ from mind_runtime.runtime_binding import (
 
 if TYPE_CHECKING:
     from lce.cognition.promotion import BoundedInterpreter, PromotionPolicy
+    from lce.reference_memory.contracts import SemanticBlock
     from lce.semantic.contracts import SemanticDecisionProvider
     from lce.structure.contracts import StructureConfig
 
@@ -269,6 +271,46 @@ class AmlMemoryRuntime:
         with self._cache_guard:
             self._retrieval_cache.pop(key, None)
 
+    def _cached_embedding(
+        self,
+        user_id: str,
+    ) -> EmbeddingProvider | None:
+        if self._embedding is None:
+            return None
+        key = self._user_key(user_id)
+        return SqliteCachedEmbeddingProvider(
+            self._embedding,
+            self.root
+            / "_derived_embedding_cache"
+            / f"{key}.sqlite",
+        )
+
+    def _lce_embedding(
+        self,
+        user_id: str,
+    ) -> tuple[
+        Callable[["SemanticBlock"], tuple[float, ...]] | None,
+        str,
+    ]:
+        cached = self._cached_embedding(user_id)
+        if cached is None:
+            return None, "lce-vector-v1"
+        identity = cached.identity
+
+        def embed_block(
+            block: "SemanticBlock",
+        ) -> tuple[float, ...]:
+            return cached.embed(block.content)
+
+        version = (
+            "mr-embedding:"
+            f"{identity.provider}:"
+            f"{identity.model_id}:"
+            f"{identity.revision}:"
+            f"{identity.dimension}"
+        )
+        return embed_block, version
+
     def _provider(
         self,
         *,
@@ -284,13 +326,8 @@ class AmlMemoryRuntime:
 
         lexical: RetrievalProvider = BM25RetrievalProvider(memories)
         provider: RetrievalProvider = lexical
-        if self._embedding is not None:
-            cached_embedding = SqliteCachedEmbeddingProvider(
-                self._embedding,
-                self.root
-                / "_derived_embedding_cache"
-                / f"{key}.sqlite",
-            )
+        cached_embedding = self._cached_embedding(user_id)
+        if cached_embedding is not None:
             dense = InMemoryDenseRetrievalProvider(
                 memories,
                 embedding=cached_embedding,
@@ -513,6 +550,9 @@ class AmlMemoryRuntime:
                     open_lce_projection_binding,
                 )
 
+                block_embedder, block_embedding_version = (
+                    self._lce_embedding(request.user_id)
+                )
                 session = open_lce_projection_binding(
                     user.binding,
                     user.scope,
@@ -521,6 +561,8 @@ class AmlMemoryRuntime:
                     interpreter=self._lce_interpreter,
                     policy=self._lce_policy,
                     structure_config=self._lce_structure_config,
+                    block_embedder=block_embedder,
+                    block_embedding_version=block_embedding_version,
                     lab_root=self.root,
                     production_root=self._production_sentinel,
                 )
@@ -716,6 +758,9 @@ class AmlMemoryRuntime:
             open_lce_projection_binding,
         )
 
+        block_embedder, block_embedding_version = (
+            self._lce_embedding(user.scope.user_id or "")
+        )
         session = open_lce_projection_binding(
             user.binding,
             user.scope,
@@ -724,6 +769,8 @@ class AmlMemoryRuntime:
             interpreter=self._lce_interpreter,
             policy=self._lce_policy,
             structure_config=self._lce_structure_config,
+            block_embedder=block_embedder,
+            block_embedding_version=block_embedding_version,
             lab_root=self.root,
             production_root=self._production_sentinel,
         )
