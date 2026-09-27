@@ -219,8 +219,6 @@ class XiyueMRAdapter:
                 _logger.warning("MR begin_turn FAILED: %s", result.reason_codes)
                 return None
             bounded = result.bounded_context
-            if bounded is not None:
-                self._last_bounded_context = bounded
             _mr_thread_trace("BEGIN_TURN_RETURN", self, interaction_id=result.interaction_id)
             return MrTurnHandle(
                 interaction_id=result.interaction_id,
@@ -245,6 +243,8 @@ class XiyueMRAdapter:
                 HostCommitRequest(turn_id=handle.turn_id, interaction_id=handle.interaction_id)
             )
             ok = receipt.status == HostStatus.OK
+            if ok and handle.bounded_context is not None:
+                self._last_bounded_context = handle.bounded_context
             _logger.info(
                 "MR commit interaction=%s status=%s reason=%s",
                 handle.interaction_id,
