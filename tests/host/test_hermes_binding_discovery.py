@@ -263,6 +263,9 @@ class TestNoSessionCoupling:
         )
         assert h2 is not None
         assert h1.interaction_id != h2.interaction_id
+        assert adapter.submit_semantic_sidecar(
+            h2, BodySemanticSidecar(schema_version=1, frames=())
+        )
         assert adapter.commit_turn(h2)
 
         # a reconstructed "process" (new adapter object) serves a brand-new session
