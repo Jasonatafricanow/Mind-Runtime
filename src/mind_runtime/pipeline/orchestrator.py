@@ -19,6 +19,7 @@ from mind_runtime.contracts import (
     ActionReceipt,
     AppraisalModelProposal,
     Authority,
+    BodySemanticSidecar,
     AuthorityLevel,
     DecisionContext,
     DeliveryStatus,
@@ -223,6 +224,7 @@ class _Turn:
     surface_guard_accepted: bool = False
     semantic_candidates: tuple[SemanticEventCandidate, ...] = ()
     appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
+    body_semantic_sidecar: BodySemanticSidecar | None = None
 
 
 def _mr_thread_trace(phase: str, orchestrator: TurnOrchestrator, interaction_id: str = "") -> None:
@@ -909,47 +911,64 @@ class TurnOrchestrator:
             at=self._clock.now(),
         )
 
-    def bind_body_semantics(
-        self,
-        *,
-        semantic_candidates: tuple[SemanticEventCandidate, ...],
-        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...],
-    ) -> None:
-        """Bind Body semantic sidecar data before the turn is resolved.
+    def bind_body_semantic_sidecar(self, sidecar: BodySemanticSidecar) -> None:
+        """Bind one same-inference Body semantic sidecar before resolution.
 
-        This mutates only the still-open in-memory turn. It is valid after
-        begin/ingest and before run(); it never calls a model and never writes
-        canonical state by itself.
+        Open meanings are retained on the turn even when no typed event exists.
+        Only an explicit typed_event_hint is translated into the legacy
+        SemanticEventCandidate/AppraisalModelProposal compatibility path.
+        This method never calls a model and never writes canonical state.
         """
 
+        if not isinstance(sidecar, BodySemanticSidecar):
+            raise ValueError("sidecar must be BodySemanticSidecar")
         turn = self._require_turn()
         if self.state not in (TurnState.BEGIN, TurnState.INGESTING):
-            raise ValueError("Body semantics must be bound before turn processing")
-        if turn.semantic_candidates or turn.appraisal_proposals:
-            raise ValueError("Body semantics already bound for this turn")
+            raise ValueError("Body semantic sidecar must be bound before turn processing")
+        if turn.body_semantic_sidecar is not None:
+            raise ValueError("Body semantic sidecar already bound for this turn")
 
-        candidate_ids: list[str] = []
-        for candidate in semantic_candidates:
-            if candidate.scope != turn.interaction.scope:
-                raise ValueError("Body semantic candidate scope must match interaction scope")
-            if candidate.origin_runtime_id != self._runtime_id:
-                raise ValueError("Body semantic candidate origin must match runtime")
-            candidate_ids.append(candidate.candidate_id)
-        if len(set(candidate_ids)) != len(candidate_ids):
-            raise ValueError("Body semantic candidate ids must be unique")
+        candidates: list[SemanticEventCandidate] = []
+        proposals: list[tuple[str, AppraisalModelProposal]] = []
+        candidate_ids: set[str] = set()
+        for frame in sidecar.frames:
+            hint = frame.typed_event_hint
+            if hint is None:
+                continue
+            if hint.candidate_id in candidate_ids:
+                raise ValueError("typed event hint candidate ids must be unique")
+            candidate_ids.add(hint.candidate_id)
+            candidate = SemanticEventCandidate(
+                candidate_id=hint.candidate_id,
+                scope=turn.interaction.scope,
+                origin_runtime_id=self._runtime_id,
+                kind=hint.kind,
+                attributes=hint.attributes,
+                confidence=hint.confidence,
+                evidence_refs=turn.evidence_refs,
+            )
+            candidates.append(candidate)
+            assert frame.valence is not None
+            assert frame.relationship_relevance is not None
+            assert frame.appraisal_confidence is not None
+            selected_refs = frame.supporting_evidence_refs or turn.evidence_refs
+            proposals.append(
+                (
+                    hint.candidate_id,
+                    AppraisalModelProposal(
+                        meanings=frame.meanings,
+                        valence=frame.valence,
+                        relationship_relevance=frame.relationship_relevance,
+                        salience=frame.salience,
+                        appraisal_confidence=frame.appraisal_confidence,
+                        supporting_evidence_refs=selected_refs,
+                    ),
+                )
+            )
 
-        proposal_ids: list[str] = []
-        for candidate_id, proposal in appraisal_proposals:
-            if not isinstance(proposal, AppraisalModelProposal):
-                raise ValueError("Body appraisal proposal must be AppraisalModelProposal")
-            proposal_ids.append(candidate_id)
-        if len(set(proposal_ids)) != len(proposal_ids):
-            raise ValueError("Body appraisal proposal candidate ids must be unique")
-        if set(proposal_ids) != set(candidate_ids):
-            raise ValueError("Body appraisal proposals must exactly cover semantic candidates")
-
-        turn.semantic_candidates = semantic_candidates
-        turn.appraisal_proposals = appraisal_proposals
+        turn.body_semantic_sidecar = sidecar
+        turn.semantic_candidates = tuple(candidates)
+        turn.appraisal_proposals = tuple(proposals)
 
     def ingest(self, evidence: Evidence, *, defer_admission: bool = False) -> Observation | None:
         """Canonical or deferred evidence ingest.
