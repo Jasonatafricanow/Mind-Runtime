@@ -7,18 +7,21 @@ import json
 import math
 import sqlite3
 from collections.abc import Iterable
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
-from mind_runtime.memory.embedding import EmbeddingIdentity, EmbeddingProvider, validate_vector
+from mind_runtime.memory.embedding import (
+    EmbeddingIdentity,
+    EmbeddingProvider,
+    validate_vector,
+)
 from mind_runtime.memory.retrieval import (
     MemoryRetrievalQuery,
     RetrievalProviderUnavailable,
     RetrievedMemoryCandidate,
 )
 from mind_runtime.memory.store import scope_json
-
 
 
 class SqliteCachedEmbeddingProvider:
@@ -82,6 +85,7 @@ class SqliteCachedEmbeddingProvider:
                 (key, json.dumps(vector)),
             )
         return vector
+
 
 @dataclass(frozen=True, slots=True)
 class _DenseDocument:
