@@ -163,9 +163,14 @@ def _body_semantics_from_request(
                 scope=request.scope,
                 origin_runtime_id=request.runtime_id,
                 # Internal compatibility carrier only. ACTIVE Body semantics
-                # does not require a finite event taxonomy.
-                kind=frame.event_hint or "__open_semantic__",
-                attributes=frame.attributes,
+                # does not require or consume a finite event taxonomy.
+                kind="__body_semantic__",
+                attributes=(
+                    (("__event_hint__", frame.event_hint),)
+                    if frame.event_hint is not None
+                    else ()
+                )
+                + frame.attributes,
                 confidence=frame.confidence,
                 evidence_refs=(evidence.id,),
             )
