@@ -889,7 +889,7 @@ def body_semantic_prompt_contract() -> str:
         "Each frame may contain frame_id, meanings (open natural-language meanings), "
         "meaning_confidence [0,1], optional salience [0,1], optional "
         "appraisal_confidence [0,1], optional valence, optional "
-        "relationship_relevance, and supporting_evidence_refs. "
+        "relationship_relevance, and supporting_evidence_handles. "
         "Do NOT emit affect deltas, final affect values, state-transition amounts, "
         "Intent, Policy, or authority claims. typed_event_hint must be omitted unless "
         "the Host explicitly supplied a recognized typed-event vocabulary; no such "
@@ -1018,7 +1018,7 @@ def _coerce_body_semantic_sidecar(value: Any):
         "salience",
         "valence",
         "relationship_relevance",
-        "supporting_evidence_refs",
+        "supporting_evidence_handles",
         "typed_event_hint",
     }
     allowed_hint = {"candidate_id", "kind", "attributes", "confidence"}
@@ -1032,9 +1032,9 @@ def _coerce_body_semantic_sidecar(value: Any):
         meanings = raw.get("meanings")
         if not isinstance(meanings, (list, tuple)):
             raise ValueError("semantic frame meanings must be a list")
-        supporting = raw.get("supporting_evidence_refs", ())
+        supporting = raw.get("supporting_evidence_handles", ())
         if not isinstance(supporting, (list, tuple)):
-            raise ValueError("supporting_evidence_refs must be a list")
+            raise ValueError("supporting_evidence_handles must be a list")
 
         hint = None
         raw_hint = raw.get("typed_event_hint")
@@ -1071,7 +1071,7 @@ def _coerce_body_semantic_sidecar(value: Any):
                 salience=raw.get("salience"),
                 valence=raw.get("valence"),
                 relationship_relevance=raw.get("relationship_relevance"),
-                supporting_evidence_refs=tuple(supporting),
+                supporting_evidence_handles=tuple(supporting),
                 typed_event_hint=hint,
             )
         )
