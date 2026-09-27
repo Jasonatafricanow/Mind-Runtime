@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mind_runtime.contracts import RuntimeState, Scope, ScopeDomain, SyncFields
+from mind_runtime.contracts import BodySemanticSidecar, RuntimeState, Scope, ScopeDomain, SyncFields
 from mind_runtime.expression.context import DecisionContextCompiler
 from mind_runtime.host.xiyue_adapter import default_adapter
 from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment
