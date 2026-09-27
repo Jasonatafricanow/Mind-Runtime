@@ -289,7 +289,7 @@ class AmlMemoryRuntime:
         self,
         user_id: str,
     ) -> tuple[
-        Callable[["SemanticBlock"], tuple[float, ...]] | None,
+        Callable[[SemanticBlock], tuple[float, ...]] | None,
         str,
     ]:
         cached = self._cached_embedding(user_id)
@@ -298,7 +298,7 @@ class AmlMemoryRuntime:
         identity = cached.identity
 
         def embed_block(
-            block: "SemanticBlock",
+            block: SemanticBlock,
         ) -> tuple[float, ...]:
             return cached.embed(block.content)
 
