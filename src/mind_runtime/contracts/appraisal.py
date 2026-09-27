@@ -130,7 +130,7 @@ class BodySemanticFrame:
     frame_id: str
     meanings: tuple[str, ...]
     meaning_confidence: float
-    appraisal_confidence: float
+    appraisal_confidence: float | None = None
     salience: float | None = None
     valence: str | None = None
     relationship_relevance: str | None = None
@@ -148,11 +148,6 @@ class BodySemanticFrame:
             or not 0 <= self.meaning_confidence <= 1
         ):
             raise ValueError("meaning_confidence must be in [0, 1]")
-        if (
-            isinstance(self.appraisal_confidence, bool)
-            or not 0 <= self.appraisal_confidence <= 1
-        ):
-            raise ValueError("appraisal_confidence must be in [0, 1]")
         if self.salience is not None and (
             isinstance(self.salience, bool) or not 0 <= self.salience <= 1
         ):
@@ -173,6 +168,15 @@ class BodySemanticFrame:
                 raise ValueError("typed_event_hint must be SemanticEventProposal or None")
             if self.typed_event_hint.candidate_id != self.frame_id:
                 raise ValueError("typed_event_hint candidate_id must match frame_id")
+            if (
+                self.valence is None
+                or self.relationship_relevance is None
+                or self.appraisal_confidence is None
+            ):
+                raise ValueError(
+                    "typed_event_hint requires valence, relationship_relevance, "
+                    "and appraisal_confidence"
+                )
 
 
 @dataclass(frozen=True, slots=True)
