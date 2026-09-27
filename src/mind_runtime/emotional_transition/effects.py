@@ -109,6 +109,72 @@ class MappedEffects:
     abstention_reasons: tuple[str, ...] = ()
 
 
+_BODY_FACTOR_MAX_DELTA = 0.20
+
+
+def _body_factor_drive(
+    dimension: str,
+    factors: dict[str, float],
+) -> float | None:
+    """Translate appraisal causes into a bounded dimension drive.
+
+    These are causal appraisal axes, not event labels and not direct affect
+    commands. Missing factors mean "not asserted"; unknown factors are
+    preserved upstream but ignored by this V1 dynamics recipe.
+    """
+
+    if dimension.endswith(".longing"):
+        separation = factors.get("separation")
+        connection = factors.get("connection")
+        relevance = factors.get("relationship_relevance")
+        if relevance is None or (separation is None and connection is None):
+            return None
+        return (separation or 0.0) * relevance - (connection or 0.0) * relevance
+
+    if dimension.endswith(".anxiety"):
+        threat = factors.get("threat")
+        uncertainty = factors.get("uncertainty")
+        lack_of_control = factors.get("lack_of_control")
+        terms: list[float] = []
+        if threat is not None and uncertainty is not None:
+            terms.append(threat * uncertainty)
+        if threat is not None and lack_of_control is not None:
+            terms.append(threat * lack_of_control)
+        return max(terms) if terms else None
+
+    if dimension.endswith(".irritation") or dimension.endswith(".anger"):
+        obstruction = factors.get("obstruction")
+        if obstruction is None:
+            return None
+        other_blame = factors.get("other_blame")
+        amplifier = 0.5 if other_blame is None else 0.5 + 0.5 * other_blame
+        return obstruction * amplifier
+
+    if dimension.endswith(".excitement"):
+        opportunity = factors.get("opportunity")
+        if opportunity is None:
+            return None
+        anticipation = factors.get("anticipation")
+        amplifier = 0.5 if anticipation is None else 0.5 + 0.5 * anticipation
+        return opportunity * amplifier
+
+    if dimension.endswith(".sadness"):
+        loss = factors.get("loss")
+        if loss is None:
+            return None
+        relevance = factors.get("relationship_relevance")
+        return loss if relevance is None else loss * (0.5 + 0.5 * relevance)
+
+    if dimension.endswith(".restlessness"):
+        uncertainty = factors.get("uncertainty")
+        lack_of_control = factors.get("lack_of_control")
+        if uncertainty is None or lack_of_control is None:
+            return None
+        return uncertainty * lack_of_control
+
+    return None
+
+
 class AppraisalProjector:
     """Map one accepted candidate plus bounded history into explicit impulses."""
 
