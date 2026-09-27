@@ -87,8 +87,9 @@ class HostTurnStatus(StrEnum):
 class HostTurnRequest:
     """PUBLIC. What a Host passes to begin a turn.
 
-    Fields are deliberately narrow. Current-turn semantic meaning is not supplied\n    here; the normal Body inference may later emit a separate semantic sidecar.\n    A Host cannot supply:\n      * numeric affect deltas
-      * final affect values
+    Fields are deliberately narrow. Current-turn semantic meaning is not supplied
+    here; the normal Body inference may later emit a separate semantic sidecar.
+    A Host cannot supply:
       * numeric affect deltas or direct state-transition amounts
       * final affect values
       * shock / urgency / timescale
