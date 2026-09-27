@@ -246,6 +246,35 @@ class AppraisalProjector:
                 return "invalid_longitudinal_target"
         return None
 
+    def _body_target_reason(
+        self,
+        acceptance: AcceptedAppraisal,
+        persona: tuple[AffectiveDimensionProfile, ...],
+    ) -> str | None:
+        owner, definitions = self._persona_profile, self._definitions
+        if owner is None or definitions is None:
+            return "missing_projection_authority"
+        scope = acceptance.projection_scope
+        if (
+            owner.persona_id != acceptance.persona_id
+            or scope is None
+            or scope.persona_id != owner.persona_id
+            or state_domain_for_scope(scope) is not StateDomain.AGENT
+        ):
+            return "foreign_projection_owner"
+        if persona and tuple(persona) != owner.dimensions:
+            return "persona_snapshot_mismatch"
+        for profile in owner.dimensions:
+            definition = definitions.get(profile.dimension)
+            if (
+                definition is None
+                or definition.domain is not StateDomain.AGENT
+                or definition.value_type is not StateValueType.SCALAR
+                or definition.dynamics_policy != "deterministic_affect"
+            ):
+                return "invalid_fast_target"
+        return None
+
     @staticmethod
     def _mapped_reason(mapped: MappedEffects, rule: EventEffectRule) -> str | None:
         allowed = {rule.dimension}
@@ -266,6 +295,24 @@ class AppraisalProjector:
             return
         if not result.effects:
             raise ValueError("projection effect is required for MAPPED result")
+        is_body = acceptance.candidate.kind == "__body_semantic__"
+        if is_body:
+            if self._body_target_reason(acceptance, ()) is not None:
+                raise ValueError("projection effect has no valid target authority")
+            owner = self._persona_profile
+            assert owner is not None
+            allowed = set(owner.dimension_keys())
+            for effect in result.effects:
+                if (
+                    effect.dimension not in allowed
+                    or effect.operation != "delta"
+                    or abs(effect.amount) > _BODY_FACTOR_MAX_DELTA
+                    or effect.target_domain != StateDomain.AGENT.value
+                    or effect.target_scope != acceptance.projection_scope
+                ):
+                    raise ValueError("Body appraisal effect conflicts with target authority")
+            return
+
         rule = self._rule_for(acceptance, None)
         if rule is None or self._target_reason(acceptance, rule, ()) is not None:
             raise ValueError("projection effect has no valid target authority")
@@ -296,6 +343,17 @@ class AppraisalProjector:
         from mind_runtime.contracts.late_projection import digest
 
         rule = self._rule_for(acceptance, routing)
+        if acceptance is not None and acceptance.candidate.kind == "__body_semantic__":
+            return digest(
+                (
+                    acceptance,
+                    history,
+                    routing,
+                    persona,
+                    "body-appraisal-factor-v1",
+                    self.version,
+                )
+            )
         if rule is None:
             return digest((acceptance, history, routing, None, self.version))
         owner = self._persona_profile
