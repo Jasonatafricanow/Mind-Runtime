@@ -34,7 +34,6 @@ from datetime import datetime
 from enum import StrEnum
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
-from mind_runtime.contracts.appraisal import BodySemanticSidecar
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
 
@@ -119,26 +118,6 @@ class HostTurnRequest:
             require_non_empty(self.session_id, "session_id")
 
 
-
-@dataclass(frozen=True, slots=True)
-class HostSemanticSidecarRequest:
-    """PUBLIC. Semantic by-product of the same Body inference as the reply.
-
-    The sidecar is submitted separately from HostTurnRequest so opening an MR
-    turn never implies a second model call and never forces semantic meaning
-    into a finite event taxonomy. MR remains responsible for validating and
-    translating any sidecar content before it can affect canonical state.
-    """
-
-    turn_id: str
-    interaction_id: str
-    sidecar: BodySemanticSidecar
-
-    def __post_init__(self) -> None:
-        require_non_empty(self.turn_id, "turn_id")
-        require_non_empty(self.interaction_id, "interaction_id")
-        if not isinstance(self.sidecar, BodySemanticSidecar):
-            raise ValueError("sidecar must be a BodySemanticSidecar")
 
 @dataclass(frozen=True, slots=True)
 class HostCommitRequest:
