@@ -268,11 +268,8 @@ def create_app(
             "session_id": body.session_id,
         }
 
-    @app.post("/aml/search")
-    def search(
-        body: _SearchModel,
-        _: Annotated[None, require_auth],
-    ) -> dict[str, object]:
+    @app.post("/aml/search", dependencies=[Depends(require_auth)])
+    def search(body: _SearchModel) -> dict[str, object]:
         request = AmlSearchRequest(
             user_id=body.user_id,
             query=body.query,
