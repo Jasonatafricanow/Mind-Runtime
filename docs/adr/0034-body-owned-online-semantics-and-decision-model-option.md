@@ -12,16 +12,31 @@ Normal interactive cognition must not require a model call owned by Mind Runtime
 The online ownership boundary is:
 
 ```text
-user message
-    -> Body / Host LLM semantic understanding
-    -> bounded typed proposals
+user message + prior bounded runtime context
+    -> ONE normal Body/Host LLM inference
+       + user-visible final response
+       + open semantic sidecar (same inference)
+    -> consumer-specific bounded projections
        + Reality/State proposal for the current-state owner
-       + semantic/appraisal proposal for MR
-       + optional Memory/LCE hints
+       + MR semantic/appraisal view
+       + optional Memory/Thread/LCE hints
     -> each runtime owner validates and consumes only its own bounded view
-    -> MR deterministic state evolution / Intent / Policy / DecisionContext
-    -> Body realizes the final response
+    -> MR deterministic state evolution / Intent / Policy for subsequent state
 ```
+
+The Body semantic sidecar is open-semantic by default. Natural-language meaning is
+not required to fit a finite event taxonomy. A typed event identifier may be carried
+only as an optional compatibility hint when a stable existing recipe genuinely
+applies. Absence of a typed event is normal and must not make a turn invalid.
+
+The sidecar MUST be emitted by the same model inference that produces the normal
+Body response. MR must not require a second Body call, tool-call continuation, or
+separate online semantic model merely to obtain semantic parsing. Hidden chain of
+thought is not a protocol and is never consumed by MR.
+
+Body output must not contain authoritative affect deltas, final affect values, or
+state-transition amounts. Numeric sidecar fields may describe uncertainty or
+importance only; MR owns any later deterministic translation into state effects.
 
 The shared semantic understanding is not a new canonical object, database, bus, or
 authority layer. It is a producer-side interpretation that is projected into
@@ -187,31 +202,32 @@ benchmark scores.
 
 ## Current implementation status
 
-The ACTIVE online semantic cutover is implemented on the Body-owned input path:
+The semantic migration is intentionally **not merge-ready yet**.
 
-1. Host/Body can supply bounded `SemanticEventProposal` and
-   `AppraisalModelProposal` values.
-2. The Host adapter binds MR-owned Scope, runtime identity, and the admitted
-   turn Evidence reference; Body cannot author those authority fields.
-3. `TurnOrchestrator` carries the bound candidates/proposals into the single
-   `EmotionalTransitionInput` and no longer auto-constructs a semantic
-   provider from process environment.
-4. `SemanticRouter` consumes supplied candidates without calling a provider.
-5. `SemanticAppraisalProducer` validates a supplied Body proposal and binds
-   system fields without requiring a local appraisal model.
-6. ACTIVE Xiyue/certification composition no longer constructs GLM/Zen or a
-   model-backed appraisal provider and no longer requires their credentials for
-   readiness.
-7. The durable appraisal journal/application-receipt path remains in MR because
-   MR still owns validation, materialization, Dynamics application, and commit.
-8. Legacy semantic/provider implementations remain available only as explicit
-   LAB/shadow/recorded compatibility mechanisms; they are not ACTIVE semantic
-   authority.
+Completed receiver-side groundwork:
 
-The Host implementation is responsible for obtaining the shared semantic pass
-from its Body LLM and supplying these typed proposals. MR does not replace a
-missing Body proposal by silently invoking its own online model.
+1. ACTIVE composition no longer needs an MR-owned online semantic model as the
+   intended end-state.
+2. Open semantic sidecar contracts now exist for the Body's normal one-inference
+   output.
+3. Typed event proposals are explicitly compatibility hints rather than the primary
+   semantic protocol.
+4. Host turn ingress no longer accepts event-shaped semantic/appraisal payloads.
+5. Body still cannot author Scope, runtime identity, canonical evidence authority,
+   affect deltas, final affect values, Intent, Policy, or commit authority.
 
-The optional decision-model capability remains independent and fail-open; its
-presence or absence does not change this semantic ownership boundary.
+Still required before this ADR is considered fully implemented:
 
+1. Host lifecycle support for receiving the semantic sidecar **after the same Body
+   inference that generated the response**, without a second model call.
+2. A bounded MR consumer that preserves open meaning and only uses optional typed
+   event hints on the legacy mapped-event path.
+3. Replacement or demotion of `event_kind -> base_amount` as the general affect
+   projection rule. It may remain a compatibility recipe for known typed events,
+   but it is not sufficient for arbitrary natural-language meaning.
+4. End-to-end proof that one user turn performs one Body model invocation while the
+   resulting sidecar updates MR/Reality/Memory/Thread consumers under their own
+   authority rules.
+
+Until those items are closed, the branch remains draft and must not be described as
+a completed ACTIVE semantic cutover.
