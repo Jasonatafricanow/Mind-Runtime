@@ -56,7 +56,7 @@ __PATCH_CONTEXT_BLANK_1__
  import asyncio
  import concurrent.futures
  import dataclasses
-@@ -20943,7 +20990,53 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20943,7 +20990,66 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                      _conversation_kwargs["moa_config"] = moa_config
                  if _persist_user_timestamp_override is not None:
                      _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
@@ -124,7 +124,7 @@ __PATCH_CONTEXT_BLANK_1__
              finally:
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
-@@ -20963,6 +21056,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20963,6 +21069,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 __PATCH_CONTEXT_BLANK_13__
              # Return final response, or a message if something went wrong
              final_response = result.get("final_response")
