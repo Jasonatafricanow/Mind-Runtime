@@ -139,7 +139,7 @@ class BodySemanticFrame:
     salience: float | None = None
     valence: str | None = None
     relationship_relevance: str | None = None
-    supporting_evidence_refs: tuple[str, ...] = ()
+    supporting_evidence_handles: tuple[str, ...] = ()
     typed_event_hint: SemanticEventProposal | None = None
 
     def __post_init__(self) -> None:
@@ -166,8 +166,8 @@ class BodySemanticFrame:
             require_non_empty(self.valence, "valence")
         if self.relationship_relevance is not None:
             require_non_empty(self.relationship_relevance, "relationship_relevance")
-        for ref in self.supporting_evidence_refs:
-            require_non_empty(ref, "supporting_evidence_refs entries")
+        for handle in self.supporting_evidence_handles:
+            require_non_empty(handle, "supporting_evidence_handles entries")
         if self.typed_event_hint is not None:
             if not isinstance(self.typed_event_hint, SemanticEventProposal):
                 raise ValueError("typed_event_hint must be SemanticEventProposal or None")
