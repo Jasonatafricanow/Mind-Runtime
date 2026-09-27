@@ -145,32 +145,38 @@ Relevant evidence:
 This work was deliberately kept separate from the ACTIVE semantic migration so
 bounded decision compute could not become a second semantic authority.
 
-### 8. Online semantic understanding moved to the Body/Host boundary
+### 8. Online semantic ownership correction
 
-The ACTIVE runtime originally retained an optional internal semantic-provider path
-and a model-backed appraisal composition path. That duplicated work already performed
-by the host model and made GLM/Zen/appraisal credentials part of runtime readiness.
+The ACTIVE runtime historically retained an internal semantic-provider path and a
+model-backed appraisal path. The intended replacement is Body-owned online semantic
+understanding, but the migration is intentionally unfinished rather than papered over.
 
-The online boundary was changed so the Body/Host supplies bounded typed semantic and
-appraisal proposals. MR binds Scope, runtime identity, and admitted Evidence
-references itself, validates the proposals, materializes accepted appraisal effects,
-and retains all Dynamics, Intent, Policy, journal, and commit authority.
+The corrected boundary is stricter than the first migration draft:
 
-MR no longer auto-constructs a semantic provider for an ACTIVE turn and production
-composition no longer requires GLM/Zen or appraisal-model credentials. Legacy model
-implementations remain explicit LAB/shadow/background compatibility code rather than
-online authority.
+- the normal Body inference produces the user-visible response and an open semantic
+  sidecar together;
+- no second online model call is introduced just for MR semantic parsing;
+- open natural-language meaning is primary and is not forced into a finite event
+  taxonomy;
+- a typed event is only an optional compatibility hint for an existing deterministic
+  event recipe;
+- Body cannot author affect deltas, final affect values, Scope/runtime authority,
+  Intent, Policy, or commit authority;
+- MR remains responsible for validating and translating any sidecar content before
+  canonical state can change.
+
+The first receiver-side draft incorrectly made event-shaped semantic proposals part of
+HostTurnRequest. That ingress coupling has been removed. The branch stays draft until
+the Host can accept the same-inference sidecar at the correct post-Body lifecycle seam
+and the general affect projection no longer depends on event_kind -> base_amount as
+its universal semantic bridge.
 
 Relevant evidence:
 
 - `src/mind_runtime/contracts/appraisal.py`
 - `src/mind_runtime/contracts/host.py`
-- `src/mind_runtime/host/runtime_adapter.py`
-- `src/mind_runtime/pipeline/orchestrator.py`
-- `src/mind_runtime/dynamics/ports.py`
 - `docs/adr/0034-body-owned-online-semantics-and-decision-model-option.md`
 - `tests/host/test_body_semantic_input.py`
-- `tests/host/test_semantic_activation.py`
 
 
 ## Why the history was not rewritten
@@ -191,4 +197,4 @@ The public baseline demonstrates a large deterministic and restart-safe runtime 
 
 In particular, live shadow validation remains separate from deterministic certification, and incomplete external evidence is reported as incomplete rather than folded into a production claim.
 
-The optional decision-model plane is currently being developed on an isolated branch and is not part of the public `main` baseline until its integration checks and the separate local semantic-migration work are reconciled.
+The optional decision-model plane is part of the current mainline. The Body-owned semantic migration remains a separate draft track until its single-inference Host lifecycle and open-semantic projection boundary are closed.
