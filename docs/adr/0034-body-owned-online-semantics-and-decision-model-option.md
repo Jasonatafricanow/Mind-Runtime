@@ -216,8 +216,11 @@ Implemented on this branch:
    `prepare_turn()` opens/ingests the user evidence; the normal Body call runs
    once; `submit_semantic_sidecar()` binds metadata from that same inference
    and performs the single MR `run()`.
-4. Xiyue/Hermes seam reads an optional `mr_semantic_sidecar` from the existing
-   `agent.run_conversation()` result. Missing or malformed metadata degrades to
+4. Xiyue/Hermes 0.19 installs a bounded `transform_llm_output` hook before the
+   existing `agent.run_conversation()` call. The same inference appends a
+   machine-only semantic block; Hermes strips and validates that block before
+   assistant text is persisted or delivered, then submits the captured sidecar
+   to the already prepared MR turn. Missing or malformed metadata degrades to
    an empty sidecar. No second Body/model/provider call is authorized or added.
 5. Open frames without a typed-event hint are retained on the turn and are not
    forced through `EventEffectRule`. Typed-event hints may still use the legacy
@@ -227,9 +230,10 @@ Implemented on this branch:
 
 Still required before merge:
 
-1. The real Hermes/Body provider path must actually emit
-   `mr_semantic_sidecar` as metadata from the SAME normal model inference.
-   Receiver plumbing exists; provider-side emission is not yet proven.
+1. Live Hermes/Body evidence must verify that representative configured
+   providers obey the same-inference sidecar prompt and that provider accounting
+   still reports one normal Body invocation per user turn. The prompt/transform
+   plumbing is implemented; live provider compliance is not yet certified.
 2. Open meaning needs a bounded MR cognition consumer independent of typed-event
    recipes, so accepted meaning is useful even when no affect recipe exists.
 3. The general semantic/appraisal -> affect projection must be designed and
