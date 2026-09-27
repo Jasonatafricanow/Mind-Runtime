@@ -2,7 +2,7 @@ diff --git a/gateway/run.py b/gateway/run.py
 index 12b7477..e52633c 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -24,6 +24,53 @@ except ModuleNotFoundError:
+@@ -24,6 +24,37 @@ except ModuleNotFoundError:
      # means UTF-8 stdio setup is skipped on Windows; POSIX is unaffected.
      pass
 __PATCH_CONTEXT_BLANK_1__
@@ -35,24 +35,7 @@ __PATCH_CONTEXT_BLANK_1__
 +    except Exception:
 +        return None
 +# --- end Xiyue MR seam bootstrap ---
-+
-+# --- Xiyue MR seam bootstrap (HI-2) ---
-+import sys as _mr_sys
-+_mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
-+_mr_sys.path.insert(0, __MR_SRC_LITERAL__)
-+_mr_sys.path.insert(0, __MR_XIYUE_LITERAL__)
-+try:
-+    import mr_seam as _mr_seam
-+    _mr_seam._MR_SRC = __MR_SRC_LITERAL__
-+    _mr_seam.on_gateway_process_startup()
-+    _mr_adapter = _mr_seam.get_mr_adapter()
-+    _mr_render_bounded = _mr_seam.render_bounded
-+except Exception:
-+    _mr_seam = None
-+    _mr_adapter = None
-+    _mr_render_bounded = lambda b: None
-+# --- end Xiyue MR seam bootstrap ---
-+
+++
  import asyncio
  import concurrent.futures
  import dataclasses
