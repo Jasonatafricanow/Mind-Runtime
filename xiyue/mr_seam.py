@@ -171,17 +171,21 @@ def extract_single_pass_semantics(result: object) -> tuple[str | None, tuple[Any
         end = clean.rfind(_SIDECAR_CLOSE)
         if start < 0 or end < start:
             return clean, ()
-        payload_text = clean[start + len(_SIDECAR_OPEN) : end].strip()
-        payload = json.loads(payload_text)
-        if not isinstance(payload, dict) or payload.get("schema_version", 1) != 1:
-            return clean, ()
-        frames_raw = payload.get("frames", [])
-        if not isinstance(frames_raw, list):
-            return clean, ()
         visible = (clean[:start] + clean[end + len(_SIDECAR_CLOSE) :]).strip()
-        return visible, tuple(_frame_from_wire(item) for item in frames_raw)
+        payload_text = clean[start + len(_SIDECAR_OPEN) : end].strip()
+        try:
+            payload = json.loads(payload_text)
+            if not isinstance(payload, dict) or payload.get("schema_version", 1) != 1:
+                return visible, ()
+            frames_raw = payload.get("frames", [])
+            if not isinstance(frames_raw, list):
+                return visible, ()
+            return visible, tuple(_frame_from_wire(item) for item in frames_raw)
+        except Exception as exc:
+            _logger.warning("invalid MR semantic sidecar; ignoring: %s", exc)
+            return visible, ()
     except Exception as exc:
-        _logger.warning("invalid MR semantic sidecar; ignoring: %s", exc)
+        _logger.warning("MR semantic sidecar extraction failed: %s", exc)
         return clean, ()
 
 def _strip_host_system_note(message: str) -> str:
