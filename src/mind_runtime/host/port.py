@@ -25,6 +25,7 @@ from mind_runtime.contracts.host import (
     HostProactiveTurnResult,
     HostProviderProseRequest,
     HostProviderProseResult,
+    HostSemanticSidecarRequest,
     HostTurnRequest,
     HostTurnResult,
     HostWakeNotification,
@@ -38,7 +39,9 @@ class MindRuntimeHostPort(Protocol):
 
     Inbound interaction operations:
 
-      begin_turn(request)           : start a turn for a given user interaction.
+      prepare_turn(request)         : open/ingest a turn before the one Body inference.
+      submit_semantic_sidecar(req)  : resolve that same turn from Body's sidecar.
+      begin_turn(request)           : compatibility full-turn entrypoint.
       commit_turn(request)          : promote the turn's projection to canonical.
       guard_provider_prose(request) : evaluate provider prose before external message delivery.
       abort_turn(request)           : discard the cognitive projection. Durable facts survive.
@@ -55,6 +58,13 @@ class MindRuntimeHostPort(Protocol):
     The port is a Protocol so Hosts can be unit-tested with a fake
     implementation; the production implementation is `MindRuntimeHostAdapter`.
     """
+
+    def prepare_turn(self, request: HostTurnRequest) -> HostTurnResult: ...
+
+    def submit_semantic_sidecar(
+        self,
+        request: HostSemanticSidecarRequest,
+    ) -> HostTurnResult: ...
 
     def begin_turn(self, request: HostTurnRequest) -> HostTurnResult: ...
 
