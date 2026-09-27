@@ -732,6 +732,65 @@ def compile_condition(
             coverage_summary="no_relationship_history",
         )
 
+    if longitudinal_view.earlier_pattern is not None:
+        ep = longitudinal_view.earlier_pattern
+        rc = longitudinal_view.recent_segment
+        rep = longitudinal_view.repair_evidence
+
+        parts: list[str] = []
+        if ep.occurrence_count > 0:
+            span_str = (
+                f" across {int(round(ep.covered_time_span_days / 7.0))} weeks"
+                if ep.covered_time_span_days >= 14
+                else (f" over {int(ep.covered_time_span_days)} days" if ep.covered_time_span_days > 0 else "")
+            )
+            parts.append(
+                f"Earlier covered appraisal history for {participant_id}: {ep.occurrence_count} independent occurrences"
+                f"{span_str}; appraisal valence predominantly {ep.predominant_valence} "
+                f"({ep.positive_count} positive, {ep.neutral_count} neutral, {ep.negative_count} negative)."
+            )
+        else:
+            parts.append(
+                f"Covered appraisal history for {participant_id}: {longitudinal_view.total_record_count} interactions; "
+                f"appraisal valence predominantly {longitudinal_view.earlier_predominant_valence}."
+            )
+
+        if rc is not None and rc.occurrence_count > 0:
+            if rc.has_recent_deviation:
+                streak_desc = (
+                    f"{rc.consecutive_valence_streak} consecutive {rc.streak_valence}"
+                    if rc.consecutive_valence_streak > 1
+                    else f"{rc.occurrence_count} {rc.streak_valence or rc.predominant_valence}"
+                )
+                parts.append(
+                    f"Recent covered segment: {streak_desc} appraisal occurrences, differing from the earlier distribution."
+                )
+            else:
+                parts.append(
+                    f"Recent covered segment: {rc.occurrence_count} occurrences, consistent with earlier pattern."
+                )
+
+        if rep is not None:
+            if rep.has_behavioral_repair:
+                parts.append(
+                    f"Subsequent behavior consistent with repair observed ({rep.behavioral_repair_count} occurrences)."
+                )
+            elif rep.has_verbal_repair:
+                parts.append(
+                    "Verbal repair signal recorded; no subsequent behavioral fulfillment observed."
+                )
+
+        if any(t.has_reappraisal for t in longitudinal_view.revision_trajectories):
+            parts.append("One earlier event was later reappraised after additional context.")
+
+        condition_text = " ".join(parts)
+        return TurnConditionProjection(
+            condition_text=condition_text,
+            is_omitted=False,
+            omission_reason=None,
+            coverage_summary=f"{longitudinal_view.total_record_count}_interactions",
+        )
+
     span_str = (
         f" over {int(longitudinal_view.covered_time_span_days)} days"
         if longitudinal_view.covered_time_span_days > 0

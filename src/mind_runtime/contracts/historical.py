@@ -80,6 +80,62 @@ class HistoricalContextBundle:
 
 
 @dataclass(frozen=True, slots=True)
+class EarlierPatternSummary:
+    """Bounded summary of earlier covered appraisal pattern."""
+
+    occurrence_count: int
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    covered_time_span_days: float
+    predominant_valence: str
+    first_occurrence_at: datetime | None = None
+    last_occurrence_at: datetime | None = None
+    is_empty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RecentSegmentSummary:
+    """Bounded summary of recent appraisal segment and deviation status."""
+
+    occurrence_count: int
+    positive_count: int
+    negative_count: int
+    neutral_count: int
+    predominant_valence: str
+    consecutive_valence_streak: int = 0
+    streak_valence: str = "neutral"
+    has_recent_deviation: bool = False
+    deviation_reason: str | None = None
+    is_empty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RepairEvidenceSummary:
+    """Bounded summary of verbal and behavioral repair evidence."""
+
+    verbal_repair_count: int = 0
+    behavioral_repair_count: int = 0
+    has_verbal_repair: bool = False
+    has_behavioral_repair: bool = False
+    repair_assessment: str = "none"  # "none", "verbal_only", "behavioral_supported"
+    details: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AppraisalRevisionTrajectory:
+    """Trajectory of appraisal revisions for a single canonical occurrence."""
+
+    occurrence_id: str
+    source_occurred_at: datetime
+    revisions: tuple[object, ...]
+    effective_appraisal: object
+    has_reappraisal: bool
+    initial_valence: str
+    effective_valence: str
+
+
+@dataclass(frozen=True, slots=True)
 class LongitudinalQuery:
     """A bounded query for longitudinal appraisal history."""
 
@@ -88,6 +144,10 @@ class LongitudinalQuery:
     as_of: datetime
     max_records: int = 256
     recent_days: int = 7
+    recent_since: datetime | None = None
+    recent_window_days: int = 7
+    min_earlier_occurrences: int = 3
+    min_recent_occurrences: int = 1
 
     def __post_init__(self) -> None:
         require_non_empty(self.relationship_id, "relationship_id")
@@ -95,6 +155,12 @@ class LongitudinalQuery:
             raise ValueError("max_records must be positive")
         if isinstance(self.recent_days, bool) or self.recent_days < 0:
             raise ValueError("recent_days must be non-negative")
+        if isinstance(self.recent_window_days, bool) or self.recent_window_days < 0:
+            raise ValueError("recent_window_days must be non-negative")
+        if isinstance(self.min_earlier_occurrences, bool) or self.min_earlier_occurrences < 0:
+            raise ValueError("min_earlier_occurrences must be non-negative")
+        if isinstance(self.min_recent_occurrences, bool) or self.min_recent_occurrences < 0:
+            raise ValueError("min_recent_occurrences must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,5 +183,8 @@ class LongitudinalView:
     is_empty: bool = False
     distinct_root_count: int = 0
     raw_record_count: int = 0
-
-
+    earlier_pattern: EarlierPatternSummary | None = None
+    recent_segment: RecentSegmentSummary | None = None
+    repair_evidence: RepairEvidenceSummary | None = None
+    revision_trajectories: tuple[AppraisalRevisionTrajectory, ...] = ()
+    unresolved_record_count: int = 0
