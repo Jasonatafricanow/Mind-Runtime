@@ -84,6 +84,99 @@ _SYSTEM_NOTE_PREFIX = (
 )
 
 
+_SIDECAR_OPEN = "<MR_SEMANTIC_SIDECAR>"
+_SIDECAR_CLOSE = "</MR_SEMANTIC_SIDECAR>"
+
+_SINGLE_PASS_SEMANTIC_INSTRUCTION = """MR single-pass sidecar protocol.
+Answer the user normally. Do not expose chain-of-thought or hidden reasoning.
+At the very end append one machine block:
+<MR_SEMANTIC_SIDECAR>
+{"schema_version":1,"frames":[...]}
+</MR_SEMANTIC_SIDECAR>
+Each frame describes one semantic meaning, not an event category.
+Required fields: frame_id, meanings, confidence, valence, salience,
+appraisal_confidence, factors. factors is sparse and values are in [0,1].
+V1 affect-consumed factor names are separation, connection, loss, threat,
+uncertainty, lack_of_control, obstruction, other_blame, opportunity,
+anticipation, relationship_relevance. Omit unsupported factors; absence
+means unknown/not asserted. Never output affect deltas, final affect values,
+state dimensions, policy decisions, or memory authority. frames may be [].
+event_hint and attributes are optional legacy metadata and normally omitted.
+"""
+
+
+def single_pass_semantic_instruction() -> str:
+    """Prompt contract for one Body inference; never causes another model call."""
+
+    return _SINGLE_PASS_SEMANTIC_INSTRUCTION
+
+
+def _frame_from_wire(raw: object) -> Any:
+    from mind_runtime.contracts import BodySemanticFrame
+
+    if not isinstance(raw, dict):
+        raise ValueError("semantic frame must be an object")
+    factors_raw = raw.get("factors", {})
+    if isinstance(factors_raw, dict):
+        factors = tuple((str(k), float(v)) for k, v in factors_raw.items())
+    elif isinstance(factors_raw, list):
+        factors = tuple((str(item[0]), float(item[1])) for item in factors_raw)
+    else:
+        raise ValueError("semantic frame factors must be an object or pair list")
+    attrs_raw = raw.get("attributes", {})
+    if isinstance(attrs_raw, dict):
+        attributes = tuple((str(k), str(v)) for k, v in attrs_raw.items())
+    elif isinstance(attrs_raw, list):
+        attributes = tuple((str(item[0]), str(item[1])) for item in attrs_raw)
+    else:
+        raise ValueError("semantic frame attributes must be an object or pair list")
+    refs = tuple(str(v) for v in raw.get("supporting_evidence_refs", ()))
+    hint = raw.get("event_hint")
+    return BodySemanticFrame(
+        frame_id=str(raw["frame_id"]),
+        meanings=tuple(str(v) for v in raw["meanings"]),
+        confidence=float(raw["confidence"]),
+        valence=str(raw["valence"]),
+        salience=(None if raw.get("salience") is None else float(raw["salience"])),
+        appraisal_confidence=float(raw["appraisal_confidence"]),
+        factors=factors,
+        supporting_evidence_refs=refs,
+        event_hint=(None if hint is None else str(hint)),
+        attributes=attributes,
+        schema_version=int(raw.get("schema_version", 1)),
+    )
+
+
+def extract_single_pass_semantics(result: object) -> tuple[str | None, tuple[Any, ...]]:
+    """Extract and strip a Body sidecar without invoking the model again."""
+
+    if not isinstance(result, dict):
+        return None, ()
+    response = result.get("final_response")
+    clean = response if isinstance(response, str) else None
+    raw_frames = result.get("mr_semantic_frames")
+    try:
+        if isinstance(raw_frames, list):
+            return clean, tuple(_frame_from_wire(item) for item in raw_frames)
+        if clean is None:
+            return clean, ()
+        start = clean.rfind(_SIDECAR_OPEN)
+        end = clean.rfind(_SIDECAR_CLOSE)
+        if start < 0 or end < start:
+            return clean, ()
+        payload_text = clean[start + len(_SIDECAR_OPEN) : end].strip()
+        payload = json.loads(payload_text)
+        if not isinstance(payload, dict) or payload.get("schema_version", 1) != 1:
+            return clean, ()
+        frames_raw = payload.get("frames", [])
+        if not isinstance(frames_raw, list):
+            return clean, ()
+        visible = (clean[:start] + clean[end + len(_SIDECAR_CLOSE) :]).strip()
+        return visible, tuple(_frame_from_wire(item) for item in frames_raw)
+    except Exception as exc:
+        _logger.warning("invalid MR semantic sidecar; ignoring: %s", exc)
+        return clean, ()
+
 def _strip_host_system_note(message: str) -> str:
     """Remove the gateway's host-dialogue system-note wrapper, if present."""
     if isinstance(message, str) and message.startswith(_SYSTEM_NOTE_PREFIX):
