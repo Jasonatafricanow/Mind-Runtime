@@ -42,16 +42,13 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
-    AppraisalModelProposal,
     Authority,
     AuthorityLevel,
-    BodySemanticSidecar,
     Evidence,
     ExpressionDisposition,
     IntentStatus,
     Interaction,
     InteractionStatus,
-    SemanticEventCandidate,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -147,55 +144,6 @@ def _evidence_from_request(request: HostTurnRequest) -> Evidence:
         payload={"text": request.user_message},
         sync=sync,
     )
-
-
-def _body_semantics_from_sidecar(
-    *,
-    sidecar: BodySemanticSidecar,
-    request: HostTurnRequest,
-    evidence: Evidence,
-) -> tuple[
-    tuple[SemanticEventCandidate, ...],
-    tuple[tuple[str, AppraisalModelProposal], ...],
-]:
-    """Translate open Body semantics into MR's internal compatibility carriers.
-
-    Open meanings remain primary. A missing typed_event_hint maps to an internal
-    open-semantic sentinel, which intentionally has no legacy EventEffectRule
-    unless MR explicitly configures one. Body never supplies affect deltas.
-    """
-
-    candidates: list[SemanticEventCandidate] = []
-    appraisals: list[tuple[str, AppraisalModelProposal]] = []
-    for frame in sidecar.frames:
-        hint = frame.typed_event_hint
-        candidate = SemanticEventCandidate(
-            candidate_id=frame.frame_id,
-            scope=request.scope,
-            origin_runtime_id=request.runtime_id,
-            kind=(hint.kind if hint is not None else "__open_semantic__"),
-            attributes=(hint.attributes if hint is not None else ()),
-            confidence=(
-                hint.confidence if hint is not None else frame.meaning_confidence
-            ),
-            evidence_refs=(evidence.id,),
-        )
-        supporting = (
-            frame.supporting_evidence_refs
-            if frame.supporting_evidence_refs
-            else (evidence.id,)
-        )
-        appraisal = AppraisalModelProposal(
-            meanings=frame.meanings,
-            valence=frame.valence or "neutral",
-            relationship_relevance=frame.relationship_relevance or "unspecified",
-            salience=frame.salience,
-            appraisal_confidence=frame.appraisal_confidence,
-            supporting_evidence_refs=supporting,
-        )
-        candidates.append(candidate)
-        appraisals.append((frame.frame_id, appraisal))
-    return tuple(candidates), tuple(appraisals)
 
 
 def _decision_context_ref(orchestrator: TurnOrchestrator) -> str | None:
@@ -517,17 +465,8 @@ class MindRuntimeHostAdapter:
                 reason_codes=("turn_mismatch",),
             )
 
-        evidence = _evidence_from_request(pending)
-        candidates, appraisals = _body_semantics_from_sidecar(
-            sidecar=request.sidecar,
-            request=pending,
-            evidence=evidence,
-        )
         try:
-            self._orchestrator.bind_body_semantics(
-                semantic_candidates=candidates,
-                appraisal_proposals=appraisals,
-            )
+            self._orchestrator.bind_body_semantic_sidecar(request.sidecar)
             self._orchestrator.run()
             bounded = _bounded_context(self._orchestrator)
             return HostTurnResult(
@@ -540,10 +479,12 @@ class MindRuntimeHostAdapter:
                 expression_ref=_expression_ref(self._orchestrator),
                 debug_ref=f"debug-{request.interaction_id}",
                 reason_codes=(
-                    "body_sidecar_resolved"
-                    if request.sidecar.frames
-                    else "body_sidecar_empty"
-                ,),
+                    (
+                        "body_sidecar_resolved"
+                        if request.sidecar.frames
+                        else "body_sidecar_empty"
+                    ),
+                ),
             )
         except Exception as exc:
             _logger.warning("HI-1 semantic sidecar resolution failed: %s", exc)
