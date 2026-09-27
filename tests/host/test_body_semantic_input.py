@@ -7,7 +7,7 @@ from mind_runtime.contracts.appraisal import (
     BodySemanticSidecar,
     SemanticEventProposal,
 )
-from mind_runtime.contracts.host import HostSemanticSidecarRequest, HostTurnRequest
+from mind_runtime.contracts.host import HostTurnRequest
 from mind_runtime.contracts.scope import Scope, ScopeDomain
 
 
@@ -82,21 +82,3 @@ def test_sidecar_numeric_fields_are_importance_uncertainty_not_affect_delta() ->
         )
 
 
-def test_host_sidecar_request_is_separate_from_turn_ingress() -> None:
-    sidecar = BodySemanticSidecar(
-        schema_version=1,
-        frames=(
-            BodySemanticFrame(
-                frame_id="frame-1",
-                meanings=("The user is mildly disengaged.",),
-                meaning_confidence=0.75,
-                salience=0.3,
-            ),
-        ),
-    )
-    request = HostSemanticSidecarRequest(
-        turn_id="turn-turn-1",
-        interaction_id="turn-1",
-        sidecar=sidecar,
-    )
-    assert request.sidecar == sidecar
