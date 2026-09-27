@@ -95,11 +95,18 @@ At the very end append one machine block:
 </MR_SEMANTIC_SIDECAR>
 Each frame describes one semantic meaning, not an event category.
 Required fields: frame_id, meanings, confidence, valence, salience,
-appraisal_confidence, factors. factors is sparse and values are in [0,1].
-V1 affect-consumed factor names are separation, connection, loss, threat,
-uncertainty, lack_of_control, obstruction, other_blame, opportunity,
-anticipation, relationship_relevance. Omit unsupported factors; absence
-means unknown/not asserted. Never output affect deltas, final affect values,
+appraisal_confidence, factors. confidence, salience, appraisal_confidence,
+and factor values are normalized [0,1] judgments, never MR state units.
+valence must be positive, negative, neutral, or mixed.
+Factor semantics: separation=distance/loss of access; connection=closeness
+or reconnection; loss=loss of a valued outcome; threat=risk of a negative
+outcome; uncertainty=outcome unresolved; lack_of_control=low ability to
+influence the outcome; obstruction=goal blocked; other_blame=obstruction
+attributed to another agent; opportunity=positive/reward potential;
+anticipation=future-oriented positive expectation; relationship_relevance=
+relevance to an important relationship. Omit unsupported factors; absence
+means unknown/not asserted. Unknown factor names may be preserved but are
+ignored by V1 Affect. Never output affect deltas, final affect values,
 state dimensions, policy decisions, or memory authority. frames may be [].
 event_hint and attributes are optional legacy metadata and normally omitted.
 """
