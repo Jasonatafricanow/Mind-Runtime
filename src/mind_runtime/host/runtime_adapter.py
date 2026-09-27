@@ -42,13 +42,16 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
+    AppraisalModelProposal,
     Authority,
     AuthorityLevel,
+    BodySemanticSidecar,
     Evidence,
     ExpressionDisposition,
     IntentStatus,
     Interaction,
     InteractionStatus,
+    SemanticEventCandidate,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -61,6 +64,7 @@ from mind_runtime.contracts.host import (
     HostInspectResult,
     HostProactiveTurnResult,
     HostProviderProseRequest,
+    HostSemanticSidecarRequest,
     HostProviderProseResult,
     HostStatus,
     HostTurnRequest,
@@ -143,6 +147,55 @@ def _evidence_from_request(request: HostTurnRequest) -> Evidence:
         payload={"text": request.user_message},
         sync=sync,
     )
+
+
+def _body_semantics_from_sidecar(
+    *,
+    sidecar: BodySemanticSidecar,
+    request: HostTurnRequest,
+    evidence: Evidence,
+) -> tuple[
+    tuple[SemanticEventCandidate, ...],
+    tuple[tuple[str, AppraisalModelProposal], ...],
+]:
+    """Translate open Body semantics into MR's internal compatibility carriers.
+
+    Open meanings remain primary. A missing typed_event_hint maps to an internal
+    open-semantic sentinel, which intentionally has no legacy EventEffectRule
+    unless MR explicitly configures one. Body never supplies affect deltas.
+    """
+
+    candidates: list[SemanticEventCandidate] = []
+    appraisals: list[tuple[str, AppraisalModelProposal]] = []
+    for frame in sidecar.frames:
+        hint = frame.typed_event_hint
+        candidate = SemanticEventCandidate(
+            candidate_id=frame.frame_id,
+            scope=request.scope,
+            origin_runtime_id=request.runtime_id,
+            kind=(hint.kind if hint is not None else "__open_semantic__"),
+            attributes=(hint.attributes if hint is not None else ()),
+            confidence=(
+                hint.confidence if hint is not None else frame.meaning_confidence
+            ),
+            evidence_refs=(evidence.id,),
+        )
+        supporting = (
+            frame.supporting_evidence_refs
+            if frame.supporting_evidence_refs
+            else (evidence.id,)
+        )
+        appraisal = AppraisalModelProposal(
+            meanings=frame.meanings,
+            valence=frame.valence or "neutral",
+            relationship_relevance=frame.relationship_relevance or "unspecified",
+            salience=frame.salience,
+            appraisal_confidence=frame.appraisal_confidence,
+            supporting_evidence_refs=supporting,
+        )
+        candidates.append(candidate)
+        appraisals.append((frame.frame_id, appraisal))
+    return tuple(candidates), tuple(appraisals)
 
 
 def _decision_context_ref(orchestrator: TurnOrchestrator) -> str | None:
@@ -365,6 +418,8 @@ class MindRuntimeHostAdapter:
         # FrozenMapping internals. Cleared when the terminal record
         # is written.
         self._pending_user_message: dict[str, str] = {}
+        self._pending_requests: dict[str, HostTurnRequest] = {}
+        self._last_bounded_context: HostDecisionContext | None = None
 
     @property
     def orchestrator(self) -> TurnOrchestrator:
@@ -372,6 +427,141 @@ class MindRuntimeHostAdapter:
         return self._orchestrator
 
     # ----- begin_turn --------------------------------------------------
+
+    def prepare_turn(self, request: HostTurnRequest) -> HostTurnResult:
+        """Open and ingest one reactive turn, but do not resolve cognition yet.
+
+        Xiyue uses this before its single Body inference. The returned bounded
+        context is the last committed MR context, if any. Current-turn semantic
+        meaning arrives later through submit_semantic_sidecar(); no model call
+        occurs in either method.
+        """
+
+        terminal = self._terminal.get(request.interaction_id)
+        if terminal is not None:
+            return self._handle_replay(request, terminal)
+
+        interaction = _interaction_from_request(request)
+        evidence = _evidence_from_request(request)
+        try:
+            self._orchestrator.begin_turn(interaction)
+            ingest_outcome = self._orchestrator.ingest(evidence)
+            if ingest_outcome is None and evidence.id not in (
+                ev.id for ev in self._orchestrator.observations
+            ):
+                outcome = HostStatus.DEGRADED
+                reason_codes = ("fact_pending", "awaiting_body_sidecar")
+            else:
+                outcome = HostStatus.OK
+                reason_codes = ("ingest_committed", "awaiting_body_sidecar")
+            self._pending_user_message[request.interaction_id] = request.user_message
+            self._pending_requests[request.interaction_id] = request
+            return HostTurnResult(
+                turn_id=interaction.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.PROCESSING,
+                outcome=outcome,
+                bounded_context=self._last_bounded_context,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=reason_codes,
+            )
+        except Exception as exc:
+            _logger.warning("HI-1 prepare_turn failed: %s", exc)
+            try:
+                self._orchestrator.abort_turn()
+            except Exception as _abort_err:
+                _logger.debug("HI-1 abort_turn on prepare failure: %s", _abort_err)
+            return HostTurnResult(
+                turn_id=interaction.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                bounded_context=None,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=("prepare_failed", type(exc).__name__),
+            )
+
+    def submit_semantic_sidecar(
+        self,
+        request: HostSemanticSidecarRequest,
+    ) -> HostTurnResult:
+        """Resolve the already-open turn using the Body's same-inference sidecar."""
+
+        pending = self._pending_requests.get(request.interaction_id)
+        if pending is None:
+            return HostTurnResult(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                bounded_context=None,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=("no_prepared_turn",),
+            )
+        if request.turn_id != f"turn-{request.interaction_id}":
+            return HostTurnResult(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                bounded_context=None,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=("turn_mismatch",),
+            )
+
+        evidence = _evidence_from_request(pending)
+        candidates, appraisals = _body_semantics_from_sidecar(
+            sidecar=request.sidecar,
+            request=pending,
+            evidence=evidence,
+        )
+        try:
+            self._orchestrator.bind_body_semantics(
+                semantic_candidates=candidates,
+                appraisal_proposals=appraisals,
+            )
+            self._orchestrator.run()
+            bounded = _bounded_context(self._orchestrator)
+            return HostTurnResult(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=_to_turn_status(self._orchestrator.state),
+                outcome=HostStatus.OK,
+                bounded_context=bounded,
+                decision_context_ref=_decision_context_ref(self._orchestrator),
+                expression_ref=_expression_ref(self._orchestrator),
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=(
+                    "body_sidecar_resolved"
+                    if request.sidecar.frames
+                    else "body_sidecar_empty"
+                ,),
+            )
+        except Exception as exc:
+            _logger.warning("HI-1 semantic sidecar resolution failed: %s", exc)
+            try:
+                self._orchestrator.abort_turn()
+            except Exception as _abort_err:
+                _logger.debug("HI-1 abort on sidecar failure: %s", _abort_err)
+            return HostTurnResult(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                bounded_context=None,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=("sidecar_failed", type(exc).__name__),
+            )
 
     def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
         # REPLAY GUARD (Host-level idempotency).
@@ -1489,6 +1679,9 @@ class MindRuntimeHostAdapter:
         bounded = _bounded_context(self._orchestrator)
         terminal_status = HostTurnStatus.COMMITTED if committed else HostTurnStatus.ABORTED
         user_message = self._pending_user_message.pop(interaction_id, "")
+        self._pending_requests.pop(interaction_id, None)
+        if committed and bounded is not None:
+            self._last_bounded_context = bounded
         self._terminal[interaction_id] = _TerminalRecord(
             interaction_id=interaction_id,
             user_message=user_message,
