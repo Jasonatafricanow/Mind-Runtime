@@ -34,7 +34,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
-from mind_runtime.contracts.appraisal import AppraisalModelProposal, SemanticEventProposal
+from mind_runtime.contracts.appraisal import BodySemanticSidecar
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
 
@@ -87,10 +87,11 @@ class HostTurnStatus(StrEnum):
 class HostTurnRequest:
     """PUBLIC. What a Host passes to begin a turn.
 
-    Fields are deliberately narrow. A Host cannot supply:
-      * numeric affect deltas
+    Fields are deliberately narrow. Current-turn semantic meaning is not supplied\n    here; the normal Body inference may later emit a separate semantic sidecar.\n    A Host cannot supply:\n      * numeric affect deltas
       * final affect values
-      * shock / salience / urgency / timescale
+      * numeric affect deltas or direct state-transition amounts
+      * final affect values
+      * shock / urgency / timescale
       * persona mutation
       * memory authority results
       * authoritative appraisal results
@@ -104,8 +105,6 @@ class HostTurnRequest:
     channel: str = "default"
     session_id: str | None = None
     host_metadata: tuple[tuple[str, str], ...] = ()
-    semantic_proposals: tuple[SemanticEventProposal, ...] = ()
-    appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -117,26 +116,28 @@ class HostTurnRequest:
         # session_id may be None (some Hosts do not have a session concept)
         if self.session_id is not None:
             require_non_empty(self.session_id, "session_id")
-        semantic_ids: list[str] = []
-        for semantic_proposal in self.semantic_proposals:
-            if not isinstance(semantic_proposal, SemanticEventProposal):
-                raise ValueError("semantic_proposals must contain SemanticEventProposal")
-            semantic_ids.append(semantic_proposal.candidate_id)
-        if len(set(semantic_ids)) != len(semantic_ids):
-            raise ValueError("semantic proposal ids must be unique")
-        appraisal_ids: list[str] = []
-        for candidate_id, appraisal_proposal in self.appraisal_proposals:
-            require_non_empty(candidate_id, "appraisal proposal candidate_id")
-            if not isinstance(appraisal_proposal, AppraisalModelProposal):
-                raise ValueError("appraisal_proposals must contain AppraisalModelProposal")
-            appraisal_ids.append(candidate_id)
-        if len(set(appraisal_ids)) != len(appraisal_ids):
-            raise ValueError("appraisal proposal candidate ids must be unique")
-        if set(appraisal_ids) != set(semantic_ids):
-            raise ValueError(
-                "appraisal proposals must exactly cover supplied semantic proposals"
-            )
 
+
+
+@dataclass(frozen=True, slots=True)
+class HostSemanticSidecarRequest:
+    """PUBLIC. Semantic by-product of the same Body inference as the reply.
+
+    The sidecar is submitted separately from HostTurnRequest so opening an MR
+    turn never implies a second model call and never forces semantic meaning
+    into a finite event taxonomy. MR remains responsible for validating and
+    translating any sidecar content before it can affect canonical state.
+    """
+
+    turn_id: str
+    interaction_id: str
+    sidecar: BodySemanticSidecar
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.turn_id, "turn_id")
+        require_non_empty(self.interaction_id, "interaction_id")
+        if not isinstance(self.sidecar, BodySemanticSidecar):
+            raise ValueError("sidecar must be a BodySemanticSidecar")
 
 @dataclass(frozen=True, slots=True)
 class HostCommitRequest:
