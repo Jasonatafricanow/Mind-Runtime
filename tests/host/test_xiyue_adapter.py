@@ -22,10 +22,11 @@ from pathlib import Path
 
 import pytest
 
-from mind_runtime.contracts import Scope, ScopeDomain
+from mind_runtime.contracts import BodySemanticSidecar, Scope, ScopeDomain
 from mind_runtime.contracts.host import (
     HostAbortReceipt,
     HostCommitReceipt,
+    HostSemanticSidecarRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnResult,
@@ -49,9 +50,10 @@ class FakePort:
         self.begins: list[HostTurnRequest] = []
         self.commits = 0
         self.aborts = 0
+        self.sidecars: list[HostSemanticSidecarRequest] = []
         self.fail_begin = False
 
-    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
+    def prepare_turn(self, request: HostTurnRequest) -> HostTurnResult:
         self.begins.append(request)
         if self.fail_begin:
             raise RuntimeError("provider timeout")
@@ -76,6 +78,23 @@ class FakePort:
             expression_ref=None,
             debug_ref="dbg-1",
             reason_codes=("ingest_committed",),
+        )
+
+    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
+        return self.prepare_turn(request)
+
+    def submit_semantic_sidecar(self, request: HostSemanticSidecarRequest) -> HostTurnResult:
+        self.sidecars.append(request)
+        return HostTurnResult(
+            turn_id=request.turn_id,
+            interaction_id=request.interaction_id,
+            status=HostTurnStatus.PROCESSING,
+            outcome=HostStatus.OK,
+            bounded_context=None,
+            decision_context_ref="dc-sidecar",
+            expression_ref=None,
+            debug_ref="dbg-sidecar",
+            reason_codes=("body_sidecar_resolved",),
         )
 
     def commit_turn(self, request) -> HostCommitReceipt:
@@ -214,6 +233,20 @@ def test_render_bounded_context_typed_boundary() -> None:
     )()
     with pytest.raises(AttributeError, match="cognitive_meaning"):
         render_bounded_context(malformed)
+
+
+def test_a4b_same_inference_sidecar_resolves_prepared_turn(
+    monkeypatch, adapter: XiyueMRAdapter, port: FakePort
+) -> None:
+    monkeypatch.setenv("MR_ENABLED", "true")
+    handle = adapter.begin_turn(
+        message="hi", channel="telegram", session_id="s1", message_id="m1"
+    )
+    assert handle is not None
+    sidecar = BodySemanticSidecar(schema_version=1, frames=())
+    assert adapter.submit_semantic_sidecar(handle, sidecar) is True
+    assert len(port.begins) == 1
+    assert len(port.sidecars) == 1
 
 
 # ── A5: commit after success ─────────────────────────────────────────────────
