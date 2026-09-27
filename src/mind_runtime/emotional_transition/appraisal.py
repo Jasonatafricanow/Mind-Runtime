@@ -340,6 +340,7 @@ class SemanticAppraisalProducer:
                 confidence=proposal.appraisal_confidence,
                 evidence_refs=evidence_refs,
                 salience=proposal.salience,
+                factors=proposal.factors,
             ),
             True,
         )
