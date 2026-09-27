@@ -166,10 +166,12 @@ The corrected boundary is stricter than the first migration draft:
   canonical state can change.
 
 The first receiver-side draft incorrectly made event-shaped semantic proposals part of
-HostTurnRequest. That ingress coupling has been removed. The branch stays draft until
-the Host can accept the same-inference sidecar at the correct post-Body lifecycle seam
-and the general affect projection no longer depends on event_kind -> base_amount as
-its universal semantic bridge.
+HostTurnRequest. That ingress coupling has been removed. The Host now has a two-phase
+lifecycle inside one MR turn: prepare/ingest before the one normal Body inference,
+then same-inference sidecar submission before the single MR resolution pass. The
+branch stays draft because the real Body provider has not yet proven native sidecar
+emission and the general affect projection still lacks an open-appraisal algorithm
+beyond legacy event_kind -> base_amount compatibility recipes.
 
 Relevant evidence:
 
