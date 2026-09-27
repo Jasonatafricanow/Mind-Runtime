@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from lce.reference_memory.contracts import SemanticBlock
     from lce.semantic.contracts import SemanticDecisionProvider
     from lce.structure.contracts import StructureConfig
+    from lce.structure.frontier import FrontierDiscoveryConfig
 
 
 class AmlRequestConflict(ValueError):
@@ -213,6 +214,7 @@ class AmlMemoryRuntime:
         lce_interpreter: BoundedInterpreter | None = None,
         lce_policy: PromotionPolicy | None = None,
         lce_structure_config: StructureConfig | None = None,
+        lce_frontier_config: FrontierDiscoveryConfig | None = None,
     ) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -225,6 +227,7 @@ class AmlMemoryRuntime:
         self._lce_interpreter = lce_interpreter
         self._lce_policy = lce_policy
         self._lce_structure_config = lce_structure_config
+        self._lce_frontier_config = lce_frontier_config
         self._locks_guard = threading.Lock()
         self._locks: dict[str, threading.RLock] = {}
         self._retrieval_cache: OrderedDict[str, RetrievalProvider] = OrderedDict()
@@ -561,6 +564,7 @@ class AmlMemoryRuntime:
                     interpreter=self._lce_interpreter,
                     policy=self._lce_policy,
                     structure_config=self._lce_structure_config,
+                    frontier_config=self._lce_frontier_config,
                     block_embedder=block_embedder,
                     block_embedding_version=block_embedding_version,
                     lab_root=self.root,
@@ -769,6 +773,7 @@ class AmlMemoryRuntime:
             interpreter=self._lce_interpreter,
             policy=self._lce_policy,
             structure_config=self._lce_structure_config,
+            frontier_config=self._lce_frontier_config,
             block_embedder=block_embedder,
             block_embedding_version=block_embedding_version,
             lab_root=self.root,
