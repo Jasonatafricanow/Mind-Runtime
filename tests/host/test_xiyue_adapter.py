@@ -323,3 +323,57 @@ def test_a10_seam_commit_or_abort(monkeypatch, adapter: XiyueMRAdapter, port: Fa
             adapter.abort_turn(handle, reason="empty_response")
     assert port.commits == 1
     assert port.aborts == 0
+
+
+def test_same_inference_transform_strips_sidecar_and_retains_metadata() -> None:
+    from xiyue import mr_seam
+
+    session_id = "semantic-transform-test"
+    raw = (
+        "正常回复。\n"
+        "<mr_semantic_sidecar>"
+        '{"schema_version":1,"frames":[{"frame_id":"f1",'
+        '"meanings":["用户确认了安排"],"meaning_confidence":0.9,'
+        '"salience":0.5}]}'
+        "</mr_semantic_sidecar>"
+    )
+    visible = mr_seam.transform_body_semantic_output(
+        raw,
+        session_id=session_id,
+        model="test",
+        platform="test",
+    )
+    assert visible == "正常回复。"
+    sidecar = mr_seam.take_body_semantic_sidecar(session_id)
+    assert len(sidecar.frames) == 1
+    assert sidecar.frames[0].meanings == ("用户确认了安排",)
+    assert sidecar.frames[0].typed_event_hint is None
+
+
+def test_same_inference_transform_never_exposes_malformed_sidecar() -> None:
+    from xiyue import mr_seam
+
+    session_id = "semantic-transform-malformed"
+    raw = (
+        "正常回复。\n"
+        "<mr_semantic_sidecar>{not-json}</mr_semantic_sidecar>"
+    )
+    visible = mr_seam.transform_body_semantic_output(
+        raw,
+        session_id=session_id,
+        model="test",
+        platform="test",
+    )
+    assert visible == "正常回复。"
+    sidecar = mr_seam.take_body_semantic_sidecar(session_id)
+    assert sidecar.frames == ()
+
+
+def test_semantic_prompt_contract_forbids_state_authority() -> None:
+    from xiyue import mr_seam
+
+    contract = mr_seam.body_semantic_prompt_contract()
+    assert "Do NOT emit affect deltas" in contract
+    assert "final affect values" in contract
+    assert "typed_event_hint must be omitted" in contract
+    assert "no material semantic update" in contract
