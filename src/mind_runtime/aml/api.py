@@ -175,6 +175,14 @@ def build_runtime_from_env() -> AmlMemoryRuntime:
             timeout_seconds=lce_timeout,
         )
 
+    lce_frontier_config = None
+    if "AML_LCE_FRONTIER_ENABLED" in os.environ:
+        from lce.structure.frontier import FrontierDiscoveryConfig
+
+        lce_frontier_config = FrontierDiscoveryConfig(
+            enabled=_env_bool("AML_LCE_FRONTIER_ENABLED", True)
+        )
+
     decision_backend = os.environ.get(
         "AML_DECISION_BACKEND",
         "none",
@@ -203,6 +211,7 @@ def build_runtime_from_env() -> AmlMemoryRuntime:
         thread_semantics=thread_semantics,
         lce_semantic_provider=lce_semantic_provider,
         lce_interpreter=lce_interpreter,
+        lce_frontier_config=lce_frontier_config,
     )
 
 
