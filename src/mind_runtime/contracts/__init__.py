@@ -77,7 +77,6 @@ from mind_runtime.contracts.historical import (
 from mind_runtime.contracts.host import (
     HostDecisionContext,
     HostProactiveTurnResult,
-    HostSemanticSidecarRequest,
     HostStatus,
     HostTurnStatus,
     HostWakeNotification,
@@ -187,7 +186,6 @@ __all__ = [
     "HistoricalContextQuery",
     "HostDecisionContext",
     "HostProactiveTurnResult",
-    "HostSemanticSidecarRequest",
     "HostStatus",
     "HostTurnStatus",
     "HostWakeNotification",
