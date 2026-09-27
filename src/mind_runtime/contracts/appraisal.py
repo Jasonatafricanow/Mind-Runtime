@@ -10,6 +10,7 @@ from mind_runtime.contracts.scope import Scope
 
 BODY_FACTOR_ATTRIBUTE_PREFIX = "__body_factor__:"
 BODY_EVENT_HINT_ATTRIBUTE = "__event_hint__"
+BODY_VALENCE_VALUES = frozenset({"positive", "negative", "neutral", "mixed"})
 
 
 def encode_body_factor_attributes(
@@ -129,6 +130,10 @@ class BodySemanticFrame:
         if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be in [0, 1]")
         require_non_empty(self.valence, "valence")
+        if self.valence not in BODY_VALENCE_VALUES:
+            raise ValueError(
+                "Body valence must be positive, negative, neutral, or mixed"
+            )
         if self.salience is not None and (
             isinstance(self.salience, bool) or not 0 <= self.salience <= 1
         ):
