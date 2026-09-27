@@ -189,3 +189,47 @@ def test_relationship_factors_can_raise_or_reduce_longing_without_event_taxonomy
     assert connected.impulses[0].amount < 0
     assert abs(separated.impulses[0].amount) <= 0.20
     assert abs(connected.impulses[0].amount) <= 0.20
+
+
+def test_normalized_body_factors_scale_to_runtime_dimension_span() -> None:
+    dimension = "agent.affect.anxiety"
+    wide_profile = AffectiveDimensionProfile(
+        dimension=dimension,
+        baseline=30.0,
+        initial_value=30.0,
+        sensitivity=1.0,
+        recovery_rate=0.2,
+        ceiling=100.0,
+        floor=0.0,
+        growth_profile=(),
+        coupling_profile=(),
+    )
+    persona = PersonaProfile(persona_id="agent-1", dimensions=(wide_profile,))
+    definitions = StateDefinitionRegistry(
+        (
+            StateDefinition(
+                key=dimension,
+                domain=StateDomain.AGENT,
+                value_type=StateValueType.SCALAR,
+                dynamics_policy="deterministic_affect",
+                default_validity_policy=None,
+                bounds=(0.0, 100.0),
+            ),
+        )
+    )
+    factors = (("threat", 0.9), ("uncertainty", 0.8))
+    projector = AppraisalProjector(
+        rules=(),
+        persona_profile=persona,
+        definitions=definitions,
+    )
+    projection = projector.project(
+        acceptance=_acceptance(factors=factors),
+        persona=persona.dimensions,
+    )
+    mapped = mapping_from_projection(projection)
+
+    # Same normalized semantic judgment as the 0..1 test, but converted into
+    # the target dimension's own units (20% max step over a 100-point span).
+    assert mapped.impulses[0].amount == pytest.approx(10.368)
+    assert mapped.impulses[0].amount <= 20.0
