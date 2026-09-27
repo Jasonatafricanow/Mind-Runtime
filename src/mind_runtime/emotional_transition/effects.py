@@ -8,6 +8,7 @@ from mind_runtime.contracts import (
     AssessmentContribution,
     HistoricalContextBundle,
     ScopeDomain,
+    decode_body_factor_attributes,
     SemanticRoutingResult,
     StateDomain,
     StateValueType,
@@ -535,7 +536,7 @@ class AppraisalProjector:
         """
 
         appraisal = acceptance.appraisal
-        factors = dict(appraisal.factors)
+        factors = dict(decode_body_factor_attributes(acceptance.candidate.attributes))
         if not factors or appraisal.salience is None:
             return MappedEffects((), (), ())
 
