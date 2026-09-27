@@ -412,6 +412,7 @@ class AppraisalProjector:
         provenance: tuple[str, ...] = ()
         status = None
         rule = self._rule_for(acceptance, routing)
+        is_body = acceptance is not None and acceptance.candidate.kind == "__body_semantic__"
         if acceptance is not None:
             c, a = acceptance.candidate, acceptance.appraisal
             candidate_ref, source = c.candidate_id, a.appraisal_id
@@ -432,7 +433,10 @@ class AppraisalProjector:
                 or acceptance.projection_scope.persona_id != acceptance.persona_id
             ):
                 status, reasons = ProjectionStatus.REJECTED, ("invalid_projection_scope_owner",)
-            elif c.kind in self._rules and acceptance.projection_scope is None:
+            elif (
+                (is_body or c.kind in self._rules)
+                and acceptance.projection_scope is None
+            ):
                 status, reasons = ProjectionStatus.REJECTED, ("missing_target_scope",)
             routing = SemanticRoutingResult(
                 AppraisalRouteDecision(
@@ -445,15 +449,24 @@ class AppraisalProjector:
             )
         if routing is None:
             raise ValueError("projection requires accepted appraisal or legacy route")
-        if status is None and rule is not None:
+        if status is None and is_body:
+            assert acceptance is not None
+            target_reason = self._body_target_reason(acceptance, persona)
+            if target_reason is not None:
+                status, reasons = ProjectionStatus.REJECTED, (target_reason,)
+        elif status is None and rule is not None:
             target_reason = self._target_reason(acceptance, rule, persona)
             if target_reason is not None:
                 status, reasons = ProjectionStatus.REJECTED, (target_reason,)
         if status is not None:
             mapped = MappedEffects((), (), (), abstention_reasons=reasons)
         else:
-            mapped = self._map_legacy(routing=routing, history=history)
-            if rule is not None:
+            if is_body:
+                assert acceptance is not None
+                mapped = self._map_body_factors(acceptance)
+            else:
+                mapped = self._map_legacy(routing=routing, history=history)
+            if not is_body and rule is not None:
                 mapped_reason = self._mapped_reason(mapped, rule)
                 if mapped_reason is not None:
                     status, reasons = ProjectionStatus.REJECTED, (mapped_reason,)
@@ -466,7 +479,11 @@ class AppraisalProjector:
                 status = ProjectionStatus.MAPPED
             elif acceptance is not None and not routing.abstention_reasons:
                 status = ProjectionStatus.UNMAPPED
-                reasons = ("no_runtime_projection_rule",)
+                reasons = (
+                    ("no_affect_factors",)
+                    if is_body
+                    else ("no_runtime_projection_rule",)
+                )
                 mapped = MappedEffects((), (), ())
             else:
                 status = ProjectionStatus.ABSTAINED
@@ -508,6 +525,55 @@ class AppraisalProjector:
         # Legacy mapping has no accepted appraisal or authoritative snapshot.
         # It remains the same numerical recipe owned by this one projector.
         return self._map_legacy(routing=routing, history=history)
+
+    def _map_body_factors(self, acceptance: AcceptedAppraisal) -> MappedEffects:
+        """Project open appraisal causes into bounded affect impulses.
+
+        The Body supplies semantic causes only. MR owns this deterministic
+        conversion and caps the pre-persona per-dimension delta. Unknown
+        factors remain valid semantic information but do not mutate affect.
+        """
+
+        appraisal = acceptance.appraisal
+        factors = dict(appraisal.factors)
+        if not factors or appraisal.salience is None:
+            return MappedEffects((), (), ())
+
+        owner = self._persona_profile
+        if owner is None:
+            return MappedEffects(
+                (), (), (), abstention_reasons=("missing_projection_authority",)
+            )
+
+        gain = _BODY_FACTOR_MAX_DELTA * appraisal.salience * appraisal.confidence
+        impulses: list[Impulse] = []
+        confidences: list[tuple[str, float]] = []
+        salience_by_source: dict[str, float | None] = {}
+        evidence_by_source: dict[str, tuple[str, ...]] = {}
+
+        for profile in owner.dimensions:
+            drive = _body_factor_drive(profile.dimension, factors)
+            if drive is None or abs(drive) <= 1e-12:
+                continue
+            amount = max(
+                -_BODY_FACTOR_MAX_DELTA,
+                min(_BODY_FACTOR_MAX_DELTA, gain * drive),
+            )
+            source = f"appraisal:{appraisal.appraisal_id}:{profile.dimension}"
+            impulses.append(Impulse(profile.dimension, amount, source))
+            confidences.append((source, appraisal.confidence))
+            salience_by_source[source] = appraisal.salience
+            evidence_by_source[source] = (
+                appraisal.evidence_refs or acceptance.candidate.evidence_refs
+            )
+
+        return MappedEffects(
+            impulses=tuple(impulses),
+            audit_contributions=(),
+            source_confidences=tuple(confidences),
+            salience_by_source=salience_by_source,
+            evidence_refs_by_source=evidence_by_source,
+        )
 
     def _map_legacy(
         self,
