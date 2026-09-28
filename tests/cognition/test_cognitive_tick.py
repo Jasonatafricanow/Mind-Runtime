@@ -830,7 +830,9 @@ def test_runtime_tick_runs_background_inspiration_before_existing_ticker(
     assert worker.calls == [(CognitiveMode.DREAM, now)]
     components = stack["orchestrator"].cognitive_tick_components  # type: ignore[attr-defined]
     assert components["last_background_inspiration_report"] == _BackgroundReportFixture()
-    trace = stack["orchestrator"].trace.get(f"{TICK_INTERACTION_PREFIX}{now.isoformat()}")
+    trace = stack["orchestrator"].trace.trace(
+        f"{TICK_INTERACTION_PREFIX}{now.isoformat()}"
+    )
     assert any(event.stage == "background_lce_inspiration" for event in trace)
 
 
@@ -853,7 +855,9 @@ def test_runtime_tick_background_failure_is_fail_soft(
     )
 
     assert report.policy_allowed == 1
-    trace = stack["orchestrator"].trace.get(f"{TICK_INTERACTION_PREFIX}{now.isoformat()}")
+    trace = stack["orchestrator"].trace.trace(
+        f"{TICK_INTERACTION_PREFIX}{now.isoformat()}"
+    )
     assert any(event.stage == "background_lce_inspiration_failed" for event in trace)
 
     with pytest.raises(ValueError, match="DAYDREAM or DREAM"):
