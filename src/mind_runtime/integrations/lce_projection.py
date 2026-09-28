@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from mind_runtime.contracts import Scope
+from mind_runtime.contracts import InspirationMaterial, Scope
 from mind_runtime.facts.persistence import SqliteFactReader
 from mind_runtime.integrations.lce import (
     LceAcceptedUnderstanding,
@@ -366,12 +366,21 @@ class MrLceCanonicalSourceAdapter:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class LceInspirationMaterial:
-    """Narrow MR-facing copy of LCE proactive material."""
+    def current_memory_ids(self) -> tuple[str, ...]:
+        """Return current ACTIVE canonical Memory IDs for background catch-up."""
+        return tuple(
+            sorted(
+                memory.memory_id
+                for memory in self._all_scope_memories()
+                if memory.lifecycle is MemoryLifecycle.ACTIVE
+            )
+        )
 
-    material_id: str
-    content: str
+
+
+# Backward-compatible alias for the just-published MR integration seam.
+# The canonical contract now lives in mind_runtime.contracts.
+LceInspirationMaterial = InspirationMaterial
 
 
 @dataclass(frozen=True)
