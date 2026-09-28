@@ -67,16 +67,32 @@ very small relevant set, if any.
 The Memory composition boundary remains the only outward historical-context
 authority.
 
-## 4. Idle / sleep / dream LCE discovery
+## 4. Sleep / dream LCE discovery scheduling
 
-Implement the already-frozen Path B scheduler as a separate discovery policy.
+Path B is the latent-discovery consumer for the existing sleep/dream lifecycle.
+It is **not** the default per-Memory online processor.
 
-Its job is to choose bounded neighborhoods of canonical Memory that have not
-already been adequately represented by accepted Baselines or recently compiled
-Thread projections.
+The online division of labor is already fixed:
+
+```text
+normal interaction
+    -> Thread notices and carries explicit logical lines
+
+sleep / dream
+    -> Path B searches history that did not become a mature Thread
+```
+
+The remaining scheduler work is therefore narrow: during sleep/dream, choose
+bounded neighborhoods of canonical Memory that are not already adequately
+represented by accepted Baselines or recently compiled Thread projections.
 
 Candidate neighborhood construction may use temporal adjacency, semantic
-similarity, shared entities/domains, and existing derived topology.
+similarity, shared entities/domains, unresolved topology and existing derived
+structure.
+
+Do not add a generic "every new Memory -> Path B nearline" production hook.
+That would duplicate Thread's upstream function. Nearline APIs remain useful for
+repair, replay, laboratory work and explicit operator-driven catch-up.
 
 The scheduler must avoid full-history recomputation and must not recreate a
 second factual Memory store.
