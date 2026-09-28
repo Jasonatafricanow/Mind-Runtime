@@ -108,3 +108,38 @@ Once a Baseline covers a mature Thread, maintaining both as active logical
 products is forbidden. The system should carry the accepted higher-level
 projection forward and retain lower-level facts only as provenance and
 fallback.
+
+## 2026-09-28 implementation addendum
+
+The architecture above is now implemented against the current LCE external
+projection seam.
+
+Path A no longer bypasses LCE's current draft lifecycle. Mature Threads are
+staged as `PrecomputedDraftInput`, persisted as an LCE Worktree, and then
+promoted into the shared per-Scope Baseline store without a second model call.
+
+Path B now composes:
+
+```text
+MR canonical Memory
+  -> read-only grouped canonical source adapter
+  -> LCE ProjectionSubstrate
+  -> LCE-owned derived projection state
+  -> SemanticBlock / vector / Path B trajectory
+  -> decentralized evidence convergence
+  -> Line / Worktree / Baseline
+```
+
+The grouped source adapter preserves MR's factual-support independence rule:
+multiple Memory rows from one admitted interaction form one LCE source authority
+unit. This prevents extractor fanout from becoming multiple independent support
+votes.
+
+No canonical MR Memory row is copied into an LCE Raw Evidence table. LCE's
+derived projection database contains no `raw_evidence` table; source reads are
+delegated back to MR. Path A and Path B share the same Baseline store but keep
+their support representations explicit.
+
+The remaining sleep/idle trigger is scheduling policy. It is not a missing
+authority or cognition algorithm.
+
