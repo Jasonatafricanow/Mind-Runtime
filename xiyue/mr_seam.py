@@ -35,6 +35,11 @@ _RUNTIME_DIR = Path.home() / ".hermes" / "profiles" / "xiyue" / "runtime"
 _DEFAULT_READINESS_FILE = _RUNTIME_DIR / "readiness.json"
 
 
+def _env_enabled(name: str) -> bool:
+    raw = os.environ.get(name)
+    return raw is not None and raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_readiness_file_path() -> Path:
     override = os.environ.get("MR_READINESS_PATH")
     if override:
@@ -252,6 +257,9 @@ def get_mr_adapter():
                 from mind_runtime.host.xiyue_adapter import default_adapter
 
                 composition = _load_production_composition()
+                inspiration_enabled = _env_enabled("MR_LCE_INSPIRATION_ENABLED")
+                lce_enabled = inspiration_enabled or _env_enabled("MR_LCE_ENABLED")
+                memory_enabled = lce_enabled or _env_enabled("MR_MEMORY_ENABLED")
                 adapter = default_adapter(
                     persona=composition["persona"],
                     situation=composition["situation"],
@@ -267,6 +275,9 @@ def get_mr_adapter():
                     policy_resources=composition.get("policy_resources"),
                     expression_guard=composition.get("expression_guard"),
                     telemetry_sink=get_trace_journal(),
+                    memory_enabled=memory_enabled,
+                    lce_enabled=lce_enabled,
+                    lce_inspiration_enabled=inspiration_enabled,
                 )
                 _logger.info("XiyueMRAdapter initialized (thread %s)", threading.get_ident())
                 _thread_trace("ADAPTER_CREATE", adapter)
