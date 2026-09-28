@@ -48,7 +48,7 @@ jobs:
       - name: Install optional current LCE for covered integration tests
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@aff149256bc6b8323a795c8811bb877356baaa2c"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
       - run: python -m coverage run -m pytest -q
       - run: python -m coverage report --show-missing
 
@@ -64,7 +64,7 @@ jobs:
       - name: Install verified current LCE baseline
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@aff149256bc6b8323a795c8811bb877356baaa2c"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
       - name: Verify MR-LCE binding
         run: python -m pytest tests/lce_binding tests/memory_retrieval -q
 
