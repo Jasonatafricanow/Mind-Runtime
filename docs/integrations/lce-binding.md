@@ -2,12 +2,25 @@
 
 MR keeps canonical Memory authority. LCE remains a separately installed
 longitudinal-cognition module and owns only derived cognition such as Baseline
-revisions. The current integration supports three distinct paths:
+revisions. The current integration supports four bounded operations over one factual
+authority:
 
 ```text
-selected MR Memory -> LCE Core consolidation
-mature MR Thread   -> no-model LCE Baseline compilation -> retire active Thread
-accepted Baseline  -> bounded MR HistoricalContext readback
+selected MR Memory -> generic LCE Core consolidation
+
+mature MR Thread
+  -> PrecomputedDraftInput / LCE Worktree
+  -> accepted Baseline
+  -> retire active Thread
+
+canonical MR Memory
+  -> grouped read-only LCE RawEvidence view
+  -> SemanticBlock / vectors / Path B
+  -> decentralized evidence convergence
+  -> Line / Worktree / Baseline
+
+accepted Path A + Path B Baselines
+  -> bounded MR HistoricalContext readback
 ```
 
 See ADR-0026 and `docs/architecture/MEMORY_ARCHITECTURE_V1.md`.
@@ -18,7 +31,7 @@ The compatibility baseline used by this integration is:
 
 ```text
 Jasonatafricanow/LCE-Longitudinal-Cognition-Engine
-commit 5894a2334943d9a12310992fedcc1932a473b3d2
+commit aff149256bc6b8323a795c8811bb877356baaa2c
 package lce-core 0.1.0
 ```
 
@@ -27,7 +40,7 @@ enables the integration should install and verify that source revision, for
 example:
 
 ```powershell
-python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@5894a2334943d9a12310992fedcc1932a473b3d2"
+python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@aff149256bc6b8323a795c8811bb877356baaa2c"
 ```
 
 Disabled composition does not import LCE or initialize its storage.
@@ -99,8 +112,10 @@ The handoff requires:
 - current-valid canonical MR support.
 
 The Thread carries bounded `origin_memory_ids` and
-`current_support_ids`. LCE re-resolves those IDs from canonical MR Memory and
-stores the accepted cognition under the stable lineage:
+`current_support_ids`. LCE re-resolves those IDs from canonical MR Memory,
+stages the already-reasoned summary through its current
+`PrecomputedDraftInput -> CognitionWorktree -> Baseline` path, and stores the
+accepted cognition under the stable lineage:
 
 ```text
 mr-thread:<thread_id>
@@ -157,51 +172,115 @@ current turn context
 
 Reading does not reinforce either Memory or cognition.
 
+## Path B latent projection over MR canonical Memory
+
+`open_lce_projection_binding` binds the current LCE projection runtime without
+creating a second factual store.
+
+The source side is `MrLceCanonicalSourceAdapter`. It exposes canonical MR
+Memory as read-only grouped LCE `RawEvidence` views. Several Memory rows
+extracted from the same admitted interaction remain **one** source authority
+unit, so one turn cannot manufacture several independent votes in LCE's
+decentralized convergence layer.
+
+The projection side is LCE-owned:
+
+```text
+MR canonical Memory / Fact provenance
+        |
+        v
+read-only grouped source adapter
+        |
+        v
+ProjectionSubstrate
+        |
+        +--> LCE Semantic Blocks
+        +--> vectors / snapshots
+        +--> Path B Lines / authority ledger
+        +--> Worktrees / Baselines
+```
+
+The derived SQLite projection store contains no `raw_evidence` table. Source
+content, lifecycle and Scope remain MR-owned.
+
+Current LCE Path B preserves the authority split:
+
+```text
+similarity / mutual-kNN = candidate proposal
+Raw-grounded convergence = persistent identity authority
+```
+
+Repeated derived views cannot create new factual support. Transitively
+overlapping Raw closures collapse into one evidence component; candidate
+profiles remain multidimensional and Pareto-incomparable candidates stay
+`UNRESOLVED`.
+
+Example:
+
+```python
+from mind_runtime.integrations.lce_projection import (
+    open_lce_projection_binding,
+)
+
+session = open_lce_projection_binding(
+    binding,
+    authorized_scope,
+    enabled=True,
+)
+assert session is not None
+
+with session:
+    session.sync_all()                 # slow/batch catch-up
+    # or:
+    session.sync_memory_ids(ids)       # nearline new canonical Memory
+    session.bootstrap_trajectory(
+        knowledge_cutoff=cutoff,
+    )
+```
+
+Scheduling remains a composition policy. Binding Path B does not require MR to
+run a nightly full-history recomputation.
+
 ## Persistence and restart
 
-Per-Scope LCE Baselines remain physically separate from MR canonical Memory:
+Per-Scope LCE derived cognition remains physically separate from MR canonical
+Memory:
 
 ```text
 <runtime namespace>/memory.sqlite
-<runtime namespace>/lce/<sha256(full structured Scope JSON)>/lce_baselines.sqlite
+<runtime namespace>/lce/<scope-hash>/
+    baselines/lce_baselines.sqlite
+    worktrees/
+    projection_state/projection_state.sqlite
+    lines/
+    structures/
+    authority/
 ```
 
 The Scope digest is deployment addressing, not a cognitive identity. Reopening
 the same Runtime and Scope restores the same Baseline HEAD/history.
 
-## Relation to standalone LCE V1
+## Relation to standalone LCE
 
-The current LCE repository also includes a standalone V1 pipeline:
+MR still does not vendor LCE or copy canonical Memory into LCE's standalone
+`ReferenceMemoryStore`.
 
-```text
-Raw Evidence
--> Semantic Block
--> vector projection
--> cutoff snapshots
--> overlapping structure discovery
--> relation candidate
--> DraftRevision / Worktree
--> Baseline
--> AcceptedUnderstandingReadAPI
-```
-
-MR does not currently copy canonical Memory into LCE's standalone
-`ReferenceMemoryStore`. That store owns both source evidence and derived
-artifacts for standalone operation; duplicating MR facts there would create a
-second factual authority.
-
-A future latent-discovery adapter must keep the ownership split:
+Instead it now uses LCE's explicit external-source architecture:
 
 ```text
-source content / validity
-    -> MR canonical Memory
-
-Semantic Blocks / vectors / snapshots / drafts
-    -> LCE-owned derived storage
+CanonicalEvidenceSourcePort -> MR read-only source adapter
+DerivedProjectionStatePort  -> LCE-owned SQLite projection state
+ProjectionSubstrate         -> composition between them
+LceProjectionCore           -> current Path B runtime
 ```
 
-The mature-Thread path does not need that discovery pipeline because the
-structure was already formed online.
+The same LCE algorithms can therefore run standalone or embedded while factual
+ownership changes only at the source adapter boundary.
+
+The mature-Thread path remains separate because its semantic relation has
+already been reasoned online; forcing it through latent discovery would pay the
+same inference cost twice. Both Path A and Path B use the same per-Scope
+Baseline store and outward accepted-cognition read boundary.
 
 ## Verification
 
@@ -211,8 +290,11 @@ MR's integration tests cover:
 - Scope and lifecycle rejection;
 - durable Baseline restart;
 - no reverse MR authority;
-- mature Thread handoff and replay;
-- accepted cognition readback;
+- mature Thread handoff through current LCE draft lineage and replay;
+- grouped Path B source authority (one interaction cannot multiply votes);
+- derived-only Path B persistence with no copied Raw Evidence table;
+- Path B restart/replay over canonical MR Memory;
+- accepted cognition readback across Path A and Path B;
 - default-OFF/no-dependency behavior.
 
 Run:
@@ -229,9 +311,9 @@ complete pytest/coverage suite.
 LCE remains opt-in. `default_adapter(..., lce_enabled=False)` is the default.
 
 Thread formation/maturity remains a bounded online projection policy; its
-future wake-up, capacity and TTL refinements are recorded separately. Full
-idle/sleep/dream latent-discovery scheduling is also deferred.
+future wake-up, capacity and TTL refinements are recorded separately.
+Idle/sleep/dream **scheduling policy** remains deferred, but the latent Path B
+runtime it would invoke is now bound.
 
-Enabling the binding does not grant LCE factual write authority. It only allows
-a mature lower-level projection to be upgraded into accepted cognition and
-then retired from the active Thread set.
+Enabling either path does not grant LCE factual write authority. LCE may persist
+derived cognition and rebuildable projection state only.
