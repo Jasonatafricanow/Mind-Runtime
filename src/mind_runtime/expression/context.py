@@ -13,6 +13,7 @@ from mind_runtime.contracts import (
     DecisionContextCompileTrace,
     ExpressionContextItem,
     ExpressionContextKind,
+    InspirationMaterial,
     Intent,
     PreviousExpression,
     ProjectedMindState,
@@ -49,6 +50,7 @@ _SECTION_ORDER = {
     ExpressionContextKind.ACTION: 0,
     ExpressionContextKind.FACT: 1,
     ExpressionContextKind.COGNITIVE_MEANING: 2,
+    ExpressionContextKind.INSPIRATION: 1,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
     ExpressionContextKind.SURFACE_GUIDANCE: 3,
@@ -60,10 +62,12 @@ _SECTION_ORDER = {
 }
 _ESSENTIAL_KINDS = {
     ExpressionContextKind.ACTION,
+    ExpressionContextKind.INSPIRATION,
     ExpressionContextKind.POLICY_CONSTRAINT,
 }
 _SURFACE_ESSENTIAL_KINDS = {
     ExpressionContextKind.ACTION,
+    ExpressionContextKind.INSPIRATION,
     ExpressionContextKind.POLICY_CONSTRAINT,
     ExpressionContextKind.SURFACE_GUIDANCE,
     ExpressionContextKind.SURFACE_CONTROL,
@@ -219,6 +223,7 @@ class DecisionContextCompilerInput:
     mode: str | None = None
     persona_version: int | None = None
     persona_content_digest: str | None = None
+    inspiration_material: InspirationMaterial | None = None
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -235,6 +240,10 @@ class DecisionContextCompilerInput:
             raise ValueError("state_definitions must be a StateDefinitionRegistry")
         if self.mode is not None and self.mode not in ("LEGACY", "SURFACE_V1"):
             raise ValueError("mode must be LEGACY or SURFACE_V1")
+        if self.inspiration_material is not None and not isinstance(
+            self.inspiration_material, InspirationMaterial
+        ):
+            raise ValueError("inspiration_material must be InspirationMaterial")
         # C10-C1: validate each slow record has non-empty state_id and
         # dimension; origin_runtime_id and scope are validated against
         # the compiler input authority in _validate_authority().
@@ -271,6 +280,7 @@ class DecisionContextCompiler:
         if effective_mode != self._config.mode:
             raise ValueError("DECISION_CONTEXT_MODE_MISMATCH")
         candidates = self._action_items(compiler_input)
+        candidates += self._inspiration_items(compiler_input.inspiration_material)
         candidates += self._fact_items(compiler_input.situation)
         meaning_items, meaning_reasons = self._meaning_items(compiler_input.accepted_appraisals)
         candidates += meaning_items
@@ -714,6 +724,23 @@ class DecisionContextCompiler:
                 )
             )
         return items
+
+    @staticmethod
+    def _inspiration_items(
+        material: InspirationMaterial | None,
+    ) -> list[ExpressionContextItem]:
+        if material is None:
+            return []
+        return [
+            ExpressionContextItem(
+                item_id=f"inspiration-{material.material_id}",
+                kind=ExpressionContextKind.INSPIRATION,
+                key="proactive_material",
+                value=material.content,
+                source_refs=(material.material_id,),
+                priority=1,
+            )
+        ]
 
     def _fact_items(self, situation: Situation) -> list[ExpressionContextItem]:
         by_key: dict[str, str] = {}
