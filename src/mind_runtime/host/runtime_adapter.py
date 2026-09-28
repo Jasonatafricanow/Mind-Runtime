@@ -1063,10 +1063,45 @@ class MindRuntimeHostAdapter:
         envelope_text = None
         renderer = getattr(self._orchestrator, "context_renderer", None)
         if renderer is not None and hasattr(renderer, "render"):
-            provider_context = renderer.render(exec_ctx.context)
-            envelope_text = getattr(provider_context, "text", None) or str(provider_context)
-            if envelope_text and hasattr(renderer, "verify_provider_information_isolation"):
-                renderer.verify_provider_information_isolation(envelope_text)
+            try:
+                provider_context = renderer.render(exec_ctx.context)
+                envelope_text = (
+                    getattr(provider_context, "text", None)
+                    or str(provider_context)
+                )
+                if (
+                    envelope_text
+                    and hasattr(
+                        renderer,
+                        "verify_provider_information_isolation",
+                    )
+                ):
+                    renderer.verify_provider_information_isolation(
+                        envelope_text
+                    )
+            except (AssertionError, TypeError, ValueError) as exc:
+                self._release_inspiration(wake.wake_id)
+                self._pending_exec_contexts.pop(
+                    wake.wake_id,
+                    None,
+                )
+                self._pending_wake_contexts.pop(
+                    wake.wake_id,
+                    None,
+                )
+                return HostProactiveTurnResult(
+                    wake_id=wake.wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    reason_codes=(
+                        "provider_context_rejected",
+                        type(exc).__name__,
+                    ),
+                )
 
         bounded = HostDecisionContext(
             intent_summary=f"proactive:{wake.action_type}",
