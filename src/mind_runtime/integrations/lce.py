@@ -555,10 +555,13 @@ class LceThreadHandoffSession:
 
 @dataclass(frozen=True)
 class LceReadSession:
-    """Read-only capability for accepted LCE cognition."""
+    """Read-only capability for accepted LCE cognition from both paths."""
 
     _adapter: MrMemorySubstrateAdapter
     _store: SqliteBaselineStore
+    _projection_reader: Any | None = None
+    _projection_substrate: Any | None = None
+    _projection_source: Any | None = None
 
     @property
     def db_path(self) -> Path:
@@ -567,14 +570,76 @@ class LceReadSession:
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4
     ) -> tuple[LceAcceptedUnderstanding, ...]:
-        return _accepted_understandings(
-            self._adapter,
-            self._store,
-            current_context=current_context,
-            limit=limit,
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError("limit must be an integer in [0, 100]")
+        if limit == 0:
+            return ()
+        items = list(
+            _accepted_understandings(
+                self._adapter,
+                self._store,
+                current_context=current_context,
+                limit=limit,
+            )
         )
+        if (
+            self._projection_reader is not None
+            and self._projection_source is not None
+        ):
+            query_tokens = set(lexical_tokens(current_context or ""))
+            for view in self._projection_reader.query(current_context):
+                memory_ids: set[str] = set()
+                source_refs: set[str] = set()
+                valid = True
+                for source_id in view.supporting_source_refs:
+                    try:
+                        memory_ids.update(
+                            self._projection_source.memory_ids_for_source(
+                                source_id
+                            )
+                        )
+                        source_refs.update(
+                            self._projection_source.original_source_refs(
+                                source_id
+                            )
+                        )
+                    except KeyError:
+                        valid = False
+                        break
+                if not valid or not memory_ids:
+                    continue
+                if query_tokens:
+                    overlap = len(
+                        query_tokens & set(lexical_tokens(view.content))
+                    )
+                    relevance = overlap / len(query_tokens)
+                else:
+                    relevance = 1.0
+                items.append(
+                    LceAcceptedUnderstanding(
+                        content=view.content,
+                        baseline_id=view.baseline_id,
+                        region_id=view.region_id,
+                        revision_number=view.revision_number,
+                        supporting_memory_ids=tuple(sorted(memory_ids)),
+                        source_refs=tuple(sorted(source_refs)),
+                        relevance=min(1.0, relevance),
+                    )
+                )
+        by_id = {item.baseline_id: item for item in items}
+        ordered = sorted(
+            by_id.values(),
+            key=lambda item: (
+                -item.relevance,
+                item.region_id,
+                -item.revision_number,
+            ),
+        )
+        return tuple(ordered[:limit])
 
     def close(self) -> None:
+        if self._projection_substrate is not None:
+            self._projection_substrate.close()
         self._store.close()
 
     def __enter__(self) -> LceReadSession:
@@ -717,7 +782,52 @@ def open_lce_read_binding(
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
-    return LceReadSession(adapter, SqliteBaselineStore(root))
+
+    store = SqliteBaselineStore(root)
+    projection_reader = None
+    projection_substrate = None
+    projection_source = None
+    projection_db = (
+        _scope_lce_root(adapter)
+        / "projection_state"
+        / "projection_state.sqlite"
+    )
+    if root == current_root and projection_db.exists():
+        try:
+            from lce.read_api import AcceptedUnderstandingReadAPI
+            from lce.reference_memory.composite import ProjectionSubstrate
+            from lce.reference_memory.projection_state import (
+                SqliteProjectionStateStore,
+            )
+            from mind_runtime.integrations.lce_projection import (
+                MrLceCanonicalSourceAdapter,
+            )
+        except ImportError as exc:
+            store.close()
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
+        projection_source = MrLceCanonicalSourceAdapter(adapter)
+        state = SqliteProjectionStateStore(
+            _scope_lce_root(adapter) / "projection_state"
+        )
+        projection_substrate = ProjectionSubstrate(
+            projection_source,
+            state,
+            close_source=False,
+            close_state=True,
+        )
+        projection_reader = AcceptedUnderstandingReadAPI(
+            memory=projection_substrate,
+            baseline_store=store,
+        )
+    return LceReadSession(
+        adapter,
+        store,
+        projection_reader,
+        projection_substrate,
+        projection_source,
+    )
 
 
 def open_lce_binding(
