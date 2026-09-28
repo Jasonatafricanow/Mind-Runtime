@@ -1,5 +1,26 @@
 # ADR-0017 — C10-B-W Slow Plasticity Accumulation Authority
 
+> **2026-09-28 authority clarification**
+>
+> The earlier "Step C / future SlowDynamicsPolicy" wording below is retained as
+> historical design context but is no longer an open slow-state question.
+> The boundary is now frozen:
+>
+> ```text
+> fast state
+>   -> may have autonomous time dynamics / natural recovery
+>
+> slow longitudinal state
+>   -> event-driven only
+>   -> changes only when new accepted longitudinal contributions arrive
+> ```
+>
+> Absence of a new slow contribution is not evidence of recovery. Slow state
+> therefore has no autonomous clock-driven decay/recovery policy. If long-term
+> recovery occurs, it must be represented by new events/contributions that move
+> the rolling window. This clarification supersedes references below to a future
+> SlowDynamicsPolicy for longitudinal state.
+
 **Status:** ACCEPTED
 **Ticket:** C10-B-W (Accumulation)
 **Author:** ZCode
@@ -554,3 +575,48 @@ This was considered and rejected:
 - Slow Plasticity accumulation is the authority of Slow Plasticity, not Salience.
 - Separate ADR preserves module boundaries per the Non-negotiable Boundaries
   governance rule.
+
+---
+
+## 2026-09-28 addendum — fast/slow temporal boundary
+
+This addendum supersedes the deferred autonomous Step C for longitudinal state.
+
+The clean authority split is:
+
+```text
+FAST
+    current affect / immediate internal dynamics
+    -> may relax, recover or evolve with elapsed time
+
+SLOW
+    longitudinal state compiled from accepted events
+    -> no autonomous time evolution
+    -> update only on new accepted longitudinal contribution
+```
+
+For slow state:
+
+```text
+no new contribution
+    -> no new window aggregate
+    -> no slow-state write
+```
+
+This is not a missing feature. It is the intended semantics.
+
+A statement such as "long-term sadness recovered over time" must be grounded in
+new accepted evidence/contributions (for example renewed engagement or changed
+affective observations). The writer/runtime must not fabricate recovery from
+elapsed wall-clock time alone.
+
+Consequences:
+
+- no `SlowDynamicsPolicy` is authorized for autonomous slow-state decay;
+- no half-life, decay constant or recovery timer belongs to the slow writer;
+- restart stability follows naturally because nothing changes without an event;
+- autonomous recovery remains a Fast-state concern under the fast Dynamics
+  authority.
+
+Any future proposal to add clock-driven slow-state change would require a new
+ADR that explicitly overturns this boundary.
