@@ -198,7 +198,53 @@ existing admission / authority boundaries
 
 ---
 
-## 7. Explicit Non-Goals
+## 7. 2026-09-28 Inspiration Material integration target
+
+LCE now provides the proactive-message **material product** that DAYDREAM /
+DREAM workers were intended to consume.
+
+The downstream seam is intentionally minimal:
+
+```text
+LCE internal cognition
+    -> InspirationMaterial(material_id, content)
+    -> proactive consumer
+```
+
+Two LCE-internal production families currently feed that seam:
+
+- possible association: existing observations may be related and are offered as
+  reflection material;
+- speculative extension: an already-supported `A -> B -> C` Line may generate
+  a bounded `D?` hypothesis.
+
+Cognitive-mode orchestration does not need to understand those internal kinds,
+Line topology, SemanticBlock IDs, Raw-Evidence closure, convergence state or
+interpreter traces.
+
+The intended future runtime composition is:
+
+```text
+DAYDREAM / DREAM
+    -> bounded LCE discovery
+    -> InspirationMaterial
+    -> proactive-message candidate
+    -> Persona initiative / Intent
+    -> ActionPolicy
+    -> Body
+```
+
+LCE therefore owns **what material was discovered**. Cognitive-mode scheduling
+owns **when background cognition may run**. Persona/Intent/ActionPolicy own
+**whether the material may become an outbound action**. Body owns final
+expression.
+
+This does not change the V0 implementation status below:
+`MODE_CONTROLLER_STATUS`, `TRANSITION_POLICY_STATUS` and
+`BACKGROUND_LCE_STATUS` remain `NOT_IMPLEMENTED` until an actual mode
+controller/background worker invokes the already-available LCE product.
+
+## 8. Explicit Non-Goals
 
 The V0 concept layer deliberately excludes:
 - Full sleep implementation
