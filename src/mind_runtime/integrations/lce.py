@@ -806,6 +806,7 @@ def open_lce_read_binding(
             from lce.reference_memory.projection_state import (
                 SqliteProjectionStateStore,
             )
+
             from mind_runtime.integrations.lce_projection import (
                 MrLceCanonicalSourceAdapter,
             )
