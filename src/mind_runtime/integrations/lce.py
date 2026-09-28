@@ -38,7 +38,6 @@ if TYPE_CHECKING:
         SemanticConsolidatorPort,
     )
     from lce.contracts.external_memory import MemoryItemView
-    from lce.cognition.worktree import CognitionWorktreeStore
     from lce.core.engine import LceCore
     from lce.store.sqlite_store import SqliteBaselineStore
 
