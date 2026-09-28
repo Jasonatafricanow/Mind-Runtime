@@ -89,6 +89,7 @@ from mind_runtime.contracts.intent import (
     ReconsiderationPolicy,
     WakeSignal,
 )
+from mind_runtime.contracts.inspiration import InspirationMaterial
 from mind_runtime.contracts.interaction import Interaction, InteractionStatus
 from mind_runtime.contracts.observation import Observation
 from mind_runtime.contracts.pattern import PatternMatchSummary, PatternQuery
@@ -183,6 +184,7 @@ __all__ = [
     "HostStatus",
     "HostTurnStatus",
     "HostWakeNotification",
+    "InspirationMaterial",
     "Interaction",
     "InteractionStatus",
     "Intent",
