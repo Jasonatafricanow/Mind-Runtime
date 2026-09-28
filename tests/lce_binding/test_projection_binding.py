@@ -9,11 +9,11 @@ import pytest
 
 pytest.importorskip("lce", reason="optional current lce-core package is not installed")
 
+from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_projection import (
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
 )
-from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.runtime_binding import (
