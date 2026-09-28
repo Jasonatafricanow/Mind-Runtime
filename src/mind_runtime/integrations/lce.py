@@ -1,7 +1,7 @@
 """MR bindings for current LCE Core plus bounded Thread handoff/readback.
 
-MR remains the only factual Memory authority. LCE receives stable canonical
-Memory IDs and owns only derived Baseline cognition.
+MR remains the only factual Memory authority. LCE receives authorized
+canonical source views and owns only derived cognition/projection state.
 """
 
 from __future__ import annotations
@@ -31,9 +31,7 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
-    from lce.contracts.baseline import Baseline
     from lce.contracts.consolidation import (
-        CandidateBaseline,
         ConsolidationResult,
         SemanticConsolidatorPort,
     )
@@ -289,23 +287,6 @@ class LceAcceptedUnderstanding:
     supporting_memory_ids: tuple[str, ...]
     source_refs: tuple[str, ...]
     relevance: float
-
-
-class _PrecomputedThreadConsolidator:
-    """Return an already-reasoned Thread product without invoking a model."""
-
-    def __init__(self, candidate: CandidateBaseline) -> None:
-        self._candidate = candidate
-
-    def consolidate(
-        self,
-        *,
-        memories: tuple[MemoryItemView, ...],
-        previous_baseline: Baseline | None,
-        context: Mapping[str, object] | None = None,
-    ) -> CandidateBaseline:
-        del memories, previous_baseline, context
-        return self._candidate
 
 
 def _accepted_understandings(
