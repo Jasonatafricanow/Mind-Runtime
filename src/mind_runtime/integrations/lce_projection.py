@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mind_runtime.contracts import Scope
 from mind_runtime.facts.persistence import SqliteFactReader
@@ -376,8 +376,11 @@ class LceProjectionSession:
 
     def sync_all(self) -> tuple[ProcessResult, ...]:
         """Compile every current canonical source; replay is idempotent."""
-        return self.core.run_batch(
-            self._source.list_current_valid_evidence()
+        return cast(
+            "tuple[ProcessResult, ...]",
+            self.core.run_batch(
+                self._source.list_current_valid_evidence()
+            ),
         )
 
     def sync_memory_ids(
@@ -390,7 +393,10 @@ class LceProjectionSession:
             raise ValueError("mode must be nearline or batch")
         materials = self._source.evidence_for_memory_ids(memory_ids)
         if mode == "batch":
-            return self.core.run_batch(materials)
+            return cast(
+                "tuple[ProcessResult, ...]",
+                self.core.run_batch(materials),
+            )
         return tuple(
             self.core.process(material, mode="nearline")
             for material in materials
