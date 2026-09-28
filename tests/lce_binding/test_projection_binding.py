@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import fields, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -12,7 +12,9 @@ pytest.importorskip("lce", reason="optional current lce-core package is not inst
 
 from lce.cognition.inspiration import InspirationKind, InspirationPackage
 
+from mind_runtime.cognition import CognitiveMode
 from mind_runtime.integrations.lce import open_lce_thread_handoff
+from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
     MrLceCanonicalSourceAdapter,
@@ -343,4 +345,206 @@ def test_inspiration_material_binding_keeps_downstream_surface_narrow(
         )
         session.consume_inspiration(pending[0].material_id)
         assert session.inspiration_materials(limit=10) == ()
+
+def test_background_inspiration_worker_checkpoints_canonical_catchup(
+    projection_plane,
+    tmp_path,
+) -> None:
+    binding, roots, _, memories = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+
+    with session:
+        sources = _source(projection_plane).list_current_valid_evidence()
+        cutoff = max(
+            item.effective_known_at for item in sources
+        ) + timedelta(days=1)
+        worker = LceInspirationBackgroundWorker(
+            session,
+            state_path=tmp_path / "background-inspiration.sqlite",
+        )
+
+        first = worker.refresh(
+            mode=CognitiveMode.DAYDREAM,
+            now=cutoff,
+        )
+        second = worker.refresh(
+            mode=CognitiveMode.DREAM,
+            now=cutoff + timedelta(seconds=1),
+        )
+
+        assert first.new_memory_ids == len(memories)
+        assert second.new_memory_ids == 0
+        assert second.discovered_materials == 0
+        assert worker.state_path.exists()
+
+        with pytest.raises(
+            ValueError,
+            match="DAYDREAM or DREAM",
+        ):
+            worker.refresh(
+                mode=CognitiveMode.ACTIVE,
+                now=cutoff,
+            )
+
+
+def test_background_worker_reservation_consumes_only_after_delivery_commit(
+    projection_plane,
+    tmp_path,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+
+    with session:
+        session.sync_all()
+        sources = session.core.memory.list_current_valid_evidence()
+        cutoff = max(
+            item.effective_known_at for item in sources
+        ) + timedelta(days=1)
+        blocks = session.core.memory.list_semantic_blocks_at_knowledge_cutoff(
+            cutoff,
+            current_valid_only=True,
+        )
+        block = blocks[0]
+        assert block.state_id is not None
+        package = InspirationPackage(
+            kind=InspirationKind.ASSOCIATION,
+            candidate_id="worker-reservation-fixture",
+            content_fragments=(block.content,),
+            block_ids=(block.block_id,),
+            state_ids=(block.state_id,),
+            raw_evidence_ids=block.raw_evidence_ids,
+            knowledge_cutoff=cutoff,
+        )
+        stored = session.core.inspiration.store.put(
+            material_id="insp-worker-reservation",
+            content="Possible connection to explore (not established): worker fixture",
+            package=package,
+            trace={"test": True},
+        )
+        assert stored is not None
+
+        worker = LceInspirationBackgroundWorker(
+            session,
+            state_path=tmp_path / "reservation-state.sqlite",
+        )
+        reserved = worker.reserve_next("wake-1")
+        assert reserved is not None
+        assert reserved.material_id == "insp-worker-reservation"
+
+        assert worker.release_for_wake("wake-1") == reserved.material_id
+        assert worker.pending_materials() == (reserved,)
+
+        reserved_again = worker.reserve_next("wake-2")
+        assert reserved_again == reserved
+        assert worker.consume_for_wake("wake-2") == reserved.material_id
+        assert worker.pending_materials() == ()
+
+def test_background_worker_fails_closed_on_invalid_inputs(
+    projection_plane,
+    tmp_path,
+) -> None:
+    with pytest.raises(TypeError, match="LceProjectionSession"):
+        LceInspirationBackgroundWorker(  # type: ignore[arg-type]
+            object(),
+            state_path=tmp_path / "invalid.sqlite",
+        )
+
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        worker = LceInspirationBackgroundWorker(
+            session,
+            state_path=tmp_path / "valid.sqlite",
+        )
+        with pytest.raises(ValueError, match="aware UTC"):
+            worker.refresh(
+                mode=CognitiveMode.DAYDREAM,
+                now=datetime(2026, 9, 28),
+            )
+        with pytest.raises(ValueError, match="wake_id"):
+            worker.reserve_next("")
+        assert worker.consume_for_wake("missing") is None
+        assert worker.release_for_wake("missing") is None
+
+
+def test_background_worker_reservation_survives_worker_reopen(
+    projection_plane,
+    tmp_path,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+
+    with session:
+        session.sync_all()
+        sources = session.core.memory.list_current_valid_evidence()
+        cutoff = max(
+            item.effective_known_at for item in sources
+        ) + timedelta(days=1)
+        block = session.core.memory.list_semantic_blocks_at_knowledge_cutoff(
+            cutoff,
+            current_valid_only=True,
+        )[0]
+        assert block.state_id is not None
+        package = InspirationPackage(
+            kind=InspirationKind.ASSOCIATION,
+            candidate_id="durable-reservation-fixture",
+            content_fragments=(block.content,),
+            block_ids=(block.block_id,),
+            state_ids=(block.state_id,),
+            raw_evidence_ids=block.raw_evidence_ids,
+            knowledge_cutoff=cutoff,
+        )
+        stored = session.core.inspiration.store.put(
+            material_id="insp-durable-reservation",
+            content="Possible connection to explore (not established): durable fixture",
+            package=package,
+            trace={"test": True},
+        )
+        assert stored is not None
+
+        state_path = tmp_path / "durable-reservation.sqlite"
+        first_worker = LceInspirationBackgroundWorker(
+            session,
+            state_path=state_path,
+        )
+        reserved = first_worker.reserve_next("wake-durable")
+        assert reserved is not None
+        assert first_worker.reserve_next("wake-durable") == reserved
+
+        reopened = LceInspirationBackgroundWorker(
+            session,
+            state_path=state_path,
+        )
+        assert reopened.reserve_next("wake-durable") == reserved
+        assert reopened.reserve_next("wake-other") is None
+
+        # If the underlying LCE material stopped being pending, reopening the
+        # same wake cleans the stale reservation instead of pinning it forever.
+        session.consume_inspiration(reserved.material_id)
+        assert reopened.reserve_next("wake-durable") is None
+        assert reopened.release_for_wake("wake-durable") is None
 

@@ -336,6 +336,7 @@ def default_adapter(
     delivery_db: str | Path | None = None,
     expression_guard: Any | None = None,
     lce_enabled: bool = False,
+    lce_inspiration_enabled: bool = False,
 ) -> XiyueMRAdapter:
     """Build the production XiyueMRAdapter bound to the MR host adapter.
 
@@ -409,6 +410,7 @@ def default_adapter(
         memory_enabled=memory_enabled,
         memory_binding=binding,
         lce_enabled=lce_enabled,
+        lce_inspiration_enabled=lce_inspiration_enabled,
         historical_context=build_memory_history(
             binding,
             provider=retrieval_provider,

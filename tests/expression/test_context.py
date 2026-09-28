@@ -13,6 +13,7 @@ from mind_runtime.contracts import (
     DeliveryStatus,
     HistoricalContextBundle,
     HistoricalContextItem,
+    InspirationMaterial,
     Intent,
     IntentStatus,
     PreviousExpression,
@@ -698,3 +699,41 @@ def test_compiler_and_input_reject_wrong_types() -> None:
 def test_fixed_previous_port_rejects_non_expression_at_construction() -> None:
     with pytest.raises(ValueError, match="PreviousExpression"):
         FixedPreviousExpressionPort(object())  # type: ignore[arg-type]
+
+def test_inspiration_material_compiles_as_essential_typed_context() -> None:
+    material = InspirationMaterial(
+        "insp-context-1",
+        "Possible connection to explore (not established): A may relate to B.",
+    )
+    compiler_input = replace(
+        make_compiler_input(),
+        inspiration_material=material,
+    )
+
+    context, trace = make_compiler().compile(compiler_input)
+
+    inspiration = tuple(
+        item
+        for item in context.expression_context
+        if item.kind.value == "inspiration"
+    )
+    assert len(inspiration) == 1
+    assert inspiration[0].key == "proactive_material"
+    assert inspiration[0].value == material.content
+    assert inspiration[0].source_refs == (material.material_id,)
+    assert inspiration[0].item_id in trace.included_item_refs
+
+
+def test_inspiration_material_fails_closed_when_essential_budget_cannot_fit() -> None:
+    material = InspirationMaterial(
+        "insp-too-large",
+        "x" * 64,
+    )
+    compiler_input = replace(
+        make_compiler_input(),
+        inspiration_material=material,
+    )
+
+    with pytest.raises(ValueError, match="essential context item"):
+        make_compiler(max_item_chars=16).compile(compiler_input)
+

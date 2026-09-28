@@ -15,6 +15,7 @@ SECTION_ORDER = {
     ExpressionContextKind.ACTION: 0,
     ExpressionContextKind.FACT: 1,
     ExpressionContextKind.COGNITIVE_MEANING: 2,
+    ExpressionContextKind.INSPIRATION: 1,
     ExpressionContextKind.INTERNAL_STATE: 2,
     ExpressionContextKind.POLICY_CONSTRAINT: 3,
     ExpressionContextKind.SURFACE_GUIDANCE: 3,
@@ -29,6 +30,7 @@ _SECTION_LABEL = {
     ExpressionContextKind.ACTION: "ACTION",
     ExpressionContextKind.FACT: "FACT",
     ExpressionContextKind.COGNITIVE_MEANING: "COGNITIVE_MEANING",
+    ExpressionContextKind.INSPIRATION: "INSPIRATION",
     ExpressionContextKind.INTERNAL_STATE: "INTERNAL_STATE",
     ExpressionContextKind.POLICY_CONSTRAINT: "POLICY_CONSTRAINT",
     ExpressionContextKind.SURFACE_GUIDANCE: "SURFACE_GUIDANCE",
@@ -55,12 +57,14 @@ _DATA_KINDS = {
 
 _UNTRUSTED_KINDS = {
     ExpressionContextKind.COGNITIVE_MEANING,
+    ExpressionContextKind.INSPIRATION,
     ExpressionContextKind.HISTORY,
     ExpressionContextKind.PRIOR_EXPRESSION,
 }
 
 _ESSENTIAL_KINDS = {
     ExpressionContextKind.ACTION,
+    ExpressionContextKind.INSPIRATION,
     ExpressionContextKind.POLICY_CONSTRAINT,
     ExpressionContextKind.SURFACE_GUIDANCE,
     ExpressionContextKind.SURFACE_CONTROL,

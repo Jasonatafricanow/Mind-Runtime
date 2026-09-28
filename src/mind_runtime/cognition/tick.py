@@ -45,6 +45,7 @@ from mind_runtime.contracts import (
     ActionPolicyResult,
     EmotionalTransitionInput,
     EmotionalTransitionResult,
+    InspirationMaterial,
     Intent,
     IntentEngineInput,
     IntentStatus,
@@ -108,6 +109,13 @@ class CognitiveTickConfig:
             return
         if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
             raise ValueError("photo_cadence_threshold must be a positive integer or None")
+
+
+class InspirationMaterialQueue(Protocol):
+    """Minimal queue seam used only after Intent/ActionPolicy admission."""
+
+    def reserve_next(self, wake_id: str) -> InspirationMaterial | None:
+        ...
 
 
 class PolicyFactReader(Protocol):
@@ -238,6 +246,8 @@ class CognitiveTicker:
         projection_scope: Scope | None = None,
         config: CognitiveTickConfig | None = None,
         surface_projection_port: SurfaceProjectionPort | None = None,
+        inspiration_queue: InspirationMaterialQueue | None = None,
+        inspiration_intent_kinds: tuple[str, ...] = (),
         **kwargs: Any,
     ) -> None:
         if "expression" in kwargs:
@@ -267,6 +277,15 @@ class CognitiveTicker:
         self._state_backend = _resolve_state_backend(orchestrator)
         if intent_engine._runtime_id != runtime_id:
             raise ValueError("intent engine runtime_id must match ticker runtime_id")
+        if not isinstance(inspiration_intent_kinds, tuple):
+            raise TypeError("inspiration_intent_kinds must be a tuple")
+        if len(set(inspiration_intent_kinds)) != len(inspiration_intent_kinds):
+            raise ValueError("inspiration_intent_kinds must be unique")
+        for kind in inspiration_intent_kinds:
+            if not isinstance(kind, str) or not kind.strip():
+                raise ValueError("inspiration_intent_kinds entries must be nonempty")
+        self._inspiration_queue = inspiration_queue
+        self._inspiration_intent_kinds = frozenset(inspiration_intent_kinds)
         self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
 
     def get_pending_wake_context(self, wake_id: str) -> dict[str, Any] | None:
@@ -341,8 +360,15 @@ class CognitiveTicker:
             if policy_result.decision is ActionDecision.ALLOW and is_proactive:
                 permission = policy_result.permission
                 action_type = permission.action_type if permission is not None else intent.kind
+                wake_id = f"wake-{interaction_id}"
+                inspiration_material = None
+                if (
+                    self._inspiration_queue is not None
+                    and intent.kind in self._inspiration_intent_kinds
+                ):
+                    inspiration_material = self._inspiration_queue.reserve_next(wake_id)
                 wake_signal = WakeSignal(
-                    wake_id=f"wake-{interaction_id}",
+                    wake_id=wake_id,
                     runtime_id=self._runtime_id,
                     scope=scope,
                     intent_id=intent.intent_id,
@@ -389,6 +415,7 @@ class CognitiveTicker:
                     "persona_ref": self._persona.persona_id,
                     "persona_version": self._persona.version,
                     "persona_content_digest": self._persona.persona_content_digest,
+                    "inspiration_material": inspiration_material,
                     "now": now,
                 }
         self._orchestrator.trace.record(
@@ -815,6 +842,8 @@ def build_cognitive_ticker(
     runtime_id: str,
     fact_reader: PolicyFactReader | None = None,
     config: CognitiveTickConfig | None = None,
+    inspiration_queue: InspirationMaterialQueue | None = None,
+    inspiration_intent_kinds: tuple[str, ...] = (),
 ) -> CognitiveTicker:
     """Assemble a ticker from explicitly injected real components.
 
@@ -854,4 +883,6 @@ def build_cognitive_ticker(
         fact_reader=fact_reader or observation_fact_reader(orchestrator),
         projection_scope=projection_scope,
         config=config,
+        inspiration_queue=inspiration_queue,
+        inspiration_intent_kinds=inspiration_intent_kinds,
     )

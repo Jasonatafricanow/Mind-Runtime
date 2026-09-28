@@ -10,6 +10,7 @@ Counter facts always enter through the REAL fact-admission authority.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -19,15 +20,21 @@ from tests.support.fake_clock import FakeClock
 
 from mind_runtime.cognition import (
     TICK_INTERACTION_PREFIX,
+    CognitiveMode,
     CognitiveTickReport,
     build_cognitive_ticker,
 )
-from mind_runtime.cognition.tick import CognitiveTicker, observation_fact_reader
+from mind_runtime.cognition.tick import (
+    CognitiveTicker,
+    InspirationMaterialQueue,
+    observation_fact_reader,
+)
 from mind_runtime.contracts import (
     AffectiveDimensionProfile,
     Authority,
     AuthorityLevel,
     Evidence,
+    InspirationMaterial,
     Intent,
     IntentStatus,
     PolicyResources,
@@ -49,6 +56,7 @@ from mind_runtime.intents.policy import (
 )
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator
 from mind_runtime.pipeline.trace import TraceRecorder
+from mind_runtime.shadow.runtime_loop import run_cognitive_tick
 from mind_runtime.shadow.source_bridge import HermesProductionBridge
 from mind_runtime.state.persistence import SqliteStateBackend
 
@@ -116,6 +124,16 @@ def make_policy_config() -> ActionPolicyConfig:
     )
 
 
+class _InspirationQueue:
+    def __init__(self, material: InspirationMaterial | None) -> None:
+        self.material = material
+        self.calls: list[str] = []
+
+    def reserve_next(self, wake_id: str) -> InspirationMaterial | None:
+        self.calls.append(wake_id)
+        return self.material
+
+
 class _TickStack(TypedDict):
     orchestrator: TurnOrchestrator
     bridge: object
@@ -136,6 +154,8 @@ def make_stack(
     rules: tuple[IntentRule, ...] | None = None,
     policy_config: ActionPolicyConfig | None = None,
     resources: PolicyResources | None = None,
+    inspiration_queue: InspirationMaterialQueue | None = None,
+    inspiration_intent_kinds: tuple[str, ...] = (),
 ) -> _TickStack:
     """Build one durable production stack with a wired cognitive ticker."""
     persona = persona or make_persona()
@@ -170,6 +190,8 @@ def make_stack(
         intent_lifecycle=IntentLifecycleService(intent_backend),
         runtime_id=runtime_id,
         fact_reader=observation_fact_reader(orchestrator),
+        inspiration_queue=inspiration_queue,
+        inspiration_intent_kinds=inspiration_intent_kinds,
     )
     return {
         "orchestrator": orchestrator,
@@ -697,3 +719,152 @@ def test_ct11c_state_persisted_but_intent_missing_fills_intent(tmp_path: Path) -
 def _ensure(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def test_allowed_proactive_tick_reserves_inspiration_after_policy_admission(
+    tmp_path: Path,
+) -> None:
+    material = InspirationMaterial(
+        "insp-tick-1",
+        "Possible connection to explore (not established): A may relate to B.",
+    )
+    queue = _InspirationQueue(material)
+    stack = make_stack(
+        tmp_path,
+        inspiration_queue=queue,
+        inspiration_intent_kinds=("reach_out",),
+    )
+    ticker = stack["ticker"]
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = ticker.tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+
+    assert report.policy_allowed == 1
+    assert report.wake_signal is not None
+    assert queue.calls == [report.wake_signal.wake_id]
+    wake_context = ticker.get_pending_wake_context(
+        report.wake_signal.wake_id
+    )
+    assert wake_context is not None
+    assert wake_context["inspiration_material"] == material
+
+
+def test_non_inspiration_intent_does_not_touch_material_queue(
+    tmp_path: Path,
+) -> None:
+    queue = _InspirationQueue(
+        InspirationMaterial(
+            "insp-tick-2",
+            "Possible connection to explore (not established): A may relate to B.",
+        )
+    )
+    stack = make_stack(
+        tmp_path,
+        inspiration_queue=queue,
+        inspiration_intent_kinds=("spontaneous_share",),
+    )
+    ticker = stack["ticker"]
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = ticker.tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+
+    assert report.policy_allowed == 1
+    assert report.wake_signal is not None
+    assert queue.calls == []
+    wake_context = ticker.get_pending_wake_context(
+        report.wake_signal.wake_id
+    )
+    assert wake_context is not None
+    assert wake_context["inspiration_material"] is None
+
+@dataclass(frozen=True)
+class _BackgroundReportFixture:
+    new_memory_ids: int = 2
+    discovered_materials: int = 1
+    pending_materials: int = 1
+
+
+class _BackgroundWorkerFixture:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[CognitiveMode, datetime]] = []
+
+    def refresh(
+        self,
+        *,
+        mode: CognitiveMode,
+        now: datetime,
+    ) -> _BackgroundReportFixture:
+        self.calls.append((mode, now))
+        if self.fail:
+            raise RuntimeError("background fixture failure")
+        return _BackgroundReportFixture()
+
+
+def test_runtime_tick_runs_background_inspiration_before_existing_ticker(
+    tmp_path: Path,
+) -> None:
+    stack = make_stack(tmp_path)
+    ticker = stack["ticker"]
+    worker = _BackgroundWorkerFixture()
+    stack["orchestrator"].cognitive_tick_components = {  # type: ignore[attr-defined]
+        "ticker": ticker,
+        "inspiration_worker": worker,
+    }
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+    now = BASE + timedelta(hours=2)
+
+    report = run_cognitive_tick(
+        stack["orchestrator"],
+        scope=stack["scope"],
+        now=now,
+        background_mode=CognitiveMode.DREAM,
+    )
+
+    assert report.policy_allowed == 1
+    assert worker.calls == [(CognitiveMode.DREAM, now)]
+    components = stack["orchestrator"].cognitive_tick_components  # type: ignore[attr-defined]
+    assert components["last_background_inspiration_report"] == _BackgroundReportFixture()
+    trace = stack["orchestrator"].trace.trace(
+        f"{TICK_INTERACTION_PREFIX}{now.isoformat()}"
+    )
+    assert any(event.stage == "background_lce_inspiration" for event in trace)
+
+
+def test_runtime_tick_background_failure_is_fail_soft(
+    tmp_path: Path,
+) -> None:
+    stack = make_stack(tmp_path)
+    worker = _BackgroundWorkerFixture(fail=True)
+    stack["orchestrator"].cognitive_tick_components = {  # type: ignore[attr-defined]
+        "ticker": stack["ticker"],
+        "inspiration_worker": worker,
+    }
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+    now = BASE + timedelta(hours=2)
+
+    report = run_cognitive_tick(
+        stack["orchestrator"],
+        scope=stack["scope"],
+        now=now,
+    )
+
+    assert report.policy_allowed == 1
+    trace = stack["orchestrator"].trace.trace(
+        f"{TICK_INTERACTION_PREFIX}{now.isoformat()}"
+    )
+    assert any(event.stage == "background_lce_inspiration_failed" for event in trace)
+
+    with pytest.raises(ValueError, match="DAYDREAM or DREAM"):
+        run_cognitive_tick(
+            stack["orchestrator"],
+            scope=stack["scope"],
+            now=now,
+            background_mode=CognitiveMode.ACTIVE,
+        )
+

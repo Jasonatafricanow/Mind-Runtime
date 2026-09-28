@@ -78,6 +78,7 @@ from mind_runtime.contracts.host import (
     HostTurnStatus,
     HostWakeNotification,
 )
+from mind_runtime.contracts.inspiration import InspirationMaterial
 from mind_runtime.contracts.intent import (
     Intent,
     IntentEngineResult,
@@ -183,6 +184,7 @@ __all__ = [
     "HostStatus",
     "HostTurnStatus",
     "HostWakeNotification",
+    "InspirationMaterial",
     "Interaction",
     "InteractionStatus",
     "Intent",

@@ -40,11 +40,14 @@ from pathlib import Path
 
 from mind_runtime.binding_registry import BindingRegistryReader
 from mind_runtime.cognition import (
+    TICK_INTERACTION_PREFIX,
+    CognitiveMode,
     CognitiveTickConfig,
     CognitiveTicker,
     CognitiveTickReport,
+    InspirationMaterialQueue,
 )
-from mind_runtime.contracts import Scope
+from mind_runtime.contracts import Scope, ScopeDomain
 from mind_runtime.contracts.surface import SurfaceProjectionPort
 from mind_runtime.contracts.telemetry import TelemetrySinkProtocol
 from mind_runtime.dynamics.engine import DynamicsEngine
@@ -232,6 +235,7 @@ def build_runtime_stack(
     memory_enabled: bool = False,
     memory_binding: RuntimeBinding | None = None,
     lce_enabled: bool = False,
+    lce_inspiration_enabled: bool = False,
     historical_context: HistoricalContextPort | None = None,
     slow_plasticity_window_size: int | None = None,
     definitions: StateDefinitionRegistry | None = None,
@@ -312,6 +316,12 @@ def build_runtime_stack(
         raise ValueError("memory_enabled must be bool")
     if type(lce_enabled) is not bool:
         raise ValueError("lce_enabled must be bool")
+    if type(lce_inspiration_enabled) is not bool:
+        raise ValueError("lce_inspiration_enabled must be bool")
+    if lce_inspiration_enabled and not (memory_enabled and lce_enabled):
+        raise ValueError(
+            "LCE inspiration requires both memory_enabled and lce_enabled"
+        )
     thread_updates = None
     if memory_enabled:
         from mind_runtime.memory.composition import (
@@ -467,6 +477,31 @@ def build_runtime_stack(
         origin_runtime_id=origin_runtime_id,
         user_id=user_id,
     )
+
+    inspiration_worker = None
+    if lce_inspiration_enabled:
+        if memory_binding is None:
+            raise ValueError("LCE inspiration requires a Runtime binding")
+        if intent_rules is None:
+            raise ValueError("LCE inspiration requires proactive Intent rules")
+        from mind_runtime.integrations.lce_inspiration import (
+            LceInspirationBackgroundWorker,
+        )
+        from mind_runtime.integrations.lce_projection import (
+            open_lce_projection_binding,
+        )
+
+        projection_session = open_lce_projection_binding(
+            memory_binding,
+            Scope(domain=ScopeDomain.USER, user_id=user_id),
+            enabled=True,
+        )
+        if projection_session is None:
+            raise ValueError("LCE inspiration projection binding did not open")
+        inspiration_worker = LceInspirationBackgroundWorker(
+            projection_session
+        )
+
     if intent_rules is not None:
         orchestrator.cognitive_tick_components = build_cognitive_components(  # type: ignore[attr-defined]
             orchestrator=orchestrator,
@@ -476,6 +511,7 @@ def build_runtime_stack(
             policy_resources=policy_resources,
             intent_db=intent_db,
             cognitive_tick_config=cognitive_tick_config,
+            inspiration_worker=inspiration_worker,
         )
     return orchestrator, bridge
 
@@ -489,6 +525,7 @@ def build_cognitive_components(
     policy_resources: tuple[str, ...] | None,
     intent_db: str | Path | None,
     cognitive_tick_config: CognitiveTickConfig | None = None,
+    inspiration_worker: InspirationMaterialQueue | None = None,
 ) -> dict[str, object]:
     """Wire the real Intent/Policy authorities for the cognitive tick.
 
@@ -514,6 +551,15 @@ def build_cognitive_components(
         raise ValueError("cognitive tick requires a Persona-backed orchestrator")
     from mind_runtime.cognition import build_cognitive_ticker
 
+    inspiration_intent_kinds = tuple(
+        rule.kind
+        for rule in intent_rules
+        if rule.minimum_initiative is not None
+    )
+    if inspiration_worker is not None and not inspiration_intent_kinds:
+        raise ValueError(
+            "LCE inspiration requires at least one initiative-gated proactive Intent rule"
+        )
     ticker = build_cognitive_ticker(
         orchestrator=orchestrator,
         persona=persona,
@@ -523,6 +569,8 @@ def build_cognitive_components(
         intent_lifecycle=lifecycle,
         runtime_id=origin_runtime_id,
         config=cognitive_tick_config,
+        inspiration_queue=inspiration_worker,
+        inspiration_intent_kinds=inspiration_intent_kinds,
     )
     context_preparer = None
     compiler = getattr(orchestrator, "decision_context_compiler", None)
@@ -564,6 +612,9 @@ def build_cognitive_components(
     if context_preparer is not None:
         result["context_preparer"] = context_preparer
         result["expression_preparer"] = context_preparer
+    if inspiration_worker is not None:
+        result["inspiration_worker"] = inspiration_worker
+        result["inspiration_intent_kinds"] = inspiration_intent_kinds
     return result
 
 
@@ -572,6 +623,7 @@ def run_cognitive_tick(
     *,
     scope: Scope,
     now: datetime,
+    background_mode: CognitiveMode = CognitiveMode.DAYDREAM,
 ) -> CognitiveTickReport:
     """Run one host-level cognitive tick on a wired production stack."""
 
@@ -584,6 +636,36 @@ def run_cognitive_tick(
     ticker = components["ticker"]
     if not isinstance(ticker, CognitiveTicker):
         raise TypeError("wired ticker must be a CognitiveTicker")
+    if background_mode not in {CognitiveMode.DAYDREAM, CognitiveMode.DREAM}:
+        raise ValueError("background_mode must be DAYDREAM or DREAM")
+    worker = components.get("inspiration_worker")
+    if worker is not None and hasattr(worker, "refresh"):
+        try:
+            background_report = worker.refresh(
+                mode=background_mode,
+                now=now,
+            )
+            components["last_background_inspiration_report"] = background_report
+            orchestrator.trace.record(
+                f"{TICK_INTERACTION_PREFIX}{now.isoformat()}",
+                "background_lce_inspiration",
+                outcome=(
+                    f"mode={background_mode.value};"
+                    f"new={background_report.new_memory_ids};"
+                    f"discovered={background_report.discovered_materials};"
+                    f"pending={background_report.pending_materials}"
+                ),
+                at=now,
+            )
+        except Exception as exc:
+            # Background derived cognition is fail-soft. It never blocks the
+            # existing proactive ticker or factual Memory authority.
+            orchestrator.trace.record(
+                f"{TICK_INTERACTION_PREFIX}{now.isoformat()}",
+                "background_lce_inspiration_failed",
+                outcome=type(exc).__name__,
+                at=now,
+            )
     result = ticker.tick(scope=scope, now=now)
     assert isinstance(result, CognitiveTickReport)
     return result

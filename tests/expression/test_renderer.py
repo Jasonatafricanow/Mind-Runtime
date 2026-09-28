@@ -314,3 +314,30 @@ def test_same_kind_items_share_one_section_header() -> None:
     assert rendered.text.count("[FACT]") == 1
     assert "evening" in rendered.text
     assert "true" in rendered.text
+
+def test_provider_render_marks_inspiration_as_untrusted_material() -> None:
+    context = make_context(
+        items=(
+            make_item(
+                ExpressionContextKind.ACTION,
+                "selected_action",
+                "proactive_message",
+                priority=0,
+            ),
+            make_item(
+                ExpressionContextKind.INSPIRATION,
+                "proactive_material",
+                "Possible connection to explore (not established): A may relate to B.",
+                priority=1,
+                source_refs=("insp-render-1",),
+            ),
+        )
+    )
+
+    rendered = make_renderer().render(context)
+
+    assert "[INSPIRATION]" in rendered.text
+    assert "[UNTRUSTED_DATA] proactive_material:" in rendered.text
+    assert "Possible connection to explore" in rendered.text
+    assert "insp-render-1" not in rendered.text
+

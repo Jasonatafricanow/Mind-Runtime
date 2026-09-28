@@ -895,6 +895,30 @@ class MindRuntimeHostAdapter:
                 return prep
         return None
 
+    def _resolve_inspiration_worker(self) -> object | None:
+        components = getattr(self._orchestrator, "cognitive_tick_components", None)
+        if isinstance(components, dict):
+            return components.get("inspiration_worker")
+        return None
+
+    def _release_inspiration(self, wake_id: str) -> None:
+        worker = self._resolve_inspiration_worker()
+        if worker is not None and hasattr(worker, "release_for_wake"):
+            try:
+                worker.release_for_wake(wake_id)
+            except Exception as exc:
+                _logger.warning("release inspiration reservation failed: %s", exc)
+
+    def _consume_inspiration(self, wake_id: str) -> None:
+        worker = self._resolve_inspiration_worker()
+        if worker is not None and hasattr(worker, "consume_for_wake"):
+            try:
+                worker.consume_for_wake(wake_id)
+            except Exception as exc:
+                # Delivery already succeeded. Derived queue cleanup must not
+                # retroactively fail the authoritative outbound lifecycle.
+                _logger.warning("consume inspiration material failed: %s", exc)
+
     def _resolve_tick_context(self, wake: WakeSignal) -> dict[str, Any] | None:
         if wake.wake_id in self._pending_wake_contexts:
             return self._pending_wake_contexts[wake.wake_id]
@@ -935,6 +959,7 @@ class MindRuntimeHostAdapter:
         # Admission check
         notification = self.consume_wake(wake)
         if not notification.eligible:
+            self._release_inspiration(wake.wake_id)
             return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
@@ -961,6 +986,7 @@ class MindRuntimeHostAdapter:
 
         preparer = self._resolve_expression_preparer()
         if preparer is None:
+            self._release_inspiration(wake.wake_id)
             return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
@@ -974,6 +1000,7 @@ class MindRuntimeHostAdapter:
 
         tick_ctx = self._resolve_tick_context(wake)
         if tick_ctx is None:
+            self._release_inspiration(wake.wake_id)
             return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
@@ -988,23 +1015,38 @@ class MindRuntimeHostAdapter:
         self._pending_wake_contexts[wake.wake_id] = tick_ctx
 
         # Soul preparation (compile DecisionContext)
-        exec_ctx = preparer.prepare_context(
-            interaction_id=wake.interaction_id,
-            intent=tick_ctx["intent"],
-            policy_result=tick_ctx["policy_result"],
-            situation=tick_ctx["situation"],
-            projected=tick_ctx["projected"],
-            assessment_trace_ref=tick_ctx.get("assessment_trace_ref", "none"),
-            state_rows=tick_ctx["state_rows"],
-            persona_ref=tick_ctx.get("persona_ref"),
-            now=now,
-            accepted_appraisals=tick_ctx.get("accepted_appraisals", ()),
-            surface=tick_ctx.get("surface"),
-            mode=tick_ctx.get("mode"),
-            persona_version=tick_ctx.get("persona_version"),
-            persona_content_digest=tick_ctx.get("persona_content_digest"),
-        )
+        try:
+            exec_ctx = preparer.prepare_context(
+                interaction_id=wake.interaction_id,
+                intent=tick_ctx["intent"],
+                policy_result=tick_ctx["policy_result"],
+                situation=tick_ctx["situation"],
+                projected=tick_ctx["projected"],
+                assessment_trace_ref=tick_ctx.get("assessment_trace_ref", "none"),
+                state_rows=tick_ctx["state_rows"],
+                persona_ref=tick_ctx.get("persona_ref"),
+                now=now,
+                accepted_appraisals=tick_ctx.get("accepted_appraisals", ()),
+                surface=tick_ctx.get("surface"),
+                mode=tick_ctx.get("mode"),
+                persona_version=tick_ctx.get("persona_version"),
+                persona_content_digest=tick_ctx.get("persona_content_digest"),
+                inspiration_material=tick_ctx.get("inspiration_material"),
+            )
+        except (TypeError, ValueError, RuntimeError) as exc:
+            self._release_inspiration(wake.wake_id)
+            return HostProactiveTurnResult(
+                wake_id=wake.wake_id,
+                interaction_id=wake.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{wake.interaction_id}",
+                reason_codes=("prepare_context_failed", type(exc).__name__),
+            )
         if exec_ctx is None:
+            self._release_inspiration(wake.wake_id)
             return HostProactiveTurnResult(
                 wake_id=wake.wake_id,
                 interaction_id=wake.interaction_id,
@@ -1021,10 +1063,45 @@ class MindRuntimeHostAdapter:
         envelope_text = None
         renderer = getattr(self._orchestrator, "context_renderer", None)
         if renderer is not None and hasattr(renderer, "render"):
-            provider_context = renderer.render(exec_ctx.context)
-            envelope_text = getattr(provider_context, "text", None) or str(provider_context)
-            if envelope_text and hasattr(renderer, "verify_provider_information_isolation"):
-                renderer.verify_provider_information_isolation(envelope_text)
+            try:
+                provider_context = renderer.render(exec_ctx.context)
+                envelope_text = (
+                    getattr(provider_context, "text", None)
+                    or str(provider_context)
+                )
+                if (
+                    envelope_text
+                    and hasattr(
+                        renderer,
+                        "verify_provider_information_isolation",
+                    )
+                ):
+                    renderer.verify_provider_information_isolation(
+                        envelope_text
+                    )
+            except (AssertionError, TypeError, ValueError) as exc:
+                self._release_inspiration(wake.wake_id)
+                self._pending_exec_contexts.pop(
+                    wake.wake_id,
+                    None,
+                )
+                self._pending_wake_contexts.pop(
+                    wake.wake_id,
+                    None,
+                )
+                return HostProactiveTurnResult(
+                    wake_id=wake.wake_id,
+                    interaction_id=wake.interaction_id,
+                    status=HostTurnStatus.FAILED,
+                    outcome=HostStatus.FAILED,
+                    decision_context_ref=exec_ctx.context.context_id,
+                    expression_ref=None,
+                    debug_ref=f"debug-{wake.interaction_id}",
+                    reason_codes=(
+                        "provider_context_rejected",
+                        type(exc).__name__,
+                    ),
+                )
 
         bounded = HostDecisionContext(
             intent_summary=f"proactive:{wake.action_type}",
@@ -1195,6 +1272,7 @@ class MindRuntimeHostAdapter:
                     reason_codes=("reject_transition_failed", str(exc)),
                 )
 
+            self._release_inspiration(wake_id)
             self._guard_admissions.pop(wake_id, None)
             self._pending_exec_contexts.pop(wake_id, None)
             self._pending_wake_contexts.pop(wake_id, None)
@@ -1350,6 +1428,7 @@ class MindRuntimeHostAdapter:
                 reason_codes=("commit_transition_failed", str(exc)),
             )
 
+        self._consume_inspiration(wake_id)
         self._guard_admissions.pop(wake_id, None)
         self._pending_exec_contexts.pop(wake_id, None)
         self._pending_wake_contexts.pop(wake_id, None)
@@ -1456,6 +1535,7 @@ class MindRuntimeHostAdapter:
                 reason_codes=("abort_transition_failed", str(exc)),
             )
 
+        self._release_inspiration(wake_id)
         self._guard_admissions.pop(wake_id, None)
         exec_ctx = self._pending_exec_contexts.pop(wake_id, None)
         self._pending_wake_contexts.pop(wake_id, None)
