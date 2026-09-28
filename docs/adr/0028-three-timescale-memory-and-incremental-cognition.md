@@ -161,3 +161,26 @@ policy, not a missing factual or temporal authority path.
 ## Consequence
 
 Future memory projects should be evaluated by the function they provide—current state, durable memory, retrieval, surfacing, open-line tracking, longitudinal discovery, compiled cognition, or write reliability—rather than used as a reason to invent another memory layer.
+
+## 2026-09-28 Path B implementation addendum
+The latent/unstructured path described above is now bound to the current LCE
+runtime.
+
+```text
+canonical MR Memory
+  -> grouped read-only source view
+  -> SemanticBlock / vector projection
+  -> local trajectory proposal
+  -> decentralized Raw-grounded convergence
+  -> Line / Worktree / Baseline
+```
+
+The distinction between timescales remains unchanged:
+
+- Thread is a bounded online working projection;
+- LCE Path B is the slow latent structure path;
+- canonical Memory remains the shared factual substrate.
+
+What remains deferred is autonomous scheduling: when to run full slow bootstrap
+during idle/sleep/dream and how to budget it. The latent cognition algorithm and
+authority boundary are no longer missing from the MR integration.
