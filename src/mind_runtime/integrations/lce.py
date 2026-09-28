@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
         SemanticConsolidatorPort,
     )
     from lce.contracts.external_memory import MemoryItemView
+    from lce.cognition.worktree import CognitionWorktreeStore
     from lce.core.engine import LceCore
     from lce.store.sqlite_store import SqliteBaselineStore
 
@@ -452,6 +454,7 @@ class LceThreadHandoffSession:
 
     _adapter: MrMemorySubstrateAdapter
     _store: SqliteBaselineStore
+    _drafts: CognitionWorktreeStore
 
     @property
     def db_path(self) -> Path:
@@ -488,35 +491,49 @@ class LceThreadHandoffSession:
         if not thread.mature or thread.working_summary is None:
             raise ValueError("Thread is not mature for LCE handoff")
         try:
-            from lce.contracts.consolidation import CandidateBaseline
-            from lce.core.engine import LceCore
+            from lce.cognition.external import (
+                PrecomputedDraftInput,
+                PrecomputedDraftIntake,
+            )
         except ImportError as exc:
             raise LceIntegrationUnavailable(
                 "install the current optional lce-core package"
             ) from exc
 
         support = thread.handoff_memory_ids
-        # Revalidate every canonical support point before LCE sees the candidate.
+        # Revalidate every canonical support point before LCE sees the draft.
         self._adapter.get_by_ids(support)
-        candidate = CandidateBaseline(
+        payload = json.dumps(
+            {
+                "thread_id": thread.thread_id,
+                "support": support,
+                "summary": thread.working_summary,
+                "updated_at": thread.updated_at.isoformat(),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        processing_input_id = (
+            "mr-thread-input:"
+            + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        )
+        draft = PrecomputedDraftInput(
+            region_id=f"{_THREAD_REGION_PREFIX}{thread.thread_id}",
             content=thread.working_summary,
             supporting_memory_ids=support,
-            model_trace={},
-        )
-        core = LceCore(
-            memory_substrate=self._adapter,
-            baseline_store=self._store,
-            consolidator=_PrecomputedThreadConsolidator(candidate),
-        )
-        return core.consolidate(
-            f"{_THREAD_REGION_PREFIX}{thread.thread_id}",
-            support,
+            processing_input_id=processing_input_id,
             context={
                 "source": "mr-thread",
                 "open_question": thread.open_question,
                 "thread_status": thread.status.value,
             },
         )
+        intake = PrecomputedDraftIntake(
+            memory_substrate=self._adapter,
+            baseline_store=self._store,
+            draft_store=self._drafts,
+        )
+        return intake.stage_and_promote(draft)
 
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4
@@ -526,6 +543,7 @@ class LceThreadHandoffSession:
         )
 
     def close(self) -> None:
+        self._drafts.close()
         self._store.close()
 
     def __enter__(self) -> LceThreadHandoffSession:
@@ -602,6 +620,32 @@ def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
     return adapter._paths.lce_root / scope_address
 
 
+def _scope_lce_baseline_root(adapter: MrMemorySubstrateAdapter) -> Path:
+    """Current shared Baseline root for Thread and latent-discovery paths."""
+    return _scope_lce_root(adapter) / "baselines"
+
+
+def _scope_lce_worktree_root(adapter: MrMemorySubstrateAdapter) -> Path:
+    return _scope_lce_root(adapter) / "worktrees"
+
+
+def _ensure_current_lce_layout(adapter: MrMemorySubstrateAdapter) -> None:
+    """Migrate the pre-Path-B Baseline DB into the shared current layout once.
+
+    The old file is retained as a backup. After the current file exists all
+    writers use only the new layout, so an old deployment cannot be treated as
+    an independent second cognition authority.
+    """
+    scope_root = _scope_lce_root(adapter)
+    legacy = scope_root / "lce_baselines.sqlite"
+    current_root = _scope_lce_baseline_root(adapter)
+    current = current_root / "lce_baselines.sqlite"
+    if current.exists() or not legacy.exists():
+        return
+    current_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(legacy, current)
+
+
 def open_lce_thread_handoff(
     binding: RuntimeBinding,
     scope: Scope,
@@ -624,10 +668,16 @@ def open_lce_thread_handoff(
     _verify_binding(binding, adapter._paths)
     CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
     try:
+        from lce.cognition.worktree import CognitionWorktreeStore
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
-    return LceThreadHandoffSession(adapter, SqliteBaselineStore(_scope_lce_root(adapter)))
+    _ensure_current_lce_layout(adapter)
+    return LceThreadHandoffSession(
+        adapter,
+        SqliteBaselineStore(_scope_lce_baseline_root(adapter)),
+        CognitionWorktreeStore(_scope_lce_worktree_root(adapter)),
+    )
 
 
 def open_lce_read_binding(
@@ -651,9 +701,17 @@ def open_lce_read_binding(
     )
     _verify_binding(binding, adapter._paths)
     CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
-    root = _scope_lce_root(adapter)
-    db_path = root / "lce_baselines.sqlite"
-    if not db_path.exists():
+    current_root = _scope_lce_baseline_root(adapter)
+    current_db = current_root / "lce_baselines.sqlite"
+    legacy_root = _scope_lce_root(adapter)
+    legacy_db = legacy_root / "lce_baselines.sqlite"
+    if current_db.exists():
+        root = current_root
+    elif legacy_db.exists():
+        # Read-only compatibility for a pre-Path-B deployment. A write-capable
+        # session performs the one-time migration.
+        root = legacy_root
+    else:
         return None
     try:
         from lce.store.sqlite_store import SqliteBaselineStore
@@ -692,7 +750,8 @@ def open_lce_binding(
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the frozen optional lce-core package") from exc
-    store = SqliteBaselineStore(_scope_lce_root(adapter))
+    _ensure_current_lce_layout(adapter)
+    store = SqliteBaselineStore(_scope_lce_baseline_root(adapter))
     try:
         core = LceCore(memory_substrate=adapter, baseline_store=store, consolidator=consolidator)
         return LceBindingSession(_GenericLceCore(core), store, adapter)
