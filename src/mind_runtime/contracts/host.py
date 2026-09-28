@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
+from mind_runtime.contracts.appraisal import BodySemanticSidecar
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.expression import ExpressionDisposition
 from mind_runtime.contracts.scope import Scope
@@ -86,13 +87,15 @@ class HostTurnStatus(StrEnum):
 class HostTurnRequest:
     """PUBLIC. What a Host passes to begin a turn.
 
-    Fields are deliberately narrow. A Host cannot supply:
-      * numeric affect deltas
+    Fields are deliberately narrow. Current-turn semantic meaning is not supplied
+    here; the normal Body inference may later emit a separate semantic sidecar.
+    A Host cannot supply:
+      * numeric affect deltas or direct state-transition amounts
       * final affect values
-      * shock / salience / urgency / timescale
+      * shock / urgency / timescale
       * persona mutation
       * memory authority results
-      * appraisal results
+      * authoritative appraisal results
     """
 
     interaction_id: str
@@ -115,6 +118,21 @@ class HostTurnRequest:
         if self.session_id is not None:
             require_non_empty(self.session_id, "session_id")
 
+
+
+@dataclass(frozen=True, slots=True)
+class HostSemanticSidecarRequest:
+    """PUBLIC. Sidecar from the SAME Body inference that produced the reply."""
+
+    turn_id: str
+    interaction_id: str
+    sidecar: BodySemanticSidecar
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.turn_id, "turn_id")
+        require_non_empty(self.interaction_id, "interaction_id")
+        if not isinstance(self.sidecar, BodySemanticSidecar):
+            raise ValueError("sidecar must be a BodySemanticSidecar")
 
 @dataclass(frozen=True, slots=True)
 class HostCommitRequest:

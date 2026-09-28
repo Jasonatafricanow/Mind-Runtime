@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from mind_runtime.contracts.affect import AffectiveDimensionProfile
-from mind_runtime.contracts.appraisal import AppraisalRouteDecision, SemanticEventCandidate
+from mind_runtime.contracts.appraisal import (
+    AppraisalModelProposal,
+    AppraisalRouteDecision,
+    SemanticEventCandidate,
+)
 from mind_runtime.contracts.common import require_aware_utc, require_non_empty
 from mind_runtime.contracts.historical import HistoricalContextBundle
 from mind_runtime.contracts.late_projection import AcceptedAppraisal
@@ -124,6 +128,7 @@ class EmotionalTransitionInput:
     history_context: HistoricalContextBundle | None
     clock: datetime
     projection_scope: Scope | None
+    appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = ()
 
     def __post_init__(self) -> None:
         require_non_empty(self.interaction_id, "interaction_id")
@@ -148,9 +153,23 @@ class EmotionalTransitionInput:
         for observation in self.observations:
             if observation.scope != self.scope:
                 raise ValueError("observation scope must match scope")
+        candidate_ids: list[str] = []
         for candidate in self.semantic_candidates:
             if candidate.scope != self.scope:
                 raise ValueError("semantic candidate scope must match scope")
+            if candidate.origin_runtime_id != self.origin_runtime_id:
+                raise ValueError("semantic candidate origin must match transition origin")
+            candidate_ids.append(candidate.candidate_id)
+        proposal_ids: list[str] = []
+        for candidate_id, proposal in self.appraisal_proposals:
+            require_non_empty(candidate_id, "appraisal proposal candidate_id")
+            if not isinstance(proposal, AppraisalModelProposal):
+                raise ValueError("appraisal proposal must be AppraisalModelProposal")
+            proposal_ids.append(candidate_id)
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("appraisal proposal candidate ids must be unique")
+        if proposal_ids and set(proposal_ids) != set(candidate_ids):
+            raise ValueError("appraisal proposals must exactly cover semantic candidates")
         if self.history_context is not None and self.history_context.scope != self.scope:
             raise ValueError("history context scope must match scope")
         require_aware_utc(self.clock, "clock")

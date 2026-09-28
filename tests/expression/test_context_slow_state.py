@@ -1080,11 +1080,13 @@ def test_two_turn_production_regression_turn1_persists_turn2_reads_and_compiles(
     """
     from mind_runtime.validation import load_horizon_template
     import mind_runtime.validation.composition as composition_module
-    from tests.validation.test_composition import make_runtime_config, MockAppraisalTransport
+    from tests.validation.test_composition import (
+        _body_positive_semantics,
+        make_runtime_config,
+    )
 
     inputs = Path("certification/d11s/inputs")
-    transport = MockAppraisalTransport()
-    config = replace(make_runtime_config(tmp_path), appraisal_transport=transport)
+    config = make_runtime_config(tmp_path)
     composition = composition_module.build_composition(config)
 
     try:
@@ -1094,7 +1096,12 @@ def test_two_turn_production_regression_turn1_persists_turn2_reads_and_compiles(
         # Turn 1: Day 1 positive event
         ev1 = h.events[1]
         config.clock.advance_to(now + ev1.at_offset)
-        composition.apply_event(ev1)
+        candidate, proposal = _body_positive_semantics(ev1)
+        composition.apply_event(
+            ev1,
+            semantic_candidates=(candidate,),
+            appraisal_proposals=((candidate.candidate_id, proposal),),
+        )
 
         # Verify Turn 1 persisted AGENT slow state
         state_backend = SqliteStateBackend(config.durable_paths.state_db)

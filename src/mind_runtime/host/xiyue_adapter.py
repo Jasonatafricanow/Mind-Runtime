@@ -7,8 +7,9 @@ DynamicsEngine, Memory admission). It speaks only the public
 
 Responsibilities (HI-2 §1):
   * map a Hermes message/session to a HostTurnRequest
-  * call begin_turn synchronously BEFORE the Hermes LLM invocation
-  * render HostTurnResult.bounded_context into a prompt-safe block
+  * call prepare_turn before the single Hermes Body inference
+  * render the last committed HostTurnResult.bounded_context into a prompt-safe block
+  * submit the semantic sidecar emitted by that SAME Body inference
   * call commit_turn after the Hermes delivery-success boundary
   * call abort_turn on the terminal-failure path
   * fail soft: any MR failure must never block the Hermes reply
@@ -29,12 +30,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
+from mind_runtime.contracts import BodySemanticSidecar, Scope, ScopeDomain, WakeSignal
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
     HostProactiveTurnResult,
     HostProviderProseRequest,
+    HostSemanticSidecarRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnStatus,
@@ -194,12 +196,12 @@ class XiyueMRAdapter:
                 session_id=session_id,
                 host_metadata=(("persona_id", self._persona_id or ""),),
             )
-            result = self._port.begin_turn(request)
+            result = self._port.prepare_turn(request)
             if result.status in (HostTurnStatus.FAILED,):
-                _logger.warning("MR begin_turn FAILED: %s", result.reason_codes)
+                _logger.warning("MR prepare_turn FAILED: %s", result.reason_codes)
                 return None
             bounded = result.bounded_context
-            _mr_thread_trace("BEGIN_TURN_RETURN", self, interaction_id=result.interaction_id)
+            _mr_thread_trace("PREPARE_TURN_RETURN", self, interaction_id=result.interaction_id)
             return MrTurnHandle(
                 interaction_id=result.interaction_id,
                 turn_id=result.turn_id,
@@ -210,6 +212,32 @@ class XiyueMRAdapter:
         except Exception as exc:  # noqa: BLE001 — fail-soft boundary
             _logger.warning("MR begin_turn exception (fail-soft): %s", exc)
             return None
+
+    def submit_semantic_sidecar(
+        self,
+        handle: MrTurnHandle,
+        sidecar: BodySemanticSidecar,
+    ) -> bool:
+        """Resolve the prepared MR turn from the SAME Body inference sidecar."""
+
+        if handle is None:
+            return False
+        try:
+            result = self._port.submit_semantic_sidecar(
+                HostSemanticSidecarRequest(
+                    turn_id=handle.turn_id,
+                    interaction_id=handle.interaction_id,
+                    sidecar=sidecar,
+                )
+            )
+            if result.status is HostTurnStatus.FAILED:
+                _logger.warning("MR semantic sidecar FAILED: %s", result.reason_codes)
+                return False
+            handle.bounded_context = result.bounded_context
+            return True
+        except Exception as exc:  # noqa: BLE001 — Host boundary
+            _logger.warning("MR semantic sidecar exception: %s", exc)
+            return False
 
     # ---- commit / abort --------------------------------------------------
 

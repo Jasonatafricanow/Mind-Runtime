@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from tests.golden.fixtures.common import make_state
 
-from mind_runtime.contracts import Scope, ScopeDomain
+from mind_runtime.contracts import BodySemanticSidecar, Scope, ScopeDomain
 from mind_runtime.host.xiyue_adapter import default_adapter
 from mind_runtime.runtime_binding import (
     PRODUCTION_COMPAT_NAMESPACE,
@@ -250,6 +250,9 @@ class TestNoSessionCoupling:
             message="hello", channel="chat", session_id="session-A", message_id="m-1"
         )
         assert h1 is not None
+        assert adapter.submit_semantic_sidecar(
+            h1, BodySemanticSidecar(schema_version=1, frames=())
+        )
         assert adapter.commit_turn(h1)
         # a second, unrelated Hermes conversation — same runtime, new session id
         h2 = adapter.begin_turn(
@@ -260,6 +263,9 @@ class TestNoSessionCoupling:
         )
         assert h2 is not None
         assert h1.interaction_id != h2.interaction_id
+        assert adapter.submit_semantic_sidecar(
+            h2, BodySemanticSidecar(schema_version=1, frames=())
+        )
         assert adapter.commit_turn(h2)
 
         # a reconstructed "process" (new adapter object) serves a brand-new session
@@ -269,6 +275,9 @@ class TestNoSessionCoupling:
             message="after restart", channel="chat", session_id="session-C", message_id="m-3"
         )
         assert h3 is not None
+        assert boot2.submit_semantic_sidecar(
+            h3, BodySemanticSidecar(schema_version=1, frames=())
+        )
         assert boot2.commit_turn(h3)
 
         # all three sessions landed in the ONE namespace; binding identity unchanged

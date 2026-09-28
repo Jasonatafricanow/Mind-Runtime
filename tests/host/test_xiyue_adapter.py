@@ -22,10 +22,11 @@ from pathlib import Path
 
 import pytest
 
-from mind_runtime.contracts import Scope, ScopeDomain
+from mind_runtime.contracts import BodySemanticSidecar, Scope, ScopeDomain
 from mind_runtime.contracts.host import (
     HostAbortReceipt,
     HostCommitReceipt,
+    HostSemanticSidecarRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnResult,
@@ -49,9 +50,10 @@ class FakePort:
         self.begins: list[HostTurnRequest] = []
         self.commits = 0
         self.aborts = 0
+        self.sidecars: list[HostSemanticSidecarRequest] = []
         self.fail_begin = False
 
-    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
+    def prepare_turn(self, request: HostTurnRequest) -> HostTurnResult:
         self.begins.append(request)
         if self.fail_begin:
             raise RuntimeError("provider timeout")
@@ -76,6 +78,23 @@ class FakePort:
             expression_ref=None,
             debug_ref="dbg-1",
             reason_codes=("ingest_committed",),
+        )
+
+    def begin_turn(self, request: HostTurnRequest) -> HostTurnResult:
+        return self.prepare_turn(request)
+
+    def submit_semantic_sidecar(self, request: HostSemanticSidecarRequest) -> HostTurnResult:
+        self.sidecars.append(request)
+        return HostTurnResult(
+            turn_id=request.turn_id,
+            interaction_id=request.interaction_id,
+            status=HostTurnStatus.PROCESSING,
+            outcome=HostStatus.OK,
+            bounded_context=None,
+            decision_context_ref="dc-sidecar",
+            expression_ref=None,
+            debug_ref="dbg-sidecar",
+            reason_codes=("body_sidecar_resolved",),
         )
 
     def commit_turn(self, request) -> HostCommitReceipt:
@@ -216,6 +235,20 @@ def test_render_bounded_context_typed_boundary() -> None:
         render_bounded_context(malformed)
 
 
+def test_a4b_same_inference_sidecar_resolves_prepared_turn(
+    monkeypatch, adapter: XiyueMRAdapter, port: FakePort
+) -> None:
+    monkeypatch.setenv("MR_ENABLED", "true")
+    handle = adapter.begin_turn(
+        message="hi", channel="telegram", session_id="s1", message_id="m1"
+    )
+    assert handle is not None
+    sidecar = BodySemanticSidecar(schema_version=1, frames=())
+    assert adapter.submit_semantic_sidecar(handle, sidecar) is True
+    assert len(port.begins) == 1
+    assert len(port.sidecars) == 1
+
+
 # ── A5: commit after success ─────────────────────────────────────────────────
 
 
@@ -290,3 +323,57 @@ def test_a10_seam_commit_or_abort(monkeypatch, adapter: XiyueMRAdapter, port: Fa
             adapter.abort_turn(handle, reason="empty_response")
     assert port.commits == 1
     assert port.aborts == 0
+
+
+def test_same_inference_transform_strips_sidecar_and_retains_metadata() -> None:
+    from xiyue import mr_seam
+
+    session_id = "semantic-transform-test"
+    raw = (
+        "正常回复。\n"
+        "<mr_semantic_sidecar>"
+        '{"schema_version":1,"frames":[{"frame_id":"f1",'
+        '"meanings":["用户确认了安排"],"meaning_confidence":0.9,'
+        '"salience":0.5}]}'
+        "</mr_semantic_sidecar>"
+    )
+    visible = mr_seam.transform_body_semantic_output(
+        raw,
+        session_id=session_id,
+        model="test",
+        platform="test",
+    )
+    assert visible == "正常回复。"
+    sidecar = mr_seam.take_body_semantic_sidecar(session_id)
+    assert len(sidecar.frames) == 1
+    assert sidecar.frames[0].meanings == ("用户确认了安排",)
+    assert sidecar.frames[0].typed_event_hint is None
+
+
+def test_same_inference_transform_never_exposes_malformed_sidecar() -> None:
+    from xiyue import mr_seam
+
+    session_id = "semantic-transform-malformed"
+    raw = (
+        "正常回复。\n"
+        "<mr_semantic_sidecar>{not-json}</mr_semantic_sidecar>"
+    )
+    visible = mr_seam.transform_body_semantic_output(
+        raw,
+        session_id=session_id,
+        model="test",
+        platform="test",
+    )
+    assert visible == "正常回复。"
+    sidecar = mr_seam.take_body_semantic_sidecar(session_id)
+    assert sidecar.frames == ()
+
+
+def test_semantic_prompt_contract_forbids_state_authority() -> None:
+    from xiyue import mr_seam
+
+    contract = mr_seam.body_semantic_prompt_contract()
+    assert "Do NOT emit affect deltas" in contract
+    assert "final affect values" in contract
+    assert "typed_event_hint must be omitted" in contract
+    assert "no material semantic update" in contract

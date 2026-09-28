@@ -56,7 +56,7 @@ __PATCH_CONTEXT_BLANK_1__
  import asyncio
  import concurrent.futures
  import dataclasses
-@@ -20943,7 +20990,53 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20943,7 +20990,66 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                      _conversation_kwargs["moa_config"] = moa_config
                  if _persist_user_timestamp_override is not None:
                      _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
@@ -89,6 +89,12 @@ __PATCH_CONTEXT_BLANK_1__
 +                                agent.ephemeral_system_prompt = (
 +                                    (agent.ephemeral_system_prompt or "") + "\n\n" + _mr_block
 +                                ).strip()
++                        if _mr_handle is not None and _mr_seam.install_hermes_semantic_transform_hook():
++                            _mr_contract = _mr_seam.body_semantic_prompt_contract()
++                            if _mr_contract not in (agent.ephemeral_system_prompt or ""):
++                                agent.ephemeral_system_prompt = (
++                                    (agent.ephemeral_system_prompt or "") + "\n\n" + _mr_contract
++                                ).strip()
 +                except Exception as _seam_err:
 +                    _mr_handle = None
 +                    if _mr_seam is not None:
@@ -108,10 +114,17 @@ __PATCH_CONTEXT_BLANK_1__
 +                    }
 +                else:
 +                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
++                    # Resolve the SAME MR turn from metadata captured by Hermes'
++                    # pre-persistence transform hook. No second model/provider call.
++                    if _mr_handle is not None and _mr_seam is not None:
++                        _mr_seam.submit_body_semantics(
++                            _mr_handle,
++                            _mr_seam.take_body_semantic_sidecar(session_id or ""),
++                        )
              finally:
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
-@@ -20963,6 +21056,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20963,6 +21069,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 __PATCH_CONTEXT_BLANK_13__
              # Return final response, or a message if something went wrong
              final_response = result.get("final_response")

@@ -103,10 +103,17 @@ def _extract_trusted_history_refs(context: SemanticAppraisalContext) -> tuple[st
 class SemanticAppraisalProducer:
     """Canonical assembler / validator for SemanticAppraisal (ADR-0019-R4)."""
 
-    def __init__(self, *, model: SemanticAppraisalModelPort) -> None:
-        if not isinstance(model, SemanticAppraisalModelPort) and not hasattr(model, "propose"):
-            raise TypeError("model is required")
+    def __init__(self, *, model: SemanticAppraisalModelPort | None = None) -> None:
+        if model is not None and (
+            not isinstance(model, SemanticAppraisalModelPort)
+            and not hasattr(model, "propose")
+        ):
+            raise TypeError("model must implement SemanticAppraisalModelPort")
         self._model = model
+
+    @property
+    def has_model(self) -> bool:
+        return self._model is not None
 
     def assemble(
         self, *, candidate: SemanticEventCandidate, context: SemanticAppraisalContext
@@ -122,6 +129,7 @@ class SemanticAppraisalProducer:
         persona_id: str,
         route_abstention_reasons: tuple[str, ...],
         projection_scope: Scope | None = None,
+        proposal: AppraisalModelProposal | None = None,
     ) -> AcceptedAppraisal:
         from mind_runtime.contracts.late_projection import (
             AcceptedAppraisal,
@@ -148,7 +156,11 @@ class SemanticAppraisalProducer:
             )
         )
         if bound and not route_abstention_reasons:
-            appraisal, valid = self._evaluate(candidate=candidate, context=context)
+            appraisal, valid = self._evaluate(
+                candidate=candidate,
+                context=context,
+                proposal=proposal,
+            )
             trusted = _extract_trusted_evidence_pool(candidate=candidate, context=context)
         else:
             # Fail before invoking a model with foreign authority.
@@ -212,6 +224,7 @@ class SemanticAppraisalProducer:
         *,
         candidate: SemanticEventCandidate,
         context: SemanticAppraisalContext,
+        proposal: AppraisalModelProposal | None = None,
     ) -> tuple[SemanticAppraisal, bool]:
         appraisal_id = f"appraisal-{candidate.candidate_id}"
         scope = candidate.scope
@@ -241,14 +254,17 @@ class SemanticAppraisalProducer:
             salience=None,
         )
 
-        try:
-            proposal = self._model.propose(
-                candidate=candidate,
-                context=context,
-                trusted_evidence_pool=trusted_pool,
-            )
-        except Exception:
-            return (default_failure, False)
+        if proposal is None:
+            if self._model is None:
+                return (default_failure, False)
+            try:
+                proposal = self._model.propose(
+                    candidate=candidate,
+                    context=context,
+                    trusted_evidence_pool=trusted_pool,
+                )
+            except Exception:
+                return (default_failure, False)
 
         if not isinstance(proposal, AppraisalModelProposal):
             return (default_failure, False)

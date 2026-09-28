@@ -383,6 +383,12 @@ def test_actual_host_admitted_message_reaches_retrieval(tmp_path, monkeypatch):
         message="recall hello", channel="test", session_id="s", message_id="1"
     )
     assert handle is not None
+    from mind_runtime.contracts import BodySemanticSidecar
+
+    assert adapter.submit_semantic_sidecar(
+        handle,
+        BodySemanticSidecar(schema_version=1, frames=()),
+    )
     assert len(provider.queries) == 1
     assert provider.queries[0].text == "recall hello"
     assert provider.queries[0].scope == memory().scope

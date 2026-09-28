@@ -142,9 +142,45 @@ Relevant evidence:
 - `tests/memory_retrieval/test_decision_rerank.py`
 - `tests/memory_retrieval/test_decision_composition.py`
 
-This work was deliberately kept separate from the pending ACTIVE semantic migration.
-Legacy MR-owned online semantic-model wiring, GLM/Zen cleanup, appraisal migration,
-and Host/Body semantic ownership changes remain a different implementation track.
+This work was deliberately kept separate from the ACTIVE semantic migration so
+bounded decision compute could not become a second semantic authority.
+
+### 8. Online semantic ownership correction
+
+The ACTIVE runtime historically retained an internal semantic-provider path and a
+model-backed appraisal path. The intended replacement is Body-owned online semantic
+understanding, but the migration is intentionally unfinished rather than papered over.
+
+The corrected boundary is stricter than the first migration draft:
+
+- the normal Body inference produces the user-visible response and an open semantic
+  sidecar together;
+- no second online model call is introduced just for MR semantic parsing;
+- open natural-language meaning is primary and is not forced into a finite event
+  taxonomy;
+- a typed event is only an optional compatibility hint for an existing deterministic
+  event recipe;
+- Body cannot author affect deltas, final affect values, Scope/runtime authority,
+  Intent, Policy, or commit authority;
+- MR remains responsible for validating and translating any sidecar content before
+  canonical state can change.
+
+The first receiver-side draft incorrectly made event-shaped semantic proposals part of
+HostTurnRequest. That ingress coupling has been removed. The Host now has a two-phase
+lifecycle inside one MR turn: prepare/ingest before the one normal Body inference,
+then same-inference sidecar submission before the single MR resolution pass. The
+branch stays draft because live provider evidence has not yet certified the
+same-inference sidecar contract and the general affect projection still lacks an
+open-appraisal algorithm beyond legacy event_kind -> base_amount compatibility
+recipes.
+
+Relevant evidence:
+
+- `src/mind_runtime/contracts/appraisal.py`
+- `src/mind_runtime/contracts/host.py`
+- `docs/adr/0034-body-owned-online-semantics-and-decision-model-option.md`
+- `tests/host/test_body_semantic_input.py`
+
 
 ## Why the history was not rewritten
 
@@ -164,4 +200,4 @@ The public baseline demonstrates a large deterministic and restart-safe runtime 
 
 In particular, live shadow validation remains separate from deterministic certification, and incomplete external evidence is reported as incomplete rather than folded into a production claim.
 
-The optional decision-model plane is currently being developed on an isolated branch and is not part of the public `main` baseline until its integration checks and the separate local semantic-migration work are reconciled.
+The optional decision-model plane is part of the current mainline. The Body-owned semantic migration remains a separate draft track until its single-inference Host lifecycle and open-semantic projection boundary are closed.

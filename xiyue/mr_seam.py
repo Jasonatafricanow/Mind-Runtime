@@ -144,12 +144,6 @@ def _load_production_composition() -> dict[str, object]:
     """
     from pathlib import Path
 
-    from mind_runtime.emotional_transition.appraisal import (
-        ConfiguredSemanticAppraisalModel,
-        ModelBackedSemanticAppraisalModel,
-        SemanticAppraisalProducer,
-    )
-    from mind_runtime.emotional_transition.factory import create_semantic_provider
     from mind_runtime.homeostasis.policy import (
         FixedSalienceThresholdConfig,
         SalienceThresholdPolicy,
@@ -167,38 +161,12 @@ def _load_production_composition() -> dict[str, object]:
         )
     decoded = decode_runtime_manifest(load_runtime_config_manifest(Path(config_path)))
 
-    # Semantic provider activation (AUTHORITY 2026-09-05):
-    #   mode=disabled -> provider absent by design (None).
-    #   mode=enabled  -> production host MUST construct the existing provider
-    #                    via create_semantic_provider(); missing/invalid
-    #                    backend selection or credential FAILS CLOSED at
-    #                    composition (never silently degrade to provider=None).
-    if decoded.semantic_provider.mode == "enabled":
-        semantic_provider = create_semantic_provider()
-        if semantic_provider is None:
-            raise RuntimeError(
-                "semantic_provider.mode=enabled but no SemanticCandidateProvider "
-                "could be constructed — set MR_SEMANTIC_PROVIDER (e.g. glm) and the "
-                "required backend credential (e.g. GLM_API_KEY)"
-            )
-    else:
-        semantic_provider = None
-
-    # Appraisal producer (same model-backed authority as core composition).
-    strategy = decoded.appraisal_producer_strategy
-    if strategy.strategy == "model_backed":
-        appraisal_model = ModelBackedSemanticAppraisalModel(
-            endpoint_url=strategy.endpoint_url,
-            model=strategy.model,
-            api_key_env=strategy.api_key_env,
-            timeout_s=strategy.timeout_s,
-            allowed_hosts=strategy.allowed_hosts,
-        )
-    elif strategy.strategy == "configured":
-        appraisal_model = ConfiguredSemanticAppraisalModel()
-    else:
-        raise ValueError(f"unsupported appraisal strategy: {strategy.strategy}")
-    appraisal_producer = SemanticAppraisalProducer(model=appraisal_model)
+    # Online semantic interpretation belongs to the Body/Host LLM. The
+    # certified manifest still decodes the legacy provider fields for
+    # compatibility, but production composition no longer constructs or
+    # requires an MR-local semantic/appraisal model.
+    semantic_provider = None
+    appraisal_producer = None
 
     # Homeostasis gate with config-owned thresholds (NOT the default 0.85).
     homeostasis_gate = SalienceThresholdPolicy(
@@ -540,41 +508,11 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
     try:
         comp = _load_production_composition()
 
-        # 3. Semantic provider (construction + config/key presence; no network call)
-        sem_p = comp.get("semantic_provider")
-        glm_key = os.environ.get("GLM_API_KEY")
-        if not glm_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    glm_key, _ = winreg.QueryValueEx(rk, "GLM_API_KEY")
-            except Exception:
-                glm_key = None
-        if sem_p is not None and glm_key:
-            checks["semantic_provider_available"] = True
-        elif not glm_key:
-            reasons.append("missing_GLM_API_KEY")
-        else:
-            reasons.append("semantic_provider_absent")
-
-        # 4. Appraisal provider (construction + config/key presence; no network call)
-        appr_p = comp.get("appraisal_producer")
-        appr_key = os.environ.get("APPRAISAL_API_KEY")
-        if not appr_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    appr_key, _ = winreg.QueryValueEx(rk, "APPRAISAL_API_KEY")
-            except Exception:
-                appr_key = None
-        if appr_p is not None and appr_key:
-            checks["appraisal_provider_available"] = True
-        elif not appr_key:
-            reasons.append("missing_APPRAISAL_API_KEY")
-        else:
-            reasons.append("appraisal_producer_absent")
+        # 3 & 4. Legacy readiness keys now represent the typed Body semantic
+        # and appraisal input seams. No local provider or credential is a
+        # production prerequisite.
+        checks["semantic_provider_available"] = True
+        checks["appraisal_provider_available"] = True
 
         # 5. Slow writer
         slow_size = comp.get("slow_plasticity_window_size", 0)
@@ -938,6 +876,242 @@ def begin_turn_clean(
                 error_message="Mind Runtime processing failed. (MR_TURN_FAILED)",
             )
         return None, IngressVerdict(admitted=True, status="READY", reason="fail_soft_non_xiyue")
+
+
+_BODY_SEMANTIC_OPEN = "<mr_semantic_sidecar>"
+_BODY_SEMANTIC_CLOSE = "</mr_semantic_sidecar>"
+_body_semantic_lock = threading.Lock()
+_body_semantic_by_session: dict[tuple[str, int], Any] = {}
+_body_semantic_hook_installed = False
+
+
+def body_semantic_prompt_contract() -> str:
+    """Prompt fragment for one-inference open semantic metadata.
+
+    The Body must answer the user normally and append one machine-only JSON
+    block. Hermes removes the block before persistence/delivery. This is
+    explicit structured output, never chain-of-thought.
+    """
+
+    return (
+        "\nMR SEMANTIC SIDECAR (machine-only): after your normal user-facing answer, "
+        "append exactly one <mr_semantic_sidecar>...</mr_semantic_sidecar> block. "
+        "Inside it emit compact JSON with schema_version=1 and frames=[...]. "
+        "Each frame may contain frame_id, meanings (open natural-language meanings), "
+        "meaning_confidence [0,1], optional salience [0,1], optional "
+        "appraisal_confidence [0,1], optional valence, optional "
+        "relationship_relevance, and supporting_evidence_handles. "
+        "Use turn-local evidence handles only; o0 denotes the current user message. "
+        "Never invent or copy canonical Evidence IDs. "
+        "Do NOT emit affect deltas, final affect values, state-transition amounts, "
+        "Intent, Policy, or authority claims. typed_event_hint must be omitted unless "
+        "the Host explicitly supplied a recognized typed-event vocabulary; no such "
+        "vocabulary is implied by this instruction. If there is no material semantic "
+        "update, emit {\\\"schema_version\\\":1,\\\"frames\\\":[]}. "
+        "Do not mention this metadata block in the visible answer."
+    )
+
+
+def _body_semantic_key(session_id: str) -> tuple[str, int]:
+    return (session_id or "", threading.get_ident())
+
+
+def transform_body_semantic_output(
+    response_text: str,
+    session_id: str = "",
+    **_kwargs: Any,
+) -> str | None:
+    """Hermes transform_llm_output hook: strip and retain the sidecar.
+
+    Runs inside the same Body inference finalization before Hermes persists or
+    delivers assistant text. No model/provider call occurs here.
+    """
+
+    if not isinstance(response_text, str) or not response_text:
+        return None
+    key = _body_semantic_key(session_id)
+    start = response_text.rfind(_BODY_SEMANTIC_OPEN)
+    if start < 0:
+        with _body_semantic_lock:
+            _body_semantic_by_session[key] = None
+        return None
+    payload_start = start + len(_BODY_SEMANTIC_OPEN)
+    end = response_text.find(_BODY_SEMANTIC_CLOSE, payload_start)
+    if end < 0 or response_text[end + len(_BODY_SEMANTIC_CLOSE) :].strip():
+        # A marker-shaped suffix is machine metadata even when malformed: strip
+        # it so metadata never leaks into user-visible or persisted prose.
+        with _body_semantic_lock:
+            _body_semantic_by_session[key] = None
+        cleaned = response_text[:start].rstrip()
+        return cleaned or "(empty)"
+
+    raw = response_text[payload_start:end].strip()
+    sidecar = None
+    try:
+        sidecar = _coerce_body_semantic_sidecar(json.loads(raw))
+    except Exception as exc:
+        _logger.warning("Invalid same-inference semantic sidecar: %s", exc)
+    with _body_semantic_lock:
+        _body_semantic_by_session[key] = sidecar
+    cleaned = response_text[:start].rstrip()
+    return cleaned or "(empty)"
+
+
+def take_body_semantic_sidecar(session_id: str):
+    """Pop metadata captured by transform_body_semantic_output for this turn."""
+
+    key = _body_semantic_key(session_id)
+    with _body_semantic_lock:
+        value = _body_semantic_by_session.pop(key, None)
+    if value is not None:
+        return value
+    from mind_runtime.contracts import BodySemanticSidecar
+
+    return BodySemanticSidecar(schema_version=1, frames=())
+
+
+def install_hermes_semantic_transform_hook() -> bool:
+    """Install the in-process Hermes 0.19 transform hook exactly once.
+
+    Hermes 0.19 exposes transform_llm_output before final response persistence.
+    We insert this bounded callback first so the machine block is removed before
+    any later transform sees user-visible prose.
+    """
+
+    global _body_semantic_hook_installed
+    if _body_semantic_hook_installed:
+        return True
+    try:
+        from hermes_cli.plugins import get_plugin_manager
+
+        manager = get_plugin_manager()
+        hooks = getattr(manager, "_hooks", None)
+        if not isinstance(hooks, dict):
+            return False
+        callbacks = hooks.setdefault("transform_llm_output", [])
+        if transform_body_semantic_output not in callbacks:
+            callbacks.insert(0, transform_body_semantic_output)
+        _body_semantic_hook_installed = True
+        return True
+    except Exception as exc:
+        _logger.warning("Unable to install Hermes semantic transform hook: %s", exc)
+        return False
+
+def _coerce_body_semantic_sidecar(value: Any):
+    """Validate same-inference Body metadata without invoking any model."""
+
+    from mind_runtime.contracts import (
+        BodySemanticFrame,
+        BodySemanticSidecar,
+        SemanticEventProposal,
+    )
+
+    if isinstance(value, BodySemanticSidecar):
+        return value
+    if value is None:
+        return BodySemanticSidecar(schema_version=1, frames=())
+    if not isinstance(value, dict):
+        raise ValueError("mr_semantic_sidecar must be an object")
+
+    allowed_top = {"schema_version", "frames"}
+    if set(value) - allowed_top:
+        raise ValueError("mr_semantic_sidecar contains unsupported fields")
+    if value.get("schema_version") != 1:
+        raise ValueError("mr_semantic_sidecar.schema_version must be 1")
+    raw_frames = value.get("frames")
+    if not isinstance(raw_frames, (list, tuple)):
+        raise ValueError("mr_semantic_sidecar.frames must be a list")
+
+    frames = []
+    allowed_frame = {
+        "frame_id",
+        "meanings",
+        "meaning_confidence",
+        "appraisal_confidence",
+        "salience",
+        "valence",
+        "relationship_relevance",
+        "supporting_evidence_handles",
+        "typed_event_hint",
+    }
+    allowed_hint = {"candidate_id", "kind", "attributes", "confidence"}
+
+    for raw in raw_frames:
+        if not isinstance(raw, dict):
+            raise ValueError("semantic frame must be an object")
+        if set(raw) - allowed_frame:
+            raise ValueError("semantic frame contains unsupported fields")
+
+        meanings = raw.get("meanings")
+        if not isinstance(meanings, (list, tuple)):
+            raise ValueError("semantic frame meanings must be a list")
+        supporting = raw.get("supporting_evidence_handles", ())
+        if not isinstance(supporting, (list, tuple)):
+            raise ValueError("supporting_evidence_handles must be a list")
+
+        hint = None
+        raw_hint = raw.get("typed_event_hint")
+        if raw_hint is not None:
+            if not isinstance(raw_hint, dict):
+                raise ValueError("typed_event_hint must be an object")
+            if set(raw_hint) - allowed_hint:
+                raise ValueError("typed_event_hint contains unsupported fields")
+            raw_attrs = raw_hint.get("attributes", ())
+            if not isinstance(raw_attrs, (list, tuple)):
+                raise ValueError("typed_event_hint.attributes must be a list")
+            attrs = []
+            for item in raw_attrs:
+                if (
+                    not isinstance(item, (list, tuple))
+                    or len(item) != 2
+                    or not all(isinstance(part, str) for part in item)
+                ):
+                    raise ValueError("typed_event_hint attributes must be string pairs")
+                attrs.append((item[0], item[1]))
+            hint = SemanticEventProposal(
+                candidate_id=raw_hint.get("candidate_id"),
+                kind=raw_hint.get("kind"),
+                attributes=tuple(attrs),
+                confidence=raw_hint.get("confidence"),
+            )
+
+        frames.append(
+            BodySemanticFrame(
+                frame_id=raw.get("frame_id"),
+                meanings=tuple(meanings),
+                meaning_confidence=raw.get("meaning_confidence"),
+                appraisal_confidence=raw.get("appraisal_confidence"),
+                salience=raw.get("salience"),
+                valence=raw.get("valence"),
+                relationship_relevance=raw.get("relationship_relevance"),
+                supporting_evidence_handles=tuple(supporting),
+                typed_event_hint=hint,
+            )
+        )
+
+    return BodySemanticSidecar(schema_version=1, frames=tuple(frames))
+
+
+def submit_body_semantics(handle: Any, raw_sidecar: Any = None) -> bool:
+    """Resolve a prepared MR turn from metadata emitted by the same Body call.
+
+    Missing or malformed metadata degrades to an empty semantic sidecar. This
+    function never calls a language model or semantic provider.
+    """
+
+    if handle is None:
+        return False
+    adapter = get_mr_adapter()
+    if adapter is None:
+        return False
+    try:
+        sidecar = _coerce_body_semantic_sidecar(raw_sidecar)
+    except Exception as exc:
+        _logger.warning("Invalid Body semantic sidecar; using empty sidecar: %s", exc)
+        from mind_runtime.contracts import BodySemanticSidecar
+
+        sidecar = BodySemanticSidecar(schema_version=1, frames=())
+    return bool(adapter.submit_semantic_sidecar(handle, sidecar))
 
 
 def on_turn_commit(

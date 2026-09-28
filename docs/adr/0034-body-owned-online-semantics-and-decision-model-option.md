@@ -12,16 +12,31 @@ Normal interactive cognition must not require a model call owned by Mind Runtime
 The online ownership boundary is:
 
 ```text
-user message
-    -> Body / Host LLM semantic understanding
-    -> bounded typed proposals
+user message + prior bounded runtime context
+    -> ONE normal Body/Host LLM inference
+       + user-visible final response
+       + open semantic sidecar (same inference)
+    -> consumer-specific bounded projections
        + Reality/State proposal for the current-state owner
-       + semantic/appraisal proposal for MR
-       + optional Memory/LCE hints
+       + MR semantic/appraisal view
+       + optional Memory/Thread/LCE hints
     -> each runtime owner validates and consumes only its own bounded view
-    -> MR deterministic state evolution / Intent / Policy / DecisionContext
-    -> Body realizes the final response
+    -> MR deterministic state evolution / Intent / Policy for subsequent state
 ```
+
+The Body semantic sidecar is open-semantic by default. Natural-language meaning is
+not required to fit a finite event taxonomy. A typed event identifier may be carried
+only as an optional compatibility hint when a stable existing recipe genuinely
+applies. Absence of a typed event is normal and must not make a turn invalid.
+
+The sidecar MUST be emitted by the same model inference that produces the normal
+Body response. MR must not require a second Body call, tool-call continuation, or
+separate online semantic model merely to obtain semantic parsing. Hidden chain of
+thought is not a protocol and is never consumed by MR.
+
+Body output must not contain authoritative affect deltas, final affect values, or
+state-transition amounts. Numeric sidecar fields may describe uncertainty or
+importance only; MR owns any later deterministic translation into state effects.
 
 The shared semantic understanding is not a new canonical object, database, bus, or
 authority layer. It is a producer-side interpretation that is projected into
@@ -187,23 +202,50 @@ benchmark scores.
 
 ## Current implementation status
 
-The Body-owned ACTIVE semantic migration and the optional decision capability are
-separate implementation tracks.
+The semantic migration remains **DRAFT / not merge-ready**.
 
-At the time of acceptance, the repository still contains legacy online semantic
-provider wiring and a model-backed appraisal composition path. Those are implementation
-debt relative to this decision. Their migration must separately:
+Implemented on this branch:
 
-1. expose a bounded Host/Body -> MR typed semantic/appraisal proposal seam;
-2. remove automatic provider construction from ACTIVE TurnOrchestrator composition;
-3. disable/remove certified production dependence on `MR_SEMANTIC_PROVIDER` and
-   GLM/Zen credentials;
-4. migrate model-backed appraisal parsing to Body-supplied bounded proposals rather
-   than introducing another MR-owned online LLM;
-5. retain any small-model code only behind explicit LAB/shadow/background modes;
-6. update readiness/certification tests so an internal semantic provider is not a
-   production-readiness requirement.
+1. The primary Body contract is now an open `BodySemanticSidecar`, not a
+   closed event taxonomy. Each `BodySemanticFrame` preserves open natural-
+   language meanings; a typed event is optional compatibility metadata only.
+2. Body-side numeric fields are bounded uncertainty/importance estimates.
+   There is no Body field for affect delta, final affect value, or direct
+   state-transition amount.
+3. Reactive Host lifecycle is split inside one logical MR turn:
+   `prepare_turn()` opens/ingests the user evidence; the normal Body call runs
+   once; `submit_semantic_sidecar()` binds metadata from that same inference
+   and performs the single MR `run()`.
+4. Xiyue/Hermes 0.19 installs a bounded `transform_llm_output` hook before the
+   existing `agent.run_conversation()` call. The same inference appends a
+   machine-only semantic block; Hermes strips and validates that block before
+   assistant text is persisted or delivered, then submits the captured sidecar
+   to the already prepared MR turn. Missing or malformed metadata degrades to
+   an empty sidecar. No second Body/model/provider call is authorized or added.
+   The MR stripping transform must be first in Hermes' transform chain because
+   Hermes accepts the first replacement string; otherwise another transform
+   could prevent the machine block from being removed before persistence.
+5. Open frames without a typed-event hint are retained on the turn and are not
+   forced through `EventEffectRule`. Typed-event hints may still use the legacy
+   compatibility recipe path.
+6. ACTIVE composition no longer needs an MR-owned online GLM/Zen semantic model
+   or model-backed appraisal provider merely to process an interactive turn.
 
-The optional decision-model track may be implemented independently because it does
-not alter that ACTIVE semantic ownership boundary. It must remain removable and
-must preserve the pre-existing baseline behavior when absent.
+Still required before merge:
+
+1. Live Hermes/Body evidence must verify that representative configured
+   providers obey the same-inference sidecar prompt and that provider accounting
+   still reports one normal Body invocation per user turn. The prompt/transform
+   plumbing is implemented; live provider compliance is not yet certified.
+2. Open meaning needs a bounded MR cognition consumer independent of typed-event
+   recipes, so accepted meaning is useful even when no affect recipe exists.
+3. The general semantic/appraisal -> affect projection must be designed and
+   validated. The current `event_kind -> base_amount` recipes remain legacy
+   compatibility behavior, not the universal algorithm for natural language.
+4. End-to-end evidence must prove one Body provider invocation per user turn,
+   sidecar validation, MR resolution, guard/commit, and zero fallback semantic
+   model calls.
+
+Until these items are closed, this branch must not be described as a completed
+ACTIVE semantic cutover.
+
