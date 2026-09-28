@@ -67,16 +67,32 @@ very small relevant set, if any.
 The Memory composition boundary remains the only outward historical-context
 authority.
 
-## 4. Idle / sleep / dream LCE discovery
+## 4. Sleep / dream LCE discovery scheduling
 
-Implement the already-frozen Path B scheduler as a separate discovery policy.
+Path B is the latent-discovery consumer for the existing sleep/dream lifecycle.
+It is **not** the default per-Memory online processor.
 
-Its job is to choose bounded neighborhoods of canonical Memory that have not
-already been adequately represented by accepted Baselines or recently compiled
-Thread projections.
+The online division of labor is already fixed:
+
+```text
+normal interaction
+    -> Thread notices and carries explicit logical lines
+
+sleep / dream
+    -> Path B searches history that did not become a mature Thread
+```
+
+The remaining scheduler work is therefore narrow: during sleep/dream, choose
+bounded neighborhoods of canonical Memory that are not already adequately
+represented by accepted Baselines or recently compiled Thread projections.
 
 Candidate neighborhood construction may use temporal adjacency, semantic
-similarity, shared entities/domains, and existing derived topology.
+similarity, shared entities/domains, unresolved topology and existing derived
+structure.
+
+Do not add a generic "every new Memory -> Path B nearline" production hook.
+That would duplicate Thread's upstream function. Nearline APIs remain useful for
+repair, replay, laboratory work and explicit operator-driven catch-up.
 
 The scheduler must avoid full-history recomputation and must not recreate a
 second factual Memory store.
@@ -105,7 +121,34 @@ Baseline
 
 without turning raw history into routine prompt context.
 
-## 6. LCE replaceability
+## 6. Derived-relation correction persistence
+
+LCE may be wrong even when every supporting canonical Memory item is factually
+valid.
+
+The correction path therefore needs a durable cognition-layer record that can
+say:
+
+```text
+derived relation R was explicitly rejected
+supporting Memory remains valid
+R must not be regenerated from the same unchanged support
+```
+
+This record is not canonical Memory and must not mutate factual history. It is a
+negative constraint over derived cognition.
+
+The correction should remain visible to later rebuild/sleep-dream discovery and
+may itself be superseded if genuinely new authorized evidence reopens the
+question.
+
+This is different from source invalidation:
+
+- source invalidation says factual support is no longer valid;
+- relation correction says the support may still be true, but LCE's logical
+  connection was wrong.
+
+## 7. LCE replaceability
 
 Keep LCE Core substrate-agnostic.
 

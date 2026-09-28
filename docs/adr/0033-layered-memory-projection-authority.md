@@ -56,8 +56,10 @@ LCE owns stable longitudinal cognition, not factual history.
 Path A consumes already-reasoned Thread projections without asking a model to
 rediscover the same relation.
 
-Path B performs latent discovery over canonical Memory during future
-idle/sleep/dream processing for relations that were not formed online.
+Path B performs latent discovery over canonical Memory during sleep/dream
+processing for relations that were not formed online. Thread is the normal
+online upstream product for explicit logical lines; Path B is not a duplicate
+per-Memory online reasoning pass.
 
 Both paths terminate in the same Baseline lineage. They must not create a
 second factual substrate.
@@ -140,6 +142,30 @@ derived projection database contains no `raw_evidence` table; source reads are
 delegated back to MR. Path A and Path B share the same Baseline store but keep
 their support representations explicit.
 
-The remaining sleep/idle trigger is scheduling policy. It is not a missing
-authority or cognition algorithm.
+The remaining integration work is to bind the existing sleep/dream lifecycle
+to bounded Path B discovery. This is scheduling/composition work, not a missing
+authority or cognition algorithm. A generic per-Memory Path B hook is explicitly
+not the default production policy because Thread already owns online explicit
+structure.
 
+## 2026-09-28 correction boundary clarification
+
+Accepted LCE cognition is durable but not irrevocable.
+
+A Baseline/Line/relation may be historically recorded and later rejected as a
+derived reasoning error while its supporting canonical Memory remains factually
+valid. The current cognition view must then retire/rebuild the invalid derived
+relation and may roll back to the last still-supported structure.
+
+Historical retention and current validity are different authorities:
+
+```text
+old cognition remains auditable
+    !=
+old cognition remains usable now
+```
+
+An explicit derived correction belongs to the cognition layer. It must not
+delete canonical Memory, and once persisted it should prevent the same unchanged
+support from recreating the same rejected relation during later sleep/dream
+discovery unless new authorized evidence reopens the question.

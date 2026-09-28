@@ -325,11 +325,30 @@ No single interaction necessarily created the explicit conclusion:
 
 > "The user may be gradually disengaging from the current job."
 
-This is where sleep/idle/nearline LCE discovery is valuable.
+This is where sleep/dream LCE discovery is valuable.
 
-LCE may inspect unstructured history, discover a candidate relation, create a Worktree, and eventually promote an accepted Baseline if support is sufficient.
+LCE may inspect unstructured history, discover a candidate relation, create a
+Worktree, and eventually promote an accepted Baseline if support is sufficient.
 
-### 6.3 Sleep is a discovery opportunity, not a mandatory recomputation pass
+The production role split is intentionally asymmetric:
+
+```text
+online turn
+    -> explicit structure already noticed
+    -> Thread
+    -> mature Thread -> LCE Path A
+
+sleep / dream
+    -> history that did not form a clear online Thread
+    -> LCE Path B latent discovery
+```
+
+Path B may expose nearline APIs for repair, replay, experiments, or explicit
+operator use, but MR should not automatically route every newly admitted Memory
+through Path B. Doing so would duplicate Thread's online job and pay twice for
+the same structure.
+
+### 6.3 Sleep/dream is the latent-discovery boundary, not a full-history recomputation pass
 
 The wrong architecture is:
 
@@ -349,7 +368,9 @@ not yet understood
 -> leave available for later LCE discovery
 ```
 
-Sleep/idle processing exists for the second category.
+Sleep/dream processing exists for the second category. The sleep/dream
+scheduler should select bounded unresolved neighborhoods rather than re-read all
+history. Thread is the normal online upstream producer for explicit structure.
 
 ---
 
@@ -586,6 +607,38 @@ the interpretation must not survive merely because the old inference was previou
 
 The underlying event can remain historically true while the derived interpretation is rejected.
 
+### 10.6 Derived cognition is corrigible
+
+The same rule applies more generally to LCE reasoning errors, not only
+first-person subjective meaning.
+
+LCE may connect true memories into a wrong logical relation. If an authorized
+correction says that the relation itself is wrong, current cognition must be
+allowed to retract it even when the supporting factual Memories remain valid.
+
+The boundary is:
+
+```text
+factual support remains
+        |
+        v
+derived relation is rejected
+        |
+        +--> relation leaves current usable cognition
+        +--> dependent derived structure is revalidated / rebuilt
+        +--> current cognition may roll back to an earlier supported structure
+        +--> old cognition revision remains visible for audit
+```
+
+"Do not rewrite history" means the system must retain what it previously
+inferred and why. It does **not** mean a wrong LCE conclusion keeps current
+authority forever.
+
+A durable explicit correction should also prevent the same unchanged support
+from regenerating the same rejected relation during a later sleep/dream pass.
+That negative-constraint/correction ledger belongs to derived cognition, not
+canonical Memory.
+
 ---
 
 ## 11. Logical unification, physical separation
@@ -638,9 +691,14 @@ May forget foreground attention:
 
 ### LCE
 
-May revise or invalidate an interpretation:
+May revise, supersede, or invalidate an interpretation:
 
-> this explanation is no longer adequately supported.
+> this explanation is no longer adequately supported, or this derived logic was
+> explicitly corrected.
+
+The historical revision remains auditable even when it is no longer usable as
+current cognition. Derived rollback is therefore compatible with immutable
+history.
 
 These must not be collapsed into one TTL.
 

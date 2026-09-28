@@ -2,7 +2,7 @@
 
 - Date: 2026-09-25
 - Status: ACCEPTED
-- Production activation: BLOCKED_BY_CONFIG
+- Production activation: BLOCKED_BY_PERSONA_POLICY_BINDING
 
 ## Problem
 
@@ -53,3 +53,46 @@ carry the Surface refs and reason code. This keeps the implementation bounded an
 avoids a parallel admission-record hierarchy.
 
 Legacy rules that omit `minimum_initiative` keep the previous ruleset hash shape.
+
+## 2026-09-28 threshold authority clarification
+
+`minimum_initiative` is not a global personality-neutral tuning constant.
+
+The current `Surface.initiative` answers:
+
+> how much proactive pressure exists right now?
+
+The threshold answers a different question:
+
+> for this Persona, how much proactive pressure is required before a
+> spontaneous motive is allowed to become an Intent candidate?
+
+Therefore the authority chain is:
+
+```text
+fast/internal state
+    -> Surface.initiative
+
+published Persona revision
+    -> proactive admission threshold(s)
+
+IntentEngine
+    -> compares current initiative with Persona-owned threshold
+
+ActionPolicy
+    -> still owns final permission
+```
+
+Two Personas may legitimately make different choices at the same
+`Surface.initiative` value. A more proactive Persona may admit
+`spontaneous_share` or `proactive_inquiry` at a lower initiative level; a
+more restrained Persona may require a higher level.
+
+The execution field remains `IntentRule.minimum_initiative`, but production
+composition must source that value from the bound/published Persona policy
+rather than a single global runtime constant.
+
+Production activation therefore remains blocked until Persona publication /
+runtime composition provides the threshold authority. Shadow calibration may
+validate behavior ranges, but it must not be interpreted as searching for one
+universal threshold for every Persona.
