@@ -221,7 +221,7 @@ def test_authority_invariants_and_status_markers() -> None:
 
     assert MODE_CONTROLLER_STATUS == "NOT_IMPLEMENTED"
     assert TRANSITION_POLICY_STATUS == "NOT_IMPLEMENTED"
-    assert BACKGROUND_LCE_STATUS == "NOT_IMPLEMENTED"
+    assert BACKGROUND_LCE_STATUS == "IMPLEMENTED_EXPLICIT_WORKER"
 
 
 def test_get_cognitive_mode_spec_lookup() -> None:
