@@ -454,7 +454,7 @@ class LceThreadHandoffSession:
 
     _adapter: MrMemorySubstrateAdapter
     _store: SqliteBaselineStore
-    _drafts: CognitionWorktreeStore
+    _drafts: Any | None = None
 
     @property
     def db_path(self) -> Path:
@@ -500,6 +500,11 @@ class LceThreadHandoffSession:
                 "install the current optional lce-core package"
             ) from exc
 
+        if self._drafts is None:
+            raise LceIntegrationUnavailable(
+                "current LCE Thread handoff requires a draft store"
+            )
+
         support = thread.handoff_memory_ids
         # Revalidate every canonical support point before LCE sees the draft.
         self._adapter.get_by_ids(support)
@@ -543,8 +548,11 @@ class LceThreadHandoffSession:
         )
 
     def close(self) -> None:
-        self._drafts.close()
-        self._store.close()
+        if self._drafts is not None:
+            self._drafts.close()
+        close = getattr(self._store, "close", None)
+        if callable(close):
+            close()
 
     def __enter__(self) -> LceThreadHandoffSession:
         return self
