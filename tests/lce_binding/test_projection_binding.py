@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import replace
+from dataclasses import fields, replace
+from datetime import timedelta
 
 import pytest
 
 pytest.importorskip("lce", reason="optional current lce-core package is not installed")
 
+from lce.cognition.inspiration import (
+    InspirationInterpretation,
+    InspirationKind,
+    InspirationPackage,
+)
+
 from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_projection import (
+    LceInspirationMaterial,
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
 )
@@ -23,6 +31,22 @@ from mind_runtime.runtime_binding import (
 )
 from tests.facts.test_admission import make_evidence, make_scope
 from tests.memory.test_admission import admit, setup_plane
+
+
+class _ExtensionInterpreter:
+    def interpret(
+        self,
+        package: InspirationPackage,
+    ) -> InspirationInterpretation:
+        if package.kind is InspirationKind.EXTENSION:
+            return InspirationInterpretation(
+                hypothesis="a further consequence D may be worth checking",
+                model_trace={"model": "mr-inspiration-test"},
+            )
+        return InspirationInterpretation(
+            hypothesis="these observations may be related",
+            model_trace={"model": "mr-inspiration-test"},
+        )
 
 
 @pytest.fixture
@@ -266,3 +290,62 @@ def test_path_a_and_path_b_share_one_scope_baseline_store(
         assert handoff.db_path == path_b_db
         result = handoff.handoff_thread(thread)
         assert result.baseline.region_id == "mr-thread:shared-lineage"
+
+def test_inspiration_material_binding_keeps_downstream_surface_narrow(
+    projection_plane,
+) -> None:
+    assert [field.name for field in fields(LceInspirationMaterial)] == [
+        "material_id",
+        "content",
+    ]
+
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        inspiration_interpreter=_ExtensionInterpreter(),
+        **roots,
+    )
+    assert session is not None
+
+    with session:
+        session.sync_all()
+        sources = session.core.memory.list_current_valid_evidence()
+        assert sources
+        cutoff = max(
+            item.effective_known_at for item in sources
+        ) + timedelta(days=1)
+        blocks = session.core.memory.list_semantic_blocks_at_knowledge_cutoff(
+            cutoff,
+            current_valid_only=True,
+        )
+        assert len(blocks) >= 3
+
+        if not session.core.lines.list_lines():
+            seeded = session.core.trajectory.assembler.apply_path(
+                tuple(blocks[:3]),
+                knowledge_cutoff=cutoff,
+            )
+            assert seeded.line_id is not None
+
+        discovered = session.discover_inspiration(
+            knowledge_cutoff=cutoff,
+        )
+        assert discovered
+        assert all(
+            isinstance(item, LceInspirationMaterial)
+            for item in discovered
+        )
+        assert any(
+            "Possible next implication to explore (not established)"
+            in item.content
+            for item in discovered
+        )
+
+        pending = session.inspiration_materials(limit=10)
+        assert pending == discovered
+        session.consume_inspiration(pending[0].material_id)
+        remaining = session.inspiration_materials(limit=10)
+        assert pending[0] not in remaining
+
