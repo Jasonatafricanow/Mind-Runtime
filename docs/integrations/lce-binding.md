@@ -253,8 +253,8 @@ Memory:
     worktrees/
     projection_state/projection_state.sqlite
     lines/
+        authority/
     structures/
-    authority/
 ```
 
 The Scope digest is deployment addressing, not a cognitive identity. Reopening
