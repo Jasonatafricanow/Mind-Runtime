@@ -39,6 +39,7 @@ from mind_runtime.contracts import (
     ExpressionDisposition,
     HostStatus,
     HostTurnStatus,
+    InspirationMaterial,
     IntentStatus,
     PolicyResources,
     PreviousExpression,
@@ -199,6 +200,29 @@ WILL_SEND = "今天下午想和你分享一首诗"
 PREFIX_TWIN = "今天下午想和你分享一段话"
 
 
+class _RecordingInspirationQueue:
+    def __init__(self) -> None:
+        self.material = InspirationMaterial(
+            "insp-expression-1",
+            "Possible connection to explore (not established): A may relate to B.",
+        )
+        self.reserved: list[str] = []
+        self.consumed: list[str] = []
+        self.released: list[str] = []
+
+    def reserve_next(self, wake_id: str) -> InspirationMaterial:
+        self.reserved.append(wake_id)
+        return self.material
+
+    def consume_for_wake(self, wake_id: str) -> str:
+        self.consumed.append(wake_id)
+        return self.material.material_id
+
+    def release_for_wake(self, wake_id: str) -> str:
+        self.released.append(wake_id)
+        return self.material.material_id
+
+
 class _Stack(TypedDict):
     orchestrator: TurnOrchestrator
     ticker: CognitiveTicker
@@ -322,6 +346,7 @@ def make_stack(
     proactive_action_types: tuple[str, ...] = ("proactive_message",),
     with_expression: bool = True,
     base: datetime = BASE,
+    inspiration_queue: _RecordingInspirationQueue | None = None,
 ) -> _Stack:
     """One durable production stack with the C5C expression seam wired."""
     persona = make_persona()
@@ -378,6 +403,8 @@ def make_stack(
         intent_lifecycle=lifecycle,
         runtime_id=runtime_id,
         fact_reader=observation_fact_reader(orchestrator),
+        inspiration_queue=inspiration_queue,
+        inspiration_intent_kinds=("reach_out",) if inspiration_queue is not None else (),
     )
     orchestrator.cognitive_tick_components = {
         "ticker": ticker,
@@ -385,6 +412,8 @@ def make_stack(
         "policy": policy,
         "expression_preparer": expression,
     }
+    if inspiration_queue is not None:
+        orchestrator.cognitive_tick_components["inspiration_worker"] = inspiration_queue
     adapter = MindRuntimeHostAdapter(orchestrator=orchestrator)
     return {
         "orchestrator": orchestrator,
@@ -973,3 +1002,84 @@ def test_preparer_direct_prepare_skips_defense_paths(tmp_path: Path) -> None:
         )
         is None
     )
+
+def test_inspiration_material_survives_body_and_consumes_only_on_commit(
+    tmp_path: Path,
+) -> None:
+    queue = _RecordingInspirationQueue()
+    stack = make_stack(tmp_path, inspiration_queue=queue)
+    seed_affect(stack, value=0.75, at=BASE)
+
+    report = stack["ticker"].tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+    assert report.wake_signal is not None
+    assert queue.reserved == [report.wake_signal.wake_id]
+
+    turn_result = _run_test_proactive_turn(stack, report.wake_signal)
+    assert turn_result.status is HostTurnStatus.PROCESSING
+    assert queue.consumed == []
+    assert queue.released == []
+
+    calls = stack["agent"].calls
+    assert calls
+    assert "[INSPIRATION]" in calls[0].text
+    assert "[UNTRUSTED_DATA] proactive_material:" in calls[0].text
+    assert queue.material.content in calls[0].text
+
+    committed = stack["adapter"].commit_proactive_turn(
+        report.wake_signal.wake_id
+    )
+    assert committed.status is HostTurnStatus.COMMITTED
+    assert queue.consumed == [report.wake_signal.wake_id]
+    assert queue.released == []
+
+
+def test_inspiration_reservation_releases_on_delivery_abort(
+    tmp_path: Path,
+) -> None:
+    queue = _RecordingInspirationQueue()
+    stack = make_stack(tmp_path, inspiration_queue=queue)
+    seed_affect(stack, value=0.75, at=BASE)
+
+    report = stack["ticker"].tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+    assert report.wake_signal is not None
+    started = stack["adapter"].begin_proactive_turn(report.wake_signal)
+    assert started.status is HostTurnStatus.PROCESSING
+
+    aborted = stack["adapter"].abort_proactive_turn(
+        report.wake_signal.wake_id,
+        reason="synthetic_delivery_failure",
+    )
+    assert aborted.status is HostTurnStatus.ABORTED
+    assert queue.released == [report.wake_signal.wake_id]
+    assert queue.consumed == []
+
+
+def test_inspiration_reservation_releases_when_body_preparer_is_unwired(
+    tmp_path: Path,
+) -> None:
+    queue = _RecordingInspirationQueue()
+    stack = make_stack(
+        tmp_path,
+        with_expression=False,
+        inspiration_queue=queue,
+    )
+    seed_affect(stack, value=0.75, at=BASE)
+
+    report = stack["ticker"].tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+    assert report.wake_signal is not None
+
+    started = stack["adapter"].begin_proactive_turn(report.wake_signal)
+    assert started.status is HostTurnStatus.FAILED
+    assert "unwired_expression_preparer" in started.reason_codes
+    assert queue.released == [report.wake_signal.wake_id]
+    assert queue.consumed == []
+
