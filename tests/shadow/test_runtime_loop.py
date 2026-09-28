@@ -682,3 +682,158 @@ def test_fold_outcome_pure_audit_counts_as_replayed() -> None:
     report = runtime_loop.RuntimePassReport()
     runtime_loop._fold_outcome(report, outcome, cognitive_effect=False)
     assert (report.processed, report.replayed) == (0, 1)
+
+def test_runtime_stack_wires_opt_in_lce_inspiration_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production composition wires the bounded worker without a second authority."""
+    from mind_runtime.contracts import (
+        AffectiveDimensionProfile,
+        ReconsiderationPolicy,
+    )
+    from mind_runtime.dynamics.persona import PersonaProfile
+    from mind_runtime.intents.engine import IntentRule
+    from mind_runtime.intents.policy import (
+        ActionPolicyConfig,
+        IntentPolicyRule,
+    )
+    from mind_runtime.memory.threading import MemoryThread
+    from mind_runtime.runtime_binding import production_binding
+
+    facts_db = tmp_path / "facts.sqlite"
+    state_db = tmp_path / "cognition_state.sqlite"
+    monkeypatch.setenv("MR_FACTS_DB", str(facts_db))
+    monkeypatch.setenv("MR_STATE_DB", str(state_db))
+
+    binding = production_binding(
+        "synthetic-background",
+        agent_id="synthetic-agent",
+        runtime_id="runtime-background",
+    )
+    persona = PersonaProfile(
+        persona_id="synthetic-background",
+        dimensions=(
+            AffectiveDimensionProfile(
+                dimension="agent.affect.sharing_urge",
+                baseline=0.5,
+                initial_value=0.4,
+                sensitivity=1.0,
+                recovery_rate=0.01,
+                ceiling=1.0,
+                floor=0.0,
+                growth_profile=(),
+                coupling_profile=(),
+            ),
+        ),
+    )
+    rule = IntentRule(
+        rule_id="share-background",
+        kind="spontaneous_share",
+        base_strength=0.0,
+        dimension_weights=(("agent.affect.sharing_urge", 1.0),),
+        event_kind=None,
+        event_bonus=0.0,
+        minimum_strength=0.1,
+        due_at_attribute=None,
+        expires_after=None,
+        reconsideration_policy=ReconsiderationPolicy.NEVER,
+        minimum_initiative=0.5,
+    )
+    policy = ActionPolicyConfig(
+        rules=(
+            IntentPolicyRule(
+                intent_kind="spontaneous_share",
+                action_type="proactive_message",
+                proactive=True,
+                interrupts_active_conversation=False,
+                media_counter_fact=None,
+                media_limit=None,
+                required_resource=None,
+            ),
+        ),
+        proactive_cooldown=timedelta(minutes=30),
+    )
+
+    class _ThreadCompiler:
+        def compile(self, thread: MemoryThread) -> str | None:
+            del thread
+            return None
+
+    import mind_runtime.integrations.lce as lce_mod
+
+    monkeypatch.setattr(
+        lce_mod,
+        "LceThreadProjectionCompiler",
+        lambda **_kwargs: _ThreadCompiler(),
+    )
+
+    projection_session = object()
+    import mind_runtime.integrations.lce_projection as projection_mod
+
+    monkeypatch.setattr(
+        projection_mod,
+        "open_lce_projection_binding",
+        lambda *_args, **_kwargs: projection_session,
+    )
+
+    class _Worker:
+        def __init__(self, session: object) -> None:
+            self.session = session
+
+        def reserve_next(self, wake_id: str):
+            del wake_id
+            return None
+
+        def refresh(self, *, mode, now):
+            del mode, now
+            return None
+
+    import mind_runtime.integrations.lce_inspiration as inspiration_mod
+
+    monkeypatch.setattr(
+        inspiration_mod,
+        "LceInspirationBackgroundWorker",
+        _Worker,
+    )
+
+    orchestrator, _bridge = build_runtime_stack(
+        clock=_clock(),
+        facts_db=facts_db,
+        state_db=state_db,
+        origin_runtime_id=binding.runtime_id,
+        user_id="user-a",
+        persona=persona,
+        memory_enabled=True,
+        memory_binding=binding,
+        lce_enabled=True,
+        lce_inspiration_enabled=True,
+        intent_rules=(rule,),
+        action_policy_config=policy,
+        policy_resources=("proactive_message", "respond"),
+        intent_db=tmp_path / "intents.sqlite",
+    )
+
+    components = orchestrator.cognitive_tick_components  # type: ignore[attr-defined]
+    worker = components["inspiration_worker"]
+    assert isinstance(worker, _Worker)
+    assert worker.session is projection_session
+    assert components["inspiration_intent_kinds"] == ("spontaneous_share",)
+
+
+def test_runtime_stack_rejects_inspiration_without_memory_and_lce(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="requires both memory_enabled and lce_enabled",
+    ):
+        build_runtime_stack(
+            clock=_clock(),
+            facts_db=tmp_path / "facts.sqlite",
+            state_db=tmp_path / "state.sqlite",
+            origin_runtime_id="runtime-1",
+            user_id="user-a",
+            lce_inspiration_enabled=True,
+        )
+
