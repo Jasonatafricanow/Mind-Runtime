@@ -161,13 +161,13 @@ The following 10 invariants are frozen across code, tests, and documentation:
 5. **Daydream output is not canonical memory.**
 6. **Introspection output is not canonical identity.**
 7. **Sleep does not automatically mutate Slow state.**
-8. **LCE remains a future consumer/provider of derived cognition, not the authority for runtime mode switching.**
+8. **LCE may consume/provide derived cognition, but is not the authority for runtime mode switching.**
 9. **CognitiveMode is runtime orchestration state, not a personality dimension.**
 10. **No raw mode metadata must be exposed to provider unless a future bounded consumer explicitly requires it.**
 
 ---
 
-## 6. Future Target Topology (Document Only — Non-Implemented)
+## 6. Runtime Topology and Remaining Mode-Control Work
 
 ```text
 Wall Clock / Inbound
@@ -191,14 +191,20 @@ candidate cognition
 existing admission / authority boundaries
 ```
 
-### Non-Implemented Status Markers:
+The full `CognitiveModeController` and automatic transition policy are still
+not implemented. The bounded LCE background worker is implemented separately:
+an explicitly scheduled cognitive tick may execute the LCE worker under
+`DAYDREAM` or `DREAM` without pretending that MR has already solved
+fatigue/circadian/mode selection.
+
+### Status Markers:
 - `MODE_CONTROLLER_STATUS = NOT_IMPLEMENTED`
 - `TRANSITION_POLICY_STATUS = NOT_IMPLEMENTED`
-- `BACKGROUND_LCE_STATUS = NOT_IMPLEMENTED`
+- `BACKGROUND_LCE_STATUS = IMPLEMENTED_EXPLICIT_WORKER`
 
 ---
 
-## 7. 2026-09-28 Inspiration Material integration target
+## 7. 2026-09-28 Implemented Inspiration Material wiring
 
 LCE now provides the proactive-message **material product** that DAYDREAM /
 DREAM workers were intended to consume.
@@ -222,16 +228,19 @@ Cognitive-mode orchestration does not need to understand those internal kinds,
 Line topology, SemanticBlock IDs, Raw-Evidence closure, convergence state or
 interpreter traces.
 
-The intended future runtime composition is:
+The implemented bounded composition is:
 
 ```text
-DAYDREAM / DREAM
-    -> bounded LCE discovery
-    -> InspirationMaterial
-    -> proactive-message candidate
-    -> Persona initiative / Intent
+scheduled cognitive tick
+    -> DAYDREAM / DREAM LCE background pass
+    -> bounded Path-B catch-up/discovery
+    -> InspirationMaterial queue
+    -> existing Persona-initiative-gated Intent
     -> ActionPolicy
-    -> Body
+    -> WakeSignal
+    -> DecisionContext [INSPIRATION / UNTRUSTED_DATA]
+    -> Body / Guard / Delivery
+    -> consume material only after delivery commit
 ```
 
 LCE therefore owns **what material was discovered**. Cognitive-mode scheduling
@@ -239,19 +248,28 @@ owns **when background cognition may run**. Persona/Intent/ActionPolicy own
 **whether the material may become an outbound action**. Body owns final
 expression.
 
-This does not change the V0 implementation status below:
-`MODE_CONTROLLER_STATUS`, `TRANSITION_POLICY_STATUS` and
-`BACKGROUND_LCE_STATUS` remain `NOT_IMPLEMENTED` until an actual mode
-controller/background worker invokes the already-available LCE product.
+This wiring does **not** create a mode-selection authority. `run_cognitive_tick`
+invokes the worker only when the integration is explicitly enabled and receives
+an explicit `DAYDREAM` or `DREAM` execution label. Automatic
+ACTIVE↔DAYDREAM↔SLEEP↔DREAM transition policy remains future work.
+
+The worker keeps a durable processed-Memory checkpoint. Ordinary passes do not
+full-bootstrap Path B when there is no new canonical Memory and the discovery
+version is already current. A failed background pass is fail-soft relative to
+the existing proactive ticker and never rolls back canonical Memory.
+
+Inspiration is reserved only after an existing proactive Intent has passed
+`ActionPolicy`. A Guard rejection or delivery abort releases the reservation;
+successful delivery commit consumes it. The material itself therefore never
+acts as permission to contact the user.
 
 ## 8. Explicit Non-Goals
 
 The V0 concept layer deliberately excludes:
 - Full sleep implementation
-- Dream generation worker or LLM prompting
-- Daydream generation worker
+- Full DREAM/SLEEP transition controller or sleep-cycle scheduler
+- Unbounded dream-generation LLM loops
 - Introspection LLM calls
-- LCE integration or background daemons
 - Fatigue calibration, accumulation, or decay math
 - Mode transition equations (ACTIVE ↔ DAYDREAM ↔ SLEEP ↔ DREAM)
 - Sleep cycle simulation (REM / NREM modeling)
