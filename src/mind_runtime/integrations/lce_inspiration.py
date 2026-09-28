@@ -7,7 +7,6 @@ permission, mutate factual Memory, or decide whether a material should be sent.
 from __future__ import annotations
 
 import sqlite3
-import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,9 +51,6 @@ class LceInspirationBackgroundWorker:
             else Path(session.core.root) / "background_inspiration.sqlite"
         )
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._reserved_by_wake: dict[str, str] = {}
-        self._reserved_ids: set[str] = set()
         self._init_state()
 
     @property
@@ -79,6 +75,15 @@ class LceInspirationBackgroundWorker:
                 CREATE TABLE IF NOT EXISTS worker_meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS material_reservations (
+                    wake_id TEXT PRIMARY KEY,
+                    material_id TEXT NOT NULL UNIQUE,
+                    reserved_at TEXT NOT NULL
                 )
                 """
             )
@@ -174,39 +179,94 @@ class LceInspirationBackgroundWorker:
         return tuple(self._session.inspiration_materials(limit=limit))
 
     def reserve_next(self, wake_id: str) -> InspirationMaterial | None:
-        """Reserve one pending material for one allowed proactive wake."""
+        """Durably reserve one pending material for one allowed proactive wake."""
         if not isinstance(wake_id, str) or not wake_id.strip():
             raise ValueError("wake_id must be nonempty")
-        with self._lock:
-            existing_id = self._reserved_by_wake.get(wake_id)
-            if existing_id is not None:
-                for material in self._session.inspiration_materials(limit=100):
-                    if material.material_id == existing_id:
-                        return material
-                return None
 
-            for material in self._session.inspiration_materials(limit=100):
-                if material.material_id in self._reserved_ids:
-                    continue
-                self._reserved_by_wake[wake_id] = material.material_id
-                self._reserved_ids.add(material.material_id)
+        pending = self._session.inspiration_materials(limit=100)
+        by_id = {material.material_id: material for material in pending}
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT material_id FROM material_reservations WHERE wake_id = ?",
+                (wake_id,),
+            ).fetchone()
+            if existing is not None:
+                material_id = str(existing[0])
+                material = by_id.get(material_id)
+                if material is None:
+                    # The LCE material is no longer pending (for example it
+                    # was consumed after delivery) so the stale reservation
+                    # must not pin the wake forever.
+                    conn.execute(
+                        "DELETE FROM material_reservations WHERE wake_id = ?",
+                        (wake_id,),
+                    )
+                    conn.commit()
+                    return None
+                conn.commit()
                 return material
+
+            reserved_ids = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT material_id FROM material_reservations"
+                ).fetchall()
+            }
+            for material in pending:
+                if material.material_id in reserved_ids:
+                    continue
+                conn.execute(
+                    "INSERT INTO material_reservations"
+                    "(wake_id, material_id, reserved_at) VALUES (?, ?, ?)",
+                    (
+                        wake_id,
+                        material.material_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                conn.commit()
+                return material
+            conn.commit()
         return None
 
     def consume_for_wake(self, wake_id: str) -> str | None:
         """Consume reserved material only after successful outbound delivery."""
-        with self._lock:
-            material_id = self._reserved_by_wake.pop(wake_id, None)
-            if material_id is None:
-                return None
-            self._reserved_ids.discard(material_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT material_id FROM material_reservations WHERE wake_id = ?",
+                (wake_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        material_id = str(row[0])
+
+        # LCE consumption is the product-state authority. Delete the MR
+        # reservation only after LCE accepted the consume operation.
         self._session.consume_inspiration(material_id)
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM material_reservations "
+                "WHERE wake_id = ? AND material_id = ?",
+                (wake_id, material_id),
+            )
+            conn.commit()
         return material_id
 
     def release_for_wake(self, wake_id: str) -> str | None:
         """Release a reservation after rejection/abort so it may be retried."""
-        with self._lock:
-            material_id = self._reserved_by_wake.pop(wake_id, None)
-            if material_id is not None:
-                self._reserved_ids.discard(material_id)
-            return material_id
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT material_id FROM material_reservations WHERE wake_id = ?",
+                (wake_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            material_id = str(row[0])
+            conn.execute(
+                "DELETE FROM material_reservations WHERE wake_id = ?",
+                (wake_id,),
+            )
+            conn.commit()
+        return material_id
+
