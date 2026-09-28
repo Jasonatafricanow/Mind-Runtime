@@ -203,6 +203,14 @@ ProjectionSubstrate
 The derived SQLite projection store contains no `raw_evidence` table. Source
 content, lifecycle and Scope remain MR-owned.
 
+MR currently exposes canonical Memory's **current** lifecycle state but does not
+persist a general timestamped Memory-lifecycle transition ledger. The external
+source adapter therefore intentionally does not fabricate an
+`evidence_valid_at(cutoff)` history. LCE's `ProjectionSubstrate` uses its
+documented conservative current-state fallback for historical source validity.
+`known_at` and logical occurrence remain explicit; exact replay of a past
+Memory validity transition requires future MR lifecycle-history authority.
+
 Current LCE Path B preserves the authority split:
 
 ```text
