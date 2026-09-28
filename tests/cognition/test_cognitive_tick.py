@@ -10,6 +10,7 @@ Counter facts always enter through the REAL fact-admission authority.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -19,6 +20,7 @@ from tests.support.fake_clock import FakeClock
 
 from mind_runtime.cognition import (
     TICK_INTERACTION_PREFIX,
+    CognitiveMode,
     CognitiveTickReport,
     build_cognitive_ticker,
 )
@@ -54,6 +56,7 @@ from mind_runtime.intents.policy import (
 )
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator
 from mind_runtime.pipeline.trace import TraceRecorder
+from mind_runtime.shadow.runtime_loop import run_cognitive_tick
 from mind_runtime.shadow.source_bridge import HermesProductionBridge
 from mind_runtime.state.persistence import SqliteStateBackend
 
@@ -778,4 +781,86 @@ def test_non_inspiration_intent_does_not_touch_material_queue(
     )
     assert wake_context is not None
     assert wake_context["inspiration_material"] is None
+
+@dataclass(frozen=True)
+class _BackgroundReportFixture:
+    new_memory_ids: int = 2
+    discovered_materials: int = 1
+    pending_materials: int = 1
+
+
+class _BackgroundWorkerFixture:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[CognitiveMode, datetime]] = []
+
+    def refresh(
+        self,
+        *,
+        mode: CognitiveMode,
+        now: datetime,
+    ) -> _BackgroundReportFixture:
+        self.calls.append((mode, now))
+        if self.fail:
+            raise RuntimeError("background fixture failure")
+        return _BackgroundReportFixture()
+
+
+def test_runtime_tick_runs_background_inspiration_before_existing_ticker(
+    tmp_path: Path,
+) -> None:
+    stack = make_stack(tmp_path)
+    ticker = stack["ticker"]
+    worker = _BackgroundWorkerFixture()
+    stack["orchestrator"].cognitive_tick_components = {  # type: ignore[attr-defined]
+        "ticker": ticker,
+        "inspiration_worker": worker,
+    }
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+    now = BASE + timedelta(hours=2)
+
+    report = run_cognitive_tick(
+        stack["orchestrator"],
+        scope=stack["scope"],
+        now=now,
+        background_mode=CognitiveMode.DREAM,
+    )
+
+    assert report.policy_allowed == 1
+    assert worker.calls == [(CognitiveMode.DREAM, now)]
+    components = stack["orchestrator"].cognitive_tick_components  # type: ignore[attr-defined]
+    assert components["last_background_inspiration_report"] == _BackgroundReportFixture()
+    trace = stack["orchestrator"].trace.get(f"{TICK_INTERACTION_PREFIX}{now.isoformat()}")
+    assert any(event.stage == "background_lce_inspiration" for event in trace)
+
+
+def test_runtime_tick_background_failure_is_fail_soft(
+    tmp_path: Path,
+) -> None:
+    stack = make_stack(tmp_path)
+    worker = _BackgroundWorkerFixture(fail=True)
+    stack["orchestrator"].cognitive_tick_components = {  # type: ignore[attr-defined]
+        "ticker": stack["ticker"],
+        "inspiration_worker": worker,
+    }
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+    now = BASE + timedelta(hours=2)
+
+    report = run_cognitive_tick(
+        stack["orchestrator"],
+        scope=stack["scope"],
+        now=now,
+    )
+
+    assert report.policy_allowed == 1
+    trace = stack["orchestrator"].trace.get(f"{TICK_INTERACTION_PREFIX}{now.isoformat()}")
+    assert any(event.stage == "background_lce_inspiration_failed" for event in trace)
+
+    with pytest.raises(ValueError, match="DAYDREAM or DREAM"):
+        run_cognitive_tick(
+            stack["orchestrator"],
+            scope=stack["scope"],
+            now=now,
+            background_mode=CognitiveMode.ACTIVE,
+        )
 
