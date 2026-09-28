@@ -13,6 +13,8 @@ from mind_runtime.integrations.lce_projection import (
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
 )
+from mind_runtime.integrations.lce import open_lce_thread_handoff
+from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
 from mind_runtime.runtime_binding import (
     RuntimeBinding,
@@ -210,3 +212,57 @@ def test_disabled_projection_binding_has_no_storage_side_effect(
         is None
     )
     assert not paths.lce_root.exists()
+
+
+def test_path_a_and_path_b_share_one_scope_baseline_store(
+    projection_plane,
+) -> None:
+    binding, roots, paths, memories = projection_plane
+
+    projection = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert projection is not None
+    with projection:
+        projection.sync_all()
+        path_b_db = projection.db_path
+
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    product = MemoryProductStore(paths.memory_db, canonical)
+    try:
+        thread = product.open_thread(
+            thread_id="shared-lineage",
+            scope=make_scope(),
+            open_question="Does Path A share the LCE store?",
+            supporting_memory_ids=(memories[0].memory_id,),
+            at=memories[0].committed_at,
+            working_summary="The explicit line is still developing.",
+        )
+        thread = product.update_thread(
+            thread.thread_id,
+            supporting_memory_ids=(
+                memories[0].memory_id,
+                memories[1].memory_id,
+            ),
+            at=memories[1].committed_at,
+            working_summary="The explicit line has independent support.",
+            mature=True,
+        )
+    finally:
+        product.close()
+        canonical.close()
+
+    handoff = open_lce_thread_handoff(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert handoff is not None
+    with handoff:
+        assert handoff.db_path == path_b_db
+        result = handoff.handoff_thread(thread)
+        assert result.baseline.region_id == "mr-thread:shared-lineage"
