@@ -3,9 +3,10 @@
 Cognitive modes define when and what kind of cognition runs.
 They do not define emotion, personality, truth, or action authority.
 
-This module freezes the concept layer for cognitive modes. It deliberately
-implements no transition policy, no background daemon, no worker, and no
-numeric thresholds.
+This module freezes the concept layer for cognitive modes. Transition policy
+and numeric mode-selection thresholds remain unimplemented. A bounded external
+LCE background worker may execute under DAYDREAM/DREAM without granting mode
+selection or outbound authority.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ The former is an affect/runtime dimension; the latter is a cognitive execution m
 
 MODE_CONTROLLER_STATUS: str = "NOT_IMPLEMENTED"
 TRANSITION_POLICY_STATUS: str = "NOT_IMPLEMENTED"
-BACKGROUND_LCE_STATUS: str = "NOT_IMPLEMENTED"
+BACKGROUND_LCE_STATUS: str = "IMPLEMENTED_EXPLICIT_WORKER"
 
 # ---------------------------------------------------------------------------
 # Non-Negotiable Authority Invariants
@@ -51,7 +52,7 @@ COGNITIVE_MODE_AUTHORITY_INVARIANTS: tuple[str, ...] = (
     "6. Introspection output is not canonical identity.",
     "7. Sleep does not automatically mutate Slow state.",
     (
-        "8. LCE remains a future consumer/provider of derived cognition, not the authority "
+        "8. LCE may consume/provide derived cognition, but is not the authority "
         "for runtime mode switching."
     ),
     "9. CognitiveMode is runtime orchestration state, not a personality dimension.",
