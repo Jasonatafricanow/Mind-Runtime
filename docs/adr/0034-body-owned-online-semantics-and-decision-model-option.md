@@ -185,25 +185,75 @@ deterministic matcher demonstrates a real error pattern.
 Production enforcement requires measurements on MR's own traces rather than generic
 benchmark scores.
 
+## 2026-09-27 correction: open semantics and one Body inference
+
+The ACTIVE Body contract is not a finite event taxonomy. Natural-language
+meaning remains open-ended. The Body may optionally attach an event hint for
+legacy/LAB consumers, but ACTIVE Affect must not require or branch on that hint.
+
+One normal Body inference produces both:
+
+- the user-visible reply; and
+- a hidden semantic sidecar for runtime consumers.
+
+MR must not trigger a second semantic/model inference for the current message.
+The Host may use provider-native metadata when available; a tagged structured
+sidecar is the portable fallback. In both cases the model is invoked once.
+
+The MR sidecar uses open meanings plus sparse bounded appraisal factors. These
+factors describe causal properties such as separation, threat, uncertainty,
+obstruction, opportunity or relationship relevance. They are not affect
+deltas. The Body cannot write current Affect or choose target affect
+dimensions.
+
+The ACTIVE causal direction is therefore:
+
+```text
+previous committed MR context
+    -> one Body inference
+       -> user-visible reply
+       -> open semantic/appraisal sidecar
+    -> MR validates authority/evidence
+    -> MR deterministic appraisal-factor projection
+    -> Dynamics / Intent / Policy / canonical update
+```
+
+Current-turn canonical updates affect subsequent continuity and proactive
+behavior. The current natural-language reply is already generated from the
+Body's immediate understanding plus the previous committed MR context; MR does
+not buy a second model call merely to regenerate that same reply.
+
+Legacy `SemanticEventCandidate -> EventEffectRule(event_kind)` mapping remains
+available for replay/LAB compatibility. It is not the ACTIVE Body affect
+algorithm.
+
 ## Current implementation status
 
-The Body-owned ACTIVE semantic migration and the optional decision capability are
-separate implementation tracks.
+The ACTIVE online semantic cutover uses the Body-owned single-pass path:
 
-At the time of acceptance, the repository still contains legacy online semantic
-provider wiring and a model-backed appraisal composition path. Those are implementation
-debt relative to this decision. Their migration must separately:
+1. Host/Body supplies versioned `BodySemanticFrame` items containing open
+   meanings and sparse appraisal factors.
+2. The Host adapter binds MR-owned Scope, runtime identity, and admitted
+   Evidence. Body cannot author those authority fields or affect deltas.
+3. Internally, the existing semantic candidate/appraisal records remain as
+   compatibility carriers for journal/lineage, but Body frames use the fixed
+   internal kind `__body_semantic__`; optional event hints are metadata only.
+4. Accepted Body appraisal factors are projected into bounded Affect impulses by
+   MR's deterministic causal recipe. EventEffectRule is not consulted for that
+   ACTIVE path.
+5. `TurnOrchestrator` no longer auto-constructs a semantic provider from
+   process environment.
+6. ACTIVE Xiyue/certification composition does not require GLM/Zen or a
+   model-backed appraisal provider.
+7. The durable appraisal journal/application-receipt path remains in MR because
+   MR still owns validation, Dynamics application and commit.
+8. Legacy semantic/provider and event-rule implementations remain for
+   LAB/shadow/replay compatibility only.
 
-1. expose a bounded Host/Body -> MR typed semantic/appraisal proposal seam;
-2. remove automatic provider construction from ACTIVE TurnOrchestrator composition;
-3. disable/remove certified production dependence on `MR_SEMANTIC_PROVIDER` and
-   GLM/Zen credentials;
-4. migrate model-backed appraisal parsing to Body-supplied bounded proposals rather
-   than introducing another MR-owned online LLM;
-5. retain any small-model code only behind explicit LAB/shadow/background modes;
-6. update readiness/certification tests so an internal semantic provider is not a
-   production-readiness requirement.
+The Host must obtain the sidecar from the same Body inference that generates the
+reply. Missing/invalid sidecar data degrades to no semantic affect contribution;
+MR does not silently invoke another online model.
 
-The optional decision-model track may be implemented independently because it does
-not alter that ACTIVE semantic ownership boundary. It must remain removable and
-must preserve the pre-existing baseline behavior when absent.
+The optional decision-model capability remains independent and fail-open; its
+presence or absence does not change this semantic ownership boundary.
+

@@ -7,6 +7,46 @@ from typing import Protocol, runtime_checkable
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.scope import Scope
 
+BODY_FACTOR_ATTRIBUTE_PREFIX = "__body_factor__:"
+BODY_EVENT_HINT_ATTRIBUTE = "__event_hint__"
+BODY_VALENCE_VALUES = frozenset({"positive", "negative", "neutral", "mixed"})
+
+
+def encode_body_factor_attributes(
+    factors: tuple[tuple[str, float], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Encode validated Body appraisal factors into the existing candidate carrier."""
+
+    return tuple(
+        (BODY_FACTOR_ATTRIBUTE_PREFIX + name, float(value).hex())
+        for name, value in factors
+    )
+
+
+def decode_body_factor_attributes(
+    attributes: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, float], ...]:
+    """Decode system-owned Body factor attributes; malformed values fail closed."""
+
+    decoded: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for key, value in attributes:
+        if not key.startswith(BODY_FACTOR_ATTRIBUTE_PREFIX):
+            continue
+        name = key[len(BODY_FACTOR_ATTRIBUTE_PREFIX) :]
+        require_non_empty(name, "Body factor attribute name")
+        if name in seen:
+            raise ValueError("duplicate Body factor attribute")
+        seen.add(name)
+        try:
+            number = float.fromhex(value)
+        except ValueError as exc:
+            raise ValueError("invalid Body factor attribute value") from exc
+        if not 0 <= number <= 1:
+            raise ValueError("Body factor attribute value must be in [0, 1]")
+        decoded.append((name, number))
+    return tuple(decoded)
+
 
 class AppraisalPath(StrEnum):
     """Explicit appraisal route (DECISION-025)."""
@@ -57,6 +97,75 @@ class AmbiguityAssessment:
 
 
 @dataclass(frozen=True, slots=True)
+class BodySemanticFrame:
+    """Open semantic sidecar item from the Body's normal inference.
+
+    This is not an event taxonomy. Meanings stay open text; factors are sparse
+    bounded appraisal causes. Missing factors mean "not asserted", never zero.
+    The Body cannot supply affect deltas, final affect values, state dimensions,
+    policy outcomes, or authority fields. event_hint is legacy metadata only.
+    """
+
+    frame_id: str
+    meanings: tuple[str, ...]
+    confidence: float
+    valence: str
+    salience: float | None
+    appraisal_confidence: float
+    factors: tuple[tuple[str, float], ...] = ()
+    supporting_evidence_refs: tuple[str, ...] = ()
+    event_hint: str | None = None
+    attributes: tuple[tuple[str, str], ...] = ()
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.frame_id, "frame_id")
+        if self.schema_version != 1:
+            raise ValueError("unsupported Body semantic schema_version")
+        if not self.meanings:
+            raise ValueError("meanings must not be empty")
+        for meaning in self.meanings:
+            require_non_empty(meaning, "meanings entries")
+        if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
+            raise ValueError("confidence must be in [0, 1]")
+        require_non_empty(self.valence, "valence")
+        if self.valence not in BODY_VALENCE_VALUES:
+            raise ValueError(
+                "Body valence must be positive, negative, neutral, or mixed"
+            )
+        if self.salience is not None and (
+            isinstance(self.salience, bool) or not 0 <= self.salience <= 1
+        ):
+            raise ValueError("salience must be in [0, 1] or None")
+        if (
+            isinstance(self.appraisal_confidence, bool)
+            or not 0 <= self.appraisal_confidence <= 1
+        ):
+            raise ValueError("appraisal_confidence must be in [0, 1]")
+        seen_factors: set[str] = set()
+        for name, value in self.factors:
+            require_non_empty(name, "factor names")
+            if name in seen_factors:
+                raise ValueError("factor names must be unique")
+            seen_factors.add(name)
+            if isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValueError("factor values must be in [0, 1]")
+        for ref in self.supporting_evidence_refs:
+            require_non_empty(ref, "supporting_evidence_refs entries")
+        if self.event_hint is not None:
+            require_non_empty(self.event_hint, "event_hint")
+        seen_attrs: set[str] = set()
+        for key, attr_value in self.attributes:
+            require_non_empty(key, "attribute keys")
+            require_non_empty(attr_value, "attribute values")
+            if key.startswith("__"):
+                raise ValueError("Body attributes cannot use reserved names")
+            if key in seen_attrs:
+                raise ValueError("attribute keys must be unique")
+            seen_attrs.add(key)
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticAppraisal:
     """Semantic interpretation only; never carries final affect numbers.
 
@@ -92,6 +201,29 @@ class SemanticAppraisal:
         if self.salience is not None:
             if isinstance(self.salience, bool) or not 0 <= self.salience <= 1:
                 raise ValueError("salience must be in [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticEventProposal:
+    """Body-owned semantic proposal before MR binds system authority fields."""
+
+    candidate_id: str
+    kind: str
+    attributes: tuple[tuple[str, str], ...]
+    confidence: float
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.candidate_id, "candidate_id")
+        require_non_empty(self.kind, "kind")
+        seen: set[str] = set()
+        for key, value in self.attributes:
+            require_non_empty(key, "attribute keys")
+            require_non_empty(value, "attribute values")
+            if key in seen:
+                raise ValueError("semantic proposal attribute keys must be unique")
+            seen.add(key)
+        if isinstance(self.confidence, bool) or not 0 <= self.confidence <= 1:
+            raise ValueError("confidence must be in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +304,7 @@ class AppraisalModelProposal:
     salience: float | None
     appraisal_confidence: float
     supporting_evidence_refs: tuple[str, ...]
+    factors: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.meanings:
@@ -190,6 +323,14 @@ class AppraisalModelProposal:
             raise ValueError("appraisal_confidence must be in [0, 1]")
         for ref in self.supporting_evidence_refs:
             require_non_empty(ref, "supporting_evidence_refs entries")
+        seen_factors: set[str] = set()
+        for name, value in self.factors:
+            require_non_empty(name, "factor names")
+            if name in seen_factors:
+                raise ValueError("factor names must be unique")
+            seen_factors.add(name)
+            if isinstance(value, bool) or not 0 <= value <= 1:
+                raise ValueError("factor values must be in [0, 1]")
 
 
 @dataclass(frozen=True, slots=True)

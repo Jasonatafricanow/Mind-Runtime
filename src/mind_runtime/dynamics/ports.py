@@ -123,6 +123,7 @@ class EngineEmotionalTransitionPort:
         self._homeostasis_gate = homeostasis_gate
         self._appraisal_producer = appraisal_producer
         self._projection_journal = projection_journal
+        self._state_definitions = state_definitions
         self._projector = AppraisalProjector(
             rules=effect_rules,
             persona_profile=engine.persona,
@@ -216,9 +217,17 @@ class EngineEmotionalTransitionPort:
                             occurred_at=transition_input.clock,
                             payload={
                                 "candidate_id": candidate.candidate_id,
-                                "event_kind": getattr(candidate, "event_kind", getattr(candidate, "kind", None)),
+                                "event_kind": getattr(
+                                    candidate,
+                                    "event_kind",
+                                    getattr(candidate, "kind", None),
+                                ),
                                 "confidence": candidate.confidence,
-                                "summary": getattr(candidate, "summary", getattr(candidate, "kind", None)),
+                                "summary": getattr(
+                                    candidate,
+                                    "summary",
+                                    getattr(candidate, "kind", None),
+                                ),
                                 "evidence_refs": list(candidate.evidence_refs),
                             },
                             source_refs=candidate.evidence_refs,
@@ -252,7 +261,15 @@ class EngineEmotionalTransitionPort:
         cached_by_candidate = {
             record.candidate.candidate_id: record for record in cached_acceptances
         }
-        if self._appraisal_producer is not None and routing.candidates:
+        proposal_by_candidate = dict(transition_input.appraisal_proposals)
+        active_appraisal_producer = self._appraisal_producer
+        if proposal_by_candidate:
+            if self._projection_journal is None or self._state_definitions is None:
+                raise ValueError(
+                    "Body appraisal proposals require durable projection journal and definitions"
+                )
+            active_appraisal_producer = SemanticAppraisalProducer(model=None)
+        if (active_appraisal_producer is not None or cached_acceptances) and routing.candidates:
             appraisals = dict(routing.appraisals_by_candidate_id)
             for candidate in routing.candidates:
                 appraisal_ctx = SemanticAppraisalContext(
@@ -265,13 +282,18 @@ class EngineEmotionalTransitionPort:
                 try:
                     acceptance = cached_by_candidate.get(candidate.candidate_id)
                     if acceptance is None:
-                        acceptance = self._appraisal_producer.accept(
+                        if active_appraisal_producer is None:
+                            raise ValueError(
+                                "appraisal producer unavailable for uncached candidate"
+                            )
+                        acceptance = active_appraisal_producer.accept(
                             candidate=candidate,
                             context=appraisal_ctx,
                             interaction_id=transition_input.interaction_id,
                             persona_id=transition_input.persona_id,
                             route_abstention_reasons=routing.abstention_reasons,
                             projection_scope=projection_scope,
+                            proposal=proposal_by_candidate.get(candidate.candidate_id),
                         )
                     assembled_appraisal = acceptance.appraisal
                     appraisals[candidate.candidate_id] = assembled_appraisal
@@ -308,15 +330,39 @@ class EngineEmotionalTransitionPort:
                                 occurred_at=transition_input.clock,
                                 payload={
                                     "candidate_id": candidate.candidate_id,
-                                    "appraisal_id": getattr(assembled_appraisal, "appraisal_id", None),
-                                    "meanings": list(getattr(assembled_appraisal, "meanings", ())),
+                                    "appraisal_id": getattr(
+                                        assembled_appraisal,
+                                        "appraisal_id",
+                                        None,
+                                    ),
+                                    "meanings": list(
+                                        getattr(assembled_appraisal, "meanings", ())
+                                    ),
                                     "valence": getattr(assembled_appraisal, "valence", None),
-                                    "salience": getattr(assembled_appraisal, "salience", None),
-                                    "confidence": getattr(assembled_appraisal, "confidence", None),
-                                    "appraisal_confidence": getattr(assembled_appraisal, "confidence", None),
-                                    "relationship_relevance": getattr(assembled_appraisal, "relationship_relevance", None),
+                                    "salience": getattr(
+                                        assembled_appraisal,
+                                        "salience",
+                                        None,
+                                    ),
+                                    "confidence": getattr(
+                                        assembled_appraisal,
+                                        "confidence",
+                                        None,
+                                    ),
+                                    "appraisal_confidence": getattr(
+                                        assembled_appraisal,
+                                        "confidence",
+                                        None,
+                                    ),
+                                    "relationship_relevance": getattr(
+                                        assembled_appraisal,
+                                        "relationship_relevance",
+                                        None,
+                                    ),
                                 },
-                                source_refs=tuple(getattr(assembled_appraisal, "evidence_refs", ())),
+                                source_refs=tuple(
+                                    getattr(assembled_appraisal, "evidence_refs", ())
+                                ),
                             )
                         except Exception:
                             pass
@@ -350,9 +396,10 @@ class EngineEmotionalTransitionPort:
                 + tuple(ref for candidate in routing.candidates for ref in candidate.evidence_refs)
             )
         )
-        # A producer-owned rejection/error is never a legacy caller. Only a
-        # caller with no appraisal producer may use the compatibility mapper.
-        legacy_no_appraisal = self._appraisal_producer is None
+        # A producer-owned or Body-supplied rejection/error is never a legacy
+        # caller. Only a caller with no appraisal source may use the
+        # compatibility mapper.
+        legacy_no_appraisal = active_appraisal_producer is None and not cached_acceptances
         if not legacy_no_appraisal:
             mapped = MappedEffects(
                 impulses=tuple(i for part in mapped_parts for i in part.impulses),
@@ -636,11 +683,26 @@ class EngineEmotionalTransitionPort:
                             if (cand and hasattr(self._effects, "_rules"))
                             else None
                         )
-                        base_amount = rule.base_amount if (rule is not None and rule.dimension == dim) else None
-                        rule_id = getattr(rule, "rule_id", None) if rule is not None else None
-                        rule_status = "present" if (rule_id or base_amount is not None) else "not_applicable"
+                        base_amount = (
+                            rule.base_amount
+                            if rule is not None and rule.dimension == dim
+                            else None
+                        )
+                        rule_id = (
+                            getattr(rule, "rule_id", None)
+                            if rule is not None
+                            else None
+                        )
+                        rule_status = (
+                            "present"
+                            if rule_id or base_amount is not None
+                            else "not_applicable"
+                        )
                         formula = (
-                            f"{base_amount} × {cand.confidence:.2f} × {profile.sensitivity:.2f} = {scaled_impulse:+.4f}"
+                            (
+                                f"{base_amount} × {cand.confidence:.2f} × "
+                                f"{profile.sensitivity:.2f} = {scaled_impulse:+.4f}"
+                            )
                             if (base_amount is not None and cand)
                             else f"{scaled_impulse:+.4f}"
                         )

@@ -42,6 +42,8 @@ from mind_runtime.cognition.express import (
     ProactiveExpressionPreparer,
 )
 from mind_runtime.contracts import (
+    AppraisalModelProposal,
+    BODY_EVENT_HINT_ATTRIBUTE,
     Authority,
     AuthorityLevel,
     Evidence,
@@ -49,6 +51,8 @@ from mind_runtime.contracts import (
     IntentStatus,
     Interaction,
     InteractionStatus,
+    SemanticEventCandidate,
+    encode_body_factor_attributes,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -143,6 +147,87 @@ def _evidence_from_request(request: HostTurnRequest) -> Evidence:
         payload={"text": request.user_message},
         sync=sync,
     )
+
+
+def _body_semantics_from_request(
+    request: HostTurnRequest,
+    evidence: Evidence,
+) -> tuple[
+    tuple[SemanticEventCandidate, ...],
+    tuple[tuple[str, AppraisalModelProposal], ...],
+]:
+    """Bind Body-owned proposals to MR-owned scope/runtime/evidence authority."""
+
+    if request.body_semantic_frames:
+        semantic_candidates = tuple(
+            SemanticEventCandidate(
+                candidate_id=frame.frame_id,
+                scope=request.scope,
+                origin_runtime_id=request.runtime_id,
+                # Internal compatibility carrier only. ACTIVE Body semantics
+                # does not require or consume a finite event taxonomy.
+                kind="__body_semantic__",
+                attributes=(
+                    (
+                        (BODY_EVENT_HINT_ATTRIBUTE, frame.event_hint),
+                    )
+                    if frame.event_hint is not None
+                    else ()
+                )
+                + encode_body_factor_attributes(frame.factors)
+                + frame.attributes,
+                confidence=frame.confidence,
+                evidence_refs=(evidence.id,),
+            )
+            for frame in request.body_semantic_frames
+        )
+        appraisal_proposals = tuple(
+            (
+                frame.frame_id,
+                AppraisalModelProposal(
+                    meanings=frame.meanings,
+                    valence=frame.valence,
+                    relationship_relevance="open",
+                    salience=frame.salience,
+                    appraisal_confidence=frame.appraisal_confidence,
+                    supporting_evidence_refs=(
+                        frame.supporting_evidence_refs
+                        if frame.supporting_evidence_refs
+                        else (evidence.id,)
+                    ),
+                    factors=frame.factors,
+                ),
+            )
+            for frame in request.body_semantic_frames
+        )
+        return semantic_candidates, appraisal_proposals
+
+    # Legacy typed-event compatibility path. Kept for LAB/replay fixtures;
+    # ACTIVE Body integration uses body_semantic_frames above.
+    semantic_candidates = tuple(
+        SemanticEventCandidate(
+            candidate_id=proposal.candidate_id,
+            scope=request.scope,
+            origin_runtime_id=request.runtime_id,
+            kind=proposal.kind,
+            attributes=proposal.attributes,
+            confidence=proposal.confidence,
+            evidence_refs=(evidence.id,),
+        )
+        for proposal in request.semantic_proposals
+    )
+    appraisal_proposals = tuple(
+        (
+            candidate_id,
+            (
+                proposal
+                if proposal.supporting_evidence_refs
+                else replace(proposal, supporting_evidence_refs=(evidence.id,))
+            ),
+        )
+        for candidate_id, proposal in request.appraisal_proposals
+    )
+    return semantic_candidates, appraisal_proposals
 
 
 def _decision_context_ref(orchestrator: TurnOrchestrator) -> str | None:
@@ -384,8 +469,16 @@ class MindRuntimeHostAdapter:
 
         interaction = _interaction_from_request(request)
         evidence = _evidence_from_request(request)
+        semantic_candidates, appraisal_proposals = _body_semantics_from_request(
+            request,
+            evidence,
+        )
         try:
-            self._orchestrator.begin_turn(interaction)
+            self._orchestrator.begin_turn(
+                interaction,
+                semantic_candidates=semantic_candidates,
+                appraisal_proposals=appraisal_proposals,
+            )
             ingest_outcome = self._orchestrator.ingest(evidence)
             if ingest_outcome is None and evidence.id not in (
                 ev.id for ev in self._orchestrator.observations

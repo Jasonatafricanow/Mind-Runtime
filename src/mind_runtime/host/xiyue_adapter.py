@@ -7,15 +7,16 @@ DynamicsEngine, Memory admission). It speaks only the public
 
 Responsibilities (HI-2 §1):
   * map a Hermes message/session to a HostTurnRequest
-  * call begin_turn synchronously BEFORE the Hermes LLM invocation
-  * render HostTurnResult.bounded_context into a prompt-safe block
+  * expose the previous bounded MR context before the Hermes LLM invocation
+  * consume the current Body semantic sidecar after that same LLM inference
   * call commit_turn after the Hermes delivery-success boundary
   * call abort_turn on the terminal-failure path
   * fail soft: any MR failure must never block the Hermes reply
 
 Hard rules:
   * MR_ENABLED=false → the adapter is inert (seam restores legacy behavior)
-  * Hermes never supplies appraisal/affect/memory authority
+  * Hermes may supply non-authoritative semantic/appraisal proposals, never
+    affect deltas, final state, memory authority, or policy authority
   * stable interaction_id from Hermes identity (same message → same id)
 """
 
@@ -29,7 +30,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mind_runtime.contracts import Scope, ScopeDomain, WakeSignal
+from mind_runtime.contracts import (
+    AppraisalModelProposal,
+    BodySemanticFrame,
+    Scope,
+    ScopeDomain,
+    SemanticEventProposal,
+    WakeSignal,
+)
 from mind_runtime.contracts.host import (
     HostAbortRequest,
     HostCommitRequest,
@@ -162,8 +170,14 @@ class XiyueMRAdapter:
         self._user_id = user_id
         self._persona_id = persona_id
         self._scope = Scope(domain=ScopeDomain.USER, user_id=user_id)
+        self._last_bounded_context: object | None = None
 
     # ---- begin -----------------------------------------------------------
+
+    def previous_bounded_context(self) -> object | None:
+        """Return the last committed/processed bounded context for next-turn prompting."""
+
+        return self._last_bounded_context
 
     def begin_turn(
         self,
@@ -173,6 +187,9 @@ class XiyueMRAdapter:
         session_id: str,
         message_id: str = "",
         occurred_at: datetime | None = None,
+        body_semantic_frames: tuple[BodySemanticFrame, ...] = (),
+        semantic_proposals: tuple[SemanticEventProposal, ...] = (),
+        appraisal_proposals: tuple[tuple[str, AppraisalModelProposal], ...] = (),
     ) -> MrTurnHandle | None:
         """Start an MR turn for an inbound Hermes message.
 
@@ -193,6 +210,9 @@ class XiyueMRAdapter:
                 channel=channel,
                 session_id=session_id,
                 host_metadata=(("persona_id", self._persona_id or ""),),
+                body_semantic_frames=body_semantic_frames,
+                semantic_proposals=semantic_proposals,
+                appraisal_proposals=appraisal_proposals,
             )
             result = self._port.begin_turn(request)
             if result.status in (HostTurnStatus.FAILED,):
@@ -223,6 +243,8 @@ class XiyueMRAdapter:
                 HostCommitRequest(turn_id=handle.turn_id, interaction_id=handle.interaction_id)
             )
             ok = receipt.status == HostStatus.OK
+            if ok and handle.bounded_context is not None:
+                self._last_bounded_context = handle.bounded_context
             _logger.info(
                 "MR commit interaction=%s status=%s reason=%s",
                 handle.interaction_id,

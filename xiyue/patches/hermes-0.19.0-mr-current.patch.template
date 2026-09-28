@@ -2,7 +2,7 @@ diff --git a/gateway/run.py b/gateway/run.py
 index 12b7477..e52633c 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -24,6 +24,53 @@ except ModuleNotFoundError:
+@@ -24,6 +24,37 @@ except ModuleNotFoundError:
      # means UTF-8 stdio setup is skipped on Windows; POSIX is unaffected.
      pass
 __PATCH_CONTEXT_BLANK_1__
@@ -35,35 +35,19 @@ __PATCH_CONTEXT_BLANK_1__
 +    except Exception:
 +        return None
 +# --- end Xiyue MR seam bootstrap ---
-+
-+# --- Xiyue MR seam bootstrap (HI-2) ---
-+import sys as _mr_sys
-+_mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
-+_mr_sys.path.insert(0, __MR_SRC_LITERAL__)
-+_mr_sys.path.insert(0, __MR_XIYUE_LITERAL__)
-+try:
-+    import mr_seam as _mr_seam
-+    _mr_seam._MR_SRC = __MR_SRC_LITERAL__
-+    _mr_seam.on_gateway_process_startup()
-+    _mr_adapter = _mr_seam.get_mr_adapter()
-+    _mr_render_bounded = _mr_seam.render_bounded
-+except Exception:
-+    _mr_seam = None
-+    _mr_adapter = None
-+    _mr_render_bounded = lambda b: None
-+# --- end Xiyue MR seam bootstrap ---
-+
+++
  import asyncio
  import concurrent.futures
  import dataclasses
-@@ -20943,7 +20990,53 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20943,7 +20990,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                      _conversation_kwargs["moa_config"] = moa_config
                  if _persist_user_timestamp_override is not None:
                      _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
 -                result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
-+                # --- Xiyue MR seam: begin_turn + inject bounded context (HI-2) ---
++                # --- Xiyue MR single-pass seam: prior context + one Body inference ---
 +                _mr_handle = None
 +                _mr_verdict = None
++                _mr_frames = ()
 +                _mr_profile = (
 +                    getattr(source, "profile", None)
 +                    or (self._profile_name_for_source(source) if hasattr(self, "_profile_name_for_source") else None)
@@ -71,73 +55,81 @@ __PATCH_CONTEXT_BLANK_1__
 +                )
 +                try:
 +                    if _mr_seam is not None:
-+                        _source_ts = None
-+                        if _persist_user_timestamp_override is not None:
-+                            _source_ts = _mr_seam.coerce_source_timestamp(_persist_user_timestamp_override)
-+                        _mr_handle, _mr_verdict = _mr_seam.begin_turn_clean(
-+                            message=str(_run_message),
-+                            channel=source.platform.value if source.platform else "default",
-+                            session_id=session_id or "",
-+                            message_id=event_message_id or "",
-+                            occurred_at=_source_ts,
-+                            profile=_mr_profile,
-+                            agent=agent,
-+                        )
-+                        if _mr_handle is not None and getattr(_mr_handle, "bounded_context", None) is not None:
-+                            _mr_block = _mr_render_bounded(_mr_handle.bounded_context)
-+                            if _mr_block:
-+                                agent.ephemeral_system_prompt = (
-+                                    (agent.ephemeral_system_prompt or "") + "\n\n" + _mr_block
-+                                ).strip()
-+                except Exception as _seam_err:
-+                    _mr_handle = None
-+                    if _mr_seam is not None:
-+                        _mr_verdict = _mr_seam.IngressVerdict(
-+                            admitted=False,
-+                            status="FAILED",
-+                            reason=str(_seam_err),
-+                            error_message="Mind Runtime processing failed. (MR_TURN_FAILED)",
-+                        )
-+                # --- end Xiyue MR begin seam ---
-+                if _mr_profile == "xiyue" and _mr_verdict is not None and not _mr_verdict.admitted and _mr_verdict.status in ("NOT_READY", "FAILED"):
-+                    result = {
-+                        "final_response": _mr_verdict.error_message or "Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
-+                        "messages": [],
-+                        "api_calls": 0,
-+                        "completed": False,
-+                    }
-+                else:
-+                    result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
++                        _mr_prompt = _mr_seam.prepare_single_pass_prompt(agent=agent)
++                        if _mr_prompt:
++                            agent.ephemeral_system_prompt = (
++                                (agent.ephemeral_system_prompt or "") + "\n\n" + _mr_prompt
++                            ).strip()
++                except Exception:
++                    pass
++                # Exactly one normal Body inference. MR never starts a second
++                # semantic-model call for the current message.
++                result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
              finally:
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
-@@ -20963,6 +21056,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20963,6 +21028,59 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 __PATCH_CONTEXT_BLANK_13__
              # Return final response, or a message if something went wrong
              final_response = result.get("final_response")
-+            # --- Xiyue MR seam: commit/abort (HI-2) ---
++            # --- Xiyue MR single-pass seam: consume sidecar, then resolve MR ---
 +            try:
-+                if _mr_handle is not None:
-+                    _active_adapter = _mr_seam.get_mr_adapter() if _mr_seam else _mr_adapter
-+                    if _active_adapter is not None:
-+                        if final_response:
++                if _mr_seam is not None:
++                    _clean_response, _mr_frames = _mr_seam.extract_single_pass_semantics(result)
++                    if _clean_response is not None:
++                        final_response = _clean_response
++                        result["final_response"] = _clean_response
++                    _source_ts = None
++                    if _persist_user_timestamp_override is not None:
++                        _source_ts = _mr_seam.coerce_source_timestamp(
++                            _persist_user_timestamp_override
++                        )
++                    _mr_handle, _mr_verdict = _mr_seam.begin_turn_clean(
++                        message=str(_run_message),
++                        channel=source.platform.value if source.platform else "default",
++                        session_id=session_id or "",
++                        message_id=event_message_id or "",
++                        occurred_at=_source_ts,
++                        profile=_mr_profile,
++                        agent=agent,
++                        body_semantic_frames=_mr_frames,
++                    )
++                if (
++                    _mr_profile == "xiyue"
++                    and _mr_verdict is not None
++                    and not _mr_verdict.admitted
++                    and _mr_verdict.status in ("NOT_READY", "FAILED")
++                ):
++                    final_response = (
++                        _mr_verdict.error_message
++                        or "Mind Runtime is temporarily unavailable. (MR_NOT_READY)"
++                    )
++                    result["final_response"] = final_response
++                elif _mr_handle is not None:
++                    _active_adapter = _mr_get_adapter()
++                    if _active_adapter is not None and final_response:
++                        if _active_adapter.guard_turn_prose(_mr_handle, final_response):
 +                            _active_adapter.commit_turn(_mr_handle)
-+                            if _mr_seam is not None and hasattr(_mr_seam, "on_turn_commit"):
++                            if hasattr(_mr_seam, "on_turn_commit"):
 +                                _mr_seam.on_turn_commit(
 +                                    handle=_mr_handle,
 +                                    agent=agent,
 +                                    final_response=final_response,
 +                                )
 +                        else:
-+                            _active_adapter.abort_turn(_mr_handle, reason="empty_response")
-+                            if _mr_seam is not None and hasattr(_mr_seam, "on_turn_abort"):
-+                                _mr_seam.on_turn_abort(
-+                                    handle=_mr_handle,
-+                                    reason="empty_response",
-+                                )
++                            _active_adapter.abort_turn(_mr_handle, reason="guard_rejected")
++                            final_response = "Mind Runtime processing failed. (MR_GUARD_FAILED)"
++                            result["final_response"] = final_response
++                    elif _active_adapter is not None:
++                        _active_adapter.abort_turn(_mr_handle, reason="empty_response")
++                        if hasattr(_mr_seam, "on_turn_abort"):
++                            _mr_seam.on_turn_abort(
++                                handle=_mr_handle,
++                                reason="empty_response",
++                            )
 +            except Exception:
 +                pass
-+            # --- end Xiyue MR commit/abort seam ---
++            # --- end Xiyue MR single-pass seam ---
 __PATCH_CONTEXT_BLANK_1__
              # Extract actual token counts from the agent instance used for this run
              _last_prompt_toks = 0

@@ -142,9 +142,36 @@ Relevant evidence:
 - `tests/memory_retrieval/test_decision_rerank.py`
 - `tests/memory_retrieval/test_decision_composition.py`
 
-This work was deliberately kept separate from the pending ACTIVE semantic migration.
-Legacy MR-owned online semantic-model wiring, GLM/Zen cleanup, appraisal migration,
-and Host/Body semantic ownership changes remain a different implementation track.
+This work was deliberately kept separate from the ACTIVE semantic migration so
+bounded decision compute could not become a second semantic authority.
+
+### 8. Online semantic understanding moved to the Body/Host boundary
+
+The ACTIVE runtime originally retained an optional internal semantic-provider path
+and a model-backed appraisal composition path. That duplicated work already performed
+by the host model and made GLM/Zen/appraisal credentials part of runtime readiness.
+
+The online boundary was changed so the Body/Host supplies bounded typed semantic and
+appraisal proposals. MR binds Scope, runtime identity, and admitted Evidence
+references itself, validates the proposals, materializes accepted appraisal effects,
+and retains all Dynamics, Intent, Policy, journal, and commit authority.
+
+MR no longer auto-constructs a semantic provider for an ACTIVE turn and production
+composition no longer requires GLM/Zen or appraisal-model credentials. Legacy model
+implementations remain explicit LAB/shadow/background compatibility code rather than
+online authority.
+
+Relevant evidence:
+
+- `src/mind_runtime/contracts/appraisal.py`
+- `src/mind_runtime/contracts/host.py`
+- `src/mind_runtime/host/runtime_adapter.py`
+- `src/mind_runtime/pipeline/orchestrator.py`
+- `src/mind_runtime/dynamics/ports.py`
+- `docs/adr/0034-body-owned-online-semantics-and-decision-model-option.md`
+- `tests/host/test_body_semantic_input.py`
+- `tests/host/test_semantic_activation.py`
+
 
 ## Why the history was not rewritten
 

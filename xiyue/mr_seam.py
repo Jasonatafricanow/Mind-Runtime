@@ -84,6 +84,110 @@ _SYSTEM_NOTE_PREFIX = (
 )
 
 
+_SIDECAR_OPEN = "<MR_SEMANTIC_SIDECAR>"
+_SIDECAR_CLOSE = "</MR_SEMANTIC_SIDECAR>"
+
+_SINGLE_PASS_SEMANTIC_INSTRUCTION = """MR single-pass sidecar protocol.
+Answer the user normally. Do not expose chain-of-thought or hidden reasoning.
+At the very end append one machine block:
+<MR_SEMANTIC_SIDECAR>
+{"schema_version":1,"frames":[...]}
+</MR_SEMANTIC_SIDECAR>
+Each frame describes one semantic meaning, not an event category.
+Required fields: frame_id, meanings, confidence, valence, salience,
+appraisal_confidence, factors. confidence, salience, appraisal_confidence,
+and factor values are normalized [0,1] judgments, never MR state units.
+valence must be positive, negative, neutral, or mixed.
+Factor semantics: separation=distance/loss of access; connection=closeness
+or reconnection; loss=loss of a valued outcome; threat=risk of a negative
+outcome; uncertainty=outcome unresolved; lack_of_control=low ability to
+influence the outcome; obstruction=goal blocked; other_blame=obstruction
+attributed to another agent; opportunity=positive/reward potential;
+anticipation=future-oriented positive expectation; relationship_relevance=
+relevance to an important relationship. Omit unsupported factors; absence
+means unknown/not asserted. Unknown factor names may be preserved but are
+ignored by V1 Affect. Never output affect deltas, final affect values,
+state dimensions, policy decisions, or memory authority. frames may be [].
+event_hint and attributes are optional legacy metadata and normally omitted.
+"""
+
+
+def single_pass_semantic_instruction() -> str:
+    """Prompt contract for one Body inference; never causes another model call."""
+
+    return _SINGLE_PASS_SEMANTIC_INSTRUCTION
+
+
+def _frame_from_wire(raw: object) -> Any:
+    from mind_runtime.contracts import BodySemanticFrame
+
+    if not isinstance(raw, dict):
+        raise ValueError("semantic frame must be an object")
+    factors_raw = raw.get("factors", {})
+    if isinstance(factors_raw, dict):
+        factors = tuple((str(k), float(v)) for k, v in factors_raw.items())
+    elif isinstance(factors_raw, list):
+        factors = tuple((str(item[0]), float(item[1])) for item in factors_raw)
+    else:
+        raise ValueError("semantic frame factors must be an object or pair list")
+    attrs_raw = raw.get("attributes", {})
+    if isinstance(attrs_raw, dict):
+        attributes = tuple((str(k), str(v)) for k, v in attrs_raw.items())
+    elif isinstance(attrs_raw, list):
+        attributes = tuple((str(item[0]), str(item[1])) for item in attrs_raw)
+    else:
+        raise ValueError("semantic frame attributes must be an object or pair list")
+    refs = tuple(str(v) for v in raw.get("supporting_evidence_refs", ()))
+    hint = raw.get("event_hint")
+    return BodySemanticFrame(
+        frame_id=str(raw["frame_id"]),
+        meanings=tuple(str(v) for v in raw["meanings"]),
+        confidence=float(raw["confidence"]),
+        valence=str(raw["valence"]),
+        salience=(None if raw.get("salience") is None else float(raw["salience"])),
+        appraisal_confidence=float(raw["appraisal_confidence"]),
+        factors=factors,
+        supporting_evidence_refs=refs,
+        event_hint=(None if hint is None else str(hint)),
+        attributes=attributes,
+        schema_version=int(raw.get("schema_version", 1)),
+    )
+
+
+def extract_single_pass_semantics(result: object) -> tuple[str | None, tuple[Any, ...]]:
+    """Extract and strip a Body sidecar without invoking the model again."""
+
+    if not isinstance(result, dict):
+        return None, ()
+    response = result.get("final_response")
+    clean = response if isinstance(response, str) else None
+    raw_frames = result.get("mr_semantic_frames")
+    try:
+        if isinstance(raw_frames, list):
+            return clean, tuple(_frame_from_wire(item) for item in raw_frames)
+        if clean is None:
+            return clean, ()
+        start = clean.rfind(_SIDECAR_OPEN)
+        end = clean.rfind(_SIDECAR_CLOSE)
+        if start < 0 or end < start:
+            return clean, ()
+        visible = (clean[:start] + clean[end + len(_SIDECAR_CLOSE) :]).strip()
+        payload_text = clean[start + len(_SIDECAR_OPEN) : end].strip()
+        try:
+            payload = json.loads(payload_text)
+            if not isinstance(payload, dict) or payload.get("schema_version", 1) != 1:
+                return visible, ()
+            frames_raw = payload.get("frames", [])
+            if not isinstance(frames_raw, list):
+                return visible, ()
+            return visible, tuple(_frame_from_wire(item) for item in frames_raw)
+        except Exception as exc:
+            _logger.warning("invalid MR semantic sidecar; ignoring: %s", exc)
+            return visible, ()
+    except Exception as exc:
+        _logger.warning("MR semantic sidecar extraction failed: %s", exc)
+        return clean, ()
+
 def _strip_host_system_note(message: str) -> str:
     """Remove the gateway's host-dialogue system-note wrapper, if present."""
     if isinstance(message, str) and message.startswith(_SYSTEM_NOTE_PREFIX):
@@ -139,12 +243,6 @@ def _load_production_composition() -> dict[str, object]:
     """
     from pathlib import Path
 
-    from mind_runtime.emotional_transition.appraisal import (
-        ConfiguredSemanticAppraisalModel,
-        ModelBackedSemanticAppraisalModel,
-        SemanticAppraisalProducer,
-    )
-    from mind_runtime.emotional_transition.factory import create_semantic_provider
     from mind_runtime.homeostasis.policy import (
         FixedSalienceThresholdConfig,
         SalienceThresholdPolicy,
@@ -162,38 +260,12 @@ def _load_production_composition() -> dict[str, object]:
         )
     decoded = decode_runtime_manifest(load_runtime_config_manifest(Path(config_path)))
 
-    # Semantic provider activation (AUTHORITY 2026-09-05):
-    #   mode=disabled -> provider absent by design (None).
-    #   mode=enabled  -> production host MUST construct the existing provider
-    #                    via create_semantic_provider(); missing/invalid
-    #                    backend selection or credential FAILS CLOSED at
-    #                    composition (never silently degrade to provider=None).
-    if decoded.semantic_provider.mode == "enabled":
-        semantic_provider = create_semantic_provider()
-        if semantic_provider is None:
-            raise RuntimeError(
-                "semantic_provider.mode=enabled but no SemanticCandidateProvider "
-                "could be constructed — set MR_SEMANTIC_PROVIDER (e.g. glm) and the "
-                "required backend credential (e.g. GLM_API_KEY)"
-            )
-    else:
-        semantic_provider = None
-
-    # Appraisal producer (same model-backed authority as core composition).
-    strategy = decoded.appraisal_producer_strategy
-    if strategy.strategy == "model_backed":
-        appraisal_model = ModelBackedSemanticAppraisalModel(
-            endpoint_url=strategy.endpoint_url,
-            model=strategy.model,
-            api_key_env=strategy.api_key_env,
-            timeout_s=strategy.timeout_s,
-            allowed_hosts=strategy.allowed_hosts,
-        )
-    elif strategy.strategy == "configured":
-        appraisal_model = ConfiguredSemanticAppraisalModel()
-    else:
-        raise ValueError(f"unsupported appraisal strategy: {strategy.strategy}")
-    appraisal_producer = SemanticAppraisalProducer(model=appraisal_model)
+    # Online semantic interpretation belongs to the Body/Host LLM. The
+    # certified manifest still decodes the legacy provider fields for
+    # compatibility, but production composition no longer constructs or
+    # requires an MR-local semantic/appraisal model.
+    semantic_provider = None
+    appraisal_producer = None
 
     # Homeostasis gate with config-owned thresholds (NOT the default 0.85).
     homeostasis_gate = SalienceThresholdPolicy(
@@ -302,6 +374,51 @@ def render_bounded(bounded) -> str | None:
     except Exception as exc:  # noqa: BLE001
         _logger.warning("render_bounded failed: %s", exc)
         return None
+
+
+def _ensure_agent_tracking(agent: Any = None) -> None:
+    """Install assistant-message tracking before the single Body inference."""
+
+    if agent is None:
+        return
+    try:
+        session_db = getattr(agent, "_session_db", None)
+        if session_db is None:
+            return
+        session_db._mr_current_assistant_msg_id = None
+        if getattr(session_db, "_mr_tracked", False):
+            return
+        original_append = session_db.append_message
+
+        def _tracking_append(*args, **kwargs):
+            row_id = original_append(*args, **kwargs)
+            role = kwargs.get("role")
+            if role is None and len(args) >= 2:
+                role = args[1]
+            if role == "assistant":
+                session_db._mr_current_assistant_msg_id = row_id
+            return row_id
+
+        session_db.append_message = _tracking_append
+        session_db._mr_tracked = True
+    except Exception as exc:
+        _logger.debug("Failed to wrap session_db.append_message (fail-soft): %s", exc)
+
+
+def prepare_single_pass_prompt(agent: Any = None) -> str:
+    """Return prior MR context plus the one-inference semantic sidecar contract."""
+
+    _ensure_agent_tracking(agent)
+    parts: list[str] = []
+    adapter = get_mr_adapter()
+    if adapter is not None and hasattr(adapter, "previous_bounded_context"):
+        previous = adapter.previous_bounded_context()
+        if previous is not None:
+            rendered = render_bounded(previous)
+            if rendered:
+                parts.append(rendered)
+    parts.append(single_pass_semantic_instruction())
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -529,41 +646,11 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
     try:
         comp = _load_production_composition()
 
-        # 3. Semantic provider (construction + config/key presence; no network call)
-        sem_p = comp.get("semantic_provider")
-        glm_key = os.environ.get("GLM_API_KEY")
-        if not glm_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    glm_key, _ = winreg.QueryValueEx(rk, "GLM_API_KEY")
-            except Exception:
-                glm_key = None
-        if sem_p is not None and glm_key:
-            checks["semantic_provider_available"] = True
-        elif not glm_key:
-            reasons.append("missing_GLM_API_KEY")
-        else:
-            reasons.append("semantic_provider_absent")
-
-        # 4. Appraisal provider (construction + config/key presence; no network call)
-        appr_p = comp.get("appraisal_producer")
-        appr_key = os.environ.get("APPRAISAL_API_KEY")
-        if not appr_key:
-            try:
-                import winreg
-
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as rk:
-                    appr_key, _ = winreg.QueryValueEx(rk, "APPRAISAL_API_KEY")
-            except Exception:
-                appr_key = None
-        if appr_p is not None and appr_key:
-            checks["appraisal_provider_available"] = True
-        elif not appr_key:
-            reasons.append("missing_APPRAISAL_API_KEY")
-        else:
-            reasons.append("appraisal_producer_absent")
+        # 3 & 4. Legacy readiness keys now represent the typed Body semantic
+        # and appraisal input seams. No local provider or credential is a
+        # production prerequisite.
+        checks["semantic_provider_available"] = True
+        checks["appraisal_provider_available"] = True
 
         # 5. Slow writer
         slow_size = comp.get("slow_plasticity_window_size", 0)
@@ -791,6 +878,9 @@ def begin_turn_clean(
     occurred_at: datetime | None = None,
     profile: str = "xiyue",
     agent: Any = None,
+    body_semantic_frames: tuple[Any, ...] = (),
+    semantic_proposals: tuple[Any, ...] = (),
+    appraisal_proposals: tuple[tuple[str, Any], ...] = (),
 ) -> tuple[Any | None, IngressVerdict]:
     """Gateway seam entrypoint.
 
@@ -812,28 +902,7 @@ def begin_turn_clean(
             error_message="Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
         )
 
-    # Wrap agent._session_db.append_message if available to capture exact assistant message id
-    if agent is not None:
-        try:
-            session_db = getattr(agent, "_session_db", None)
-            if session_db is not None:
-                session_db._mr_current_assistant_msg_id = None
-                if not getattr(session_db, "_mr_tracked", False):
-                    _orig_append = session_db.append_message
-
-                    def _tracking_append(*args, **kwargs):
-                        row_id = _orig_append(*args, **kwargs)
-                        role = kwargs.get("role")
-                        if role is None and len(args) >= 2:
-                            role = args[1]
-                        if role == "assistant":
-                            session_db._mr_current_assistant_msg_id = row_id
-                        return row_id
-
-                    session_db.append_message = _tracking_append
-                    session_db._mr_tracked = True
-        except Exception as _wrap_exc:
-            _logger.debug("Failed to wrap session_db.append_message (fail-soft): %s", _wrap_exc)
+    _ensure_agent_tracking(agent)
 
     clean_msg = _strip_host_system_note(message)
     try:
@@ -843,6 +912,9 @@ def begin_turn_clean(
             session_id=session_id,
             message_id=message_id,
             occurred_at=occurred_at,
+            body_semantic_frames=body_semantic_frames,
+            semantic_proposals=semantic_proposals,
+            appraisal_proposals=appraisal_proposals,
         )
         if handle is None:
             # begin_turn returned None or FAILED

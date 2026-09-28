@@ -11,6 +11,7 @@ from mind_runtime.contracts import (
     SemanticRoutingResult,
     StateDomain,
     StateValueType,
+    decode_body_factor_attributes,
 )
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.contracts.late_projection import AcceptedAppraisal, AppraisalProjectionResult
@@ -109,6 +110,72 @@ class MappedEffects:
     abstention_reasons: tuple[str, ...] = ()
 
 
+_BODY_FACTOR_MAX_STEP_FRACTION = 0.20
+
+
+def _body_factor_drive(
+    dimension: str,
+    factors: dict[str, float],
+) -> float | None:
+    """Translate appraisal causes into a bounded dimension drive.
+
+    These are causal appraisal axes, not event labels and not direct affect
+    commands. Missing factors mean "not asserted"; unknown factors are
+    preserved upstream but ignored by this V1 dynamics recipe.
+    """
+
+    if dimension.endswith(".longing"):
+        separation = factors.get("separation")
+        connection = factors.get("connection")
+        relevance = factors.get("relationship_relevance")
+        if relevance is None or (separation is None and connection is None):
+            return None
+        return (separation or 0.0) * relevance - (connection or 0.0) * relevance
+
+    if dimension.endswith(".anxiety"):
+        threat = factors.get("threat")
+        uncertainty = factors.get("uncertainty")
+        lack_of_control = factors.get("lack_of_control")
+        terms: list[float] = []
+        if threat is not None and uncertainty is not None:
+            terms.append(threat * uncertainty)
+        if threat is not None and lack_of_control is not None:
+            terms.append(threat * lack_of_control)
+        return max(terms) if terms else None
+
+    if dimension.endswith(".irritation") or dimension.endswith(".anger"):
+        obstruction = factors.get("obstruction")
+        if obstruction is None:
+            return None
+        other_blame = factors.get("other_blame")
+        amplifier = 0.5 if other_blame is None else 0.5 + 0.5 * other_blame
+        return obstruction * amplifier
+
+    if dimension.endswith(".excitement"):
+        opportunity = factors.get("opportunity")
+        if opportunity is None:
+            return None
+        anticipation = factors.get("anticipation")
+        amplifier = 0.5 if anticipation is None else 0.5 + 0.5 * anticipation
+        return opportunity * amplifier
+
+    if dimension.endswith(".sadness"):
+        loss = factors.get("loss")
+        if loss is None:
+            return None
+        relevance = factors.get("relationship_relevance")
+        return loss if relevance is None else loss * (0.5 + 0.5 * relevance)
+
+    if dimension.endswith(".restlessness"):
+        uncertainty = factors.get("uncertainty")
+        lack_of_control = factors.get("lack_of_control")
+        if uncertainty is None or lack_of_control is None:
+            return None
+        return uncertainty * lack_of_control
+
+    return None
+
+
 class AppraisalProjector:
     """Map one accepted candidate plus bounded history into explicit impulses."""
 
@@ -180,6 +247,35 @@ class AppraisalProjector:
                 return "invalid_longitudinal_target"
         return None
 
+    def _body_target_reason(
+        self,
+        acceptance: AcceptedAppraisal,
+        persona: tuple[AffectiveDimensionProfile, ...],
+    ) -> str | None:
+        owner, definitions = self._persona_profile, self._definitions
+        if owner is None or definitions is None:
+            return "missing_projection_authority"
+        scope = acceptance.projection_scope
+        if (
+            owner.persona_id != acceptance.persona_id
+            or scope is None
+            or scope.persona_id != owner.persona_id
+            or state_domain_for_scope(scope) is not StateDomain.AGENT
+        ):
+            return "foreign_projection_owner"
+        if persona and tuple(persona) != owner.dimensions:
+            return "persona_snapshot_mismatch"
+        for profile in owner.dimensions:
+            definition = definitions.get(profile.dimension)
+            if (
+                definition is None
+                or definition.domain is not StateDomain.AGENT
+                or definition.value_type is not StateValueType.SCALAR
+                or definition.dynamics_policy != "deterministic_affect"
+            ):
+                return "invalid_fast_target"
+        return None
+
     @staticmethod
     def _mapped_reason(mapped: MappedEffects, rule: EventEffectRule) -> str | None:
         allowed = {rule.dimension}
@@ -200,6 +296,31 @@ class AppraisalProjector:
             return
         if not result.effects:
             raise ValueError("projection effect is required for MAPPED result")
+        is_body = acceptance.candidate.kind == "__body_semantic__"
+        if is_body:
+            if self._body_target_reason(acceptance, ()) is not None:
+                raise ValueError("projection effect has no valid target authority")
+            owner = self._persona_profile
+            assert owner is not None
+            allowed = set(owner.dimension_keys())
+            for effect in result.effects:
+                profile = owner.for_dimension(effect.dimension)
+                max_step = (
+                    (profile.ceiling - profile.floor) * _BODY_FACTOR_MAX_STEP_FRACTION
+                    if profile is not None
+                    else -1.0
+                )
+                if (
+                    effect.dimension not in allowed
+                    or effect.operation != "delta"
+                    or max_step < 0
+                    or abs(effect.amount) > max_step + 1e-12
+                    or effect.target_domain != StateDomain.AGENT.value
+                    or effect.target_scope != acceptance.projection_scope
+                ):
+                    raise ValueError("Body appraisal effect conflicts with target authority")
+            return
+
         rule = self._rule_for(acceptance, None)
         if rule is None or self._target_reason(acceptance, rule, ()) is not None:
             raise ValueError("projection effect has no valid target authority")
@@ -230,6 +351,17 @@ class AppraisalProjector:
         from mind_runtime.contracts.late_projection import digest
 
         rule = self._rule_for(acceptance, routing)
+        if acceptance is not None and acceptance.candidate.kind == "__body_semantic__":
+            return digest(
+                (
+                    acceptance,
+                    history,
+                    routing,
+                    persona,
+                    "body-appraisal-factor-v1",
+                    self.version,
+                )
+            )
         if rule is None:
             return digest((acceptance, history, routing, None, self.version))
         owner = self._persona_profile
@@ -288,6 +420,7 @@ class AppraisalProjector:
         provenance: tuple[str, ...] = ()
         status = None
         rule = self._rule_for(acceptance, routing)
+        is_body = acceptance is not None and acceptance.candidate.kind == "__body_semantic__"
         if acceptance is not None:
             c, a = acceptance.candidate, acceptance.appraisal
             candidate_ref, source = c.candidate_id, a.appraisal_id
@@ -308,7 +441,10 @@ class AppraisalProjector:
                 or acceptance.projection_scope.persona_id != acceptance.persona_id
             ):
                 status, reasons = ProjectionStatus.REJECTED, ("invalid_projection_scope_owner",)
-            elif c.kind in self._rules and acceptance.projection_scope is None:
+            elif (
+                (is_body or c.kind in self._rules)
+                and acceptance.projection_scope is None
+            ):
                 status, reasons = ProjectionStatus.REJECTED, ("missing_target_scope",)
             routing = SemanticRoutingResult(
                 AppraisalRouteDecision(
@@ -321,15 +457,24 @@ class AppraisalProjector:
             )
         if routing is None:
             raise ValueError("projection requires accepted appraisal or legacy route")
-        if status is None and rule is not None:
+        if status is None and is_body:
+            assert acceptance is not None
+            target_reason = self._body_target_reason(acceptance, persona)
+            if target_reason is not None:
+                status, reasons = ProjectionStatus.REJECTED, (target_reason,)
+        elif status is None and rule is not None:
             target_reason = self._target_reason(acceptance, rule, persona)
             if target_reason is not None:
                 status, reasons = ProjectionStatus.REJECTED, (target_reason,)
         if status is not None:
             mapped = MappedEffects((), (), (), abstention_reasons=reasons)
         else:
-            mapped = self._map_legacy(routing=routing, history=history)
-            if rule is not None:
+            if is_body:
+                assert acceptance is not None
+                mapped = self._map_body_factors(acceptance)
+            else:
+                mapped = self._map_legacy(routing=routing, history=history)
+            if not is_body and rule is not None:
                 mapped_reason = self._mapped_reason(mapped, rule)
                 if mapped_reason is not None:
                     status, reasons = ProjectionStatus.REJECTED, (mapped_reason,)
@@ -342,7 +487,11 @@ class AppraisalProjector:
                 status = ProjectionStatus.MAPPED
             elif acceptance is not None and not routing.abstention_reasons:
                 status = ProjectionStatus.UNMAPPED
-                reasons = ("no_runtime_projection_rule",)
+                reasons = (
+                    ("no_affect_factors",)
+                    if is_body
+                    else ("no_runtime_projection_rule",)
+                )
                 mapped = MappedEffects((), (), ())
             else:
                 status = ProjectionStatus.ABSTAINED
@@ -384,6 +533,62 @@ class AppraisalProjector:
         # Legacy mapping has no accepted appraisal or authoritative snapshot.
         # It remains the same numerical recipe owned by this one projector.
         return self._map_legacy(routing=routing, history=history)
+
+    def _map_body_factors(self, acceptance: AcceptedAppraisal) -> MappedEffects:
+        """Project open appraisal causes into bounded affect impulses.
+
+        The Body supplies semantic causes only. MR owns this deterministic
+        conversion and caps the pre-persona per-dimension delta. Unknown
+        factors remain valid semantic information but do not mutate affect.
+        """
+
+        appraisal = acceptance.appraisal
+        factors = dict(decode_body_factor_attributes(acceptance.candidate.attributes))
+        if not factors or appraisal.salience is None:
+            return MappedEffects((), (), ())
+
+        owner = self._persona_profile
+        if owner is None:
+            return MappedEffects(
+                (), (), (), abstention_reasons=("missing_projection_authority",)
+            )
+
+        # Both judgments must be credible: semantic attribution confidence
+        # and appraisal confidence are independent uncertainties. The weaker
+        # one bounds the effect rather than letting a confident appraisal
+        # amplify a poorly identified meaning.
+        certainty = min(
+            acceptance.candidate.confidence,
+            appraisal.confidence,
+        )
+        impulses: list[Impulse] = []
+        confidences: list[tuple[str, float]] = []
+        salience_by_source: dict[str, float | None] = {}
+        evidence_by_source: dict[str, tuple[str, ...]] = {}
+
+        for profile in owner.dimensions:
+            drive = _body_factor_drive(profile.dimension, factors)
+            if drive is None or abs(drive) <= 1e-12:
+                continue
+            dimension_span = profile.ceiling - profile.floor
+            max_step = dimension_span * _BODY_FACTOR_MAX_STEP_FRACTION
+            gain = max_step * appraisal.salience * certainty
+            amount = max(-max_step, min(max_step, gain * drive))
+            source = f"appraisal:{appraisal.appraisal_id}:{profile.dimension}"
+            impulses.append(Impulse(profile.dimension, amount, source))
+            confidences.append((source, appraisal.confidence))
+            salience_by_source[source] = appraisal.salience
+            evidence_by_source[source] = (
+                appraisal.evidence_refs or acceptance.candidate.evidence_refs
+            )
+
+        return MappedEffects(
+            impulses=tuple(impulses),
+            audit_contributions=(),
+            source_confidences=tuple(confidences),
+            salience_by_source=salience_by_source,
+            evidence_refs_by_source=evidence_by_source,
+        )
 
     def _map_legacy(
         self,
