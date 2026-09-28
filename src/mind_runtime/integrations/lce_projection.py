@@ -33,6 +33,10 @@ from mind_runtime.runtime_binding import RuntimeBinding
 
 if TYPE_CHECKING:
     from lce.cognition.convergence import AuthorityConfig
+    from lce.cognition.inspiration import (
+        InspirationConfig,
+        InspirationInterpreter,
+    )
     from lce.cognition.line_graph import (
         CallableProjectionConfig,
         LineAssemblerConfig,
@@ -362,6 +366,14 @@ class MrLceCanonicalSourceAdapter:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class LceInspirationMaterial:
+    """Narrow MR-facing copy of LCE proactive material."""
+
+    material_id: str
+    content: str
+
+
 @dataclass(frozen=True)
 class LceProjectionSession:
     """Embedded current LCE projection over MR canonical Memory."""
@@ -412,6 +424,47 @@ class LceProjectionSession:
         return self.core.bootstrap_trajectory(
             knowledge_cutoff=knowledge_cutoff
         )
+
+    def discover_inspiration(
+        self,
+        *,
+        knowledge_cutoff: datetime,
+        trajectory_result: TrajectoryRuntimeResult | None = None,
+    ) -> tuple[LceInspirationMaterial, ...]:
+        """Return only opaque ID + content from LCE inspiration discovery."""
+        if knowledge_cutoff.tzinfo != UTC:
+            raise ValueError("knowledge_cutoff must be UTC")
+        materials = self.core.discover_inspiration(
+            knowledge_cutoff=knowledge_cutoff,
+            trajectory_result=trajectory_result,
+        )
+        return tuple(
+            LceInspirationMaterial(
+                material_id=item.material_id,
+                content=item.content,
+            )
+            for item in materials
+        )
+
+    def inspiration_materials(
+        self,
+        *,
+        limit: int = 20,
+    ) -> tuple[LceInspirationMaterial, ...]:
+        materials = self.core.inspiration_materials(limit=limit)
+        return tuple(
+            LceInspirationMaterial(
+                material_id=item.material_id,
+                content=item.content,
+            )
+            for item in materials
+        )
+
+    def consume_inspiration(self, material_id: str) -> None:
+        self.core.consume_inspiration(material_id)
+
+    def dismiss_inspiration(self, material_id: str) -> None:
+        self.core.dismiss_inspiration(material_id)
 
     def accepted_understandings(
         self,
@@ -508,6 +561,8 @@ def open_lce_projection_binding(
     authority_config: AuthorityConfig | None = None,
     line_assembler_config: LineAssemblerConfig | None = None,
     callable_projection_config: CallableProjectionConfig | None = None,
+    inspiration_config: InspirationConfig | None = None,
+    inspiration_interpreter: InspirationInterpreter | None = None,
     surface_config: SurfaceConfig | None = None,
     block_embedder: Callable[[SemanticBlock], tuple[float, ...]] | None = None,
     block_embedding_version: str = "mr-lce-vector-v1",
@@ -571,6 +626,8 @@ def open_lce_projection_binding(
             authority_config=authority_config,
             line_assembler_config=line_assembler_config,
             callable_projection_config=callable_projection_config,
+            inspiration_config=inspiration_config,
+            inspiration_interpreter=inspiration_interpreter,
             surface_config=surface_config,
             block_embedder=block_embedder,
             block_embedding_version=block_embedding_version,
@@ -583,6 +640,7 @@ def open_lce_projection_binding(
 
 
 __all__ = [
+    "LceInspirationMaterial",
     "LceProjectionSession",
     "MrLceCanonicalSourceAdapter",
     "open_lce_projection_binding",

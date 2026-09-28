@@ -21,6 +21,10 @@ canonical MR Memory
 
 accepted Path A + Path B Baselines
   -> bounded MR HistoricalContext readback
+
+sleep/daydream/dream LCE discovery
+  -> opaque Inspiration Material
+  -> proactive-consumer candidate
 ```
 
 See ADR-0026 and `docs/architecture/MEMORY_ARCHITECTURE_V1.md`.
@@ -31,7 +35,7 @@ The compatibility baseline used by this integration is:
 
 ```text
 Jasonatafricanow/LCE-Longitudinal-Cognition-Engine
-commit aff149256bc6b8323a795c8811bb877356baaa2c
+commit 9edf4eb94c4eaef5b833b0f608f0895a58e05230
 package lce-core 0.1.0
 ```
 
@@ -40,7 +44,7 @@ enables the integration should install and verify that source revision, for
 example:
 
 ```powershell
-python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@aff149256bc6b8323a795c8811bb877356baaa2c"
+python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
 ```
 
 Disabled composition does not import LCE or initialize its storage.
@@ -256,6 +260,62 @@ make per-Memory Path B processing the default MR production scheduler.
 The sleep/dream scheduler should select bounded unresolved material and avoid a
 nightly full-history recomputation.
 
+## Inspiration Material downstream seam
+
+Current LCE also exposes a proactive-consumption product distinct from accepted
+historical understanding.
+
+MR intentionally preserves the narrow LCE public seam:
+
+```text
+LceInspirationMaterial {
+    material_id
+    content
+}
+```
+
+The MR adapter does **not** expose:
+
+- association vs extension kind;
+- Line or branch identity;
+- SemanticBlock IDs;
+- Raw-Evidence closure;
+- convergence profiles;
+- interpreter traces.
+
+Those remain LCE implementation details.
+
+A sleep/daydream/dream worker may use the projection session as:
+
+```python
+trajectory = session.bootstrap_trajectory(
+    knowledge_cutoff=cutoff,
+)
+session.discover_inspiration(
+    knowledge_cutoff=cutoff,
+    trajectory_result=trajectory,
+)
+
+materials = session.inspiration_materials(limit=4)
+```
+
+The first discovery family is a cautious possible association: several existing
+observations may be related and are offered as reflection material rather than
+accepted fact.
+
+The second family takes an already-supported Line prefix such as
+`A -> B -> C` and asks an injected bounded inspiration interpreter for a
+speculative `D?`. LCE itself keeps the supported prefix and speculative
+extension separate before compiling them into self-contained material.
+
+After a downstream proactive consumer uses or discards the item, it can call
+`consume_inspiration(material_id)` or `dismiss_inspiration(material_id)`.
+The opaque ID is enough; the consumer never needs LCE topology/provenance.
+
+This seam provides **message material**, not send authority. Persona initiative,
+Intent scheduling, ActionPolicy, cooldowns and final Body wording remain outside
+LCE.
+
 ## Derived-cognition correction boundary
 
 Accepted LCE cognition is reusable, but it is not infallible.
@@ -294,6 +354,7 @@ Memory:
     baselines/lce_baselines.sqlite
     worktrees/
     projection_state/projection_state.sqlite
+    inspiration/inspiration.sqlite
     lines/
         authority/
     structures/
@@ -337,6 +398,7 @@ MR's integration tests cover:
 - derived-only Path B persistence with no copied Raw Evidence table;
 - Path B restart/replay over canonical MR Memory;
 - accepted cognition readback across Path A and Path B;
+- narrow Inspiration Material read/consume seam;
 - default-OFF/no-dependency behavior.
 
 Run:

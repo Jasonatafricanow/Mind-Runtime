@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import replace
+from dataclasses import fields, replace
+from datetime import timedelta
 
 import pytest
 
 pytest.importorskip("lce", reason="optional current lce-core package is not installed")
 
+from lce.cognition.inspiration import InspirationKind, InspirationPackage
+
 from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_projection import (
+    LceInspirationMaterial,
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
 )
@@ -266,3 +270,77 @@ def test_path_a_and_path_b_share_one_scope_baseline_store(
         assert handoff.db_path == path_b_db
         result = handoff.handoff_thread(thread)
         assert result.baseline.region_id == "mr-thread:shared-lineage"
+
+def test_inspiration_material_binding_keeps_downstream_surface_narrow(
+    projection_plane,
+) -> None:
+    assert [field.name for field in fields(LceInspirationMaterial)] == [
+        "material_id",
+        "content",
+    ]
+
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+
+    with session:
+        session.sync_all()
+        sources = session.core.memory.list_current_valid_evidence()
+        assert sources
+        cutoff = max(
+            item.effective_known_at for item in sources
+        ) + timedelta(days=1)
+        blocks = session.core.memory.list_semantic_blocks_at_knowledge_cutoff(
+            cutoff,
+            current_valid_only=True,
+        )
+        assert blocks
+        block = blocks[0]
+        assert block.state_id is not None
+
+        # The MR binding test verifies only the narrow downstream seam. LCE's
+        # own suite separately verifies association/extension discovery. Do
+        # not assume MR's semantic compiler emits one block per canonical
+        # Memory item; several inputs may correctly extend one block.
+        assert session.discover_inspiration(
+            knowledge_cutoff=cutoff,
+        ) == ()
+
+        package = InspirationPackage(
+            kind=InspirationKind.ASSOCIATION,
+            candidate_id="mr-binding-fixture",
+            content_fragments=(block.content,),
+            block_ids=(block.block_id,),
+            state_ids=(block.state_id,),
+            raw_evidence_ids=block.raw_evidence_ids,
+            knowledge_cutoff=cutoff,
+        )
+        stored = session.core.inspiration.store.put(
+            material_id="insp_mr_binding_fixture",
+            content=(
+                "Possible connection to explore (not established): "
+                "binding fixture"
+            ),
+            package=package,
+            trace={"test": True},
+        )
+        assert stored is not None
+
+        pending = session.inspiration_materials(limit=10)
+        assert pending == (
+            LceInspirationMaterial(
+                material_id="insp_mr_binding_fixture",
+                content=(
+                    "Possible connection to explore (not established): "
+                    "binding fixture"
+                ),
+            ),
+        )
+        session.consume_inspiration(pending[0].material_id)
+        assert session.inspiration_materials(limit=10) == ()
+
