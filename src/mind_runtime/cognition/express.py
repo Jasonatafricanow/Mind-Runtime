@@ -26,6 +26,7 @@ from mind_runtime.contracts import (
     ActionPolicyResult,
     DecisionContext,
     ExpressionDisposition,
+    InspirationMaterial,
     Intent,
     ProjectedMindState,
     RuntimeState,
@@ -158,6 +159,7 @@ class ProactiveContextPreparer:
         mode: str | None = None,
         persona_version: int | None = None,
         persona_content_digest: str | None = None,
+        inspiration_material: InspirationMaterial | None = None,
     ) -> ProactiveExecutionContext | None:
         """Soul preparation: compile DecisionContext; never invokes provider."""
         permission = policy_result.permission
@@ -198,6 +200,7 @@ class ProactiveContextPreparer:
                 mode=mode,
                 persona_version=persona_version,
                 persona_content_digest=persona_content_digest,
+                inspiration_material=inspiration_material,
             )
         )
         self._orchestrator.trace.record(
