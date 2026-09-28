@@ -22,12 +22,17 @@ from mind_runtime.cognition import (
     CognitiveTickReport,
     build_cognitive_ticker,
 )
-from mind_runtime.cognition.tick import CognitiveTicker, observation_fact_reader
+from mind_runtime.cognition.tick import (
+    CognitiveTicker,
+    InspirationMaterialQueue,
+    observation_fact_reader,
+)
 from mind_runtime.contracts import (
     AffectiveDimensionProfile,
     Authority,
     AuthorityLevel,
     Evidence,
+    InspirationMaterial,
     Intent,
     IntentStatus,
     PolicyResources,
@@ -116,6 +121,16 @@ def make_policy_config() -> ActionPolicyConfig:
     )
 
 
+class _InspirationQueue:
+    def __init__(self, material: InspirationMaterial | None) -> None:
+        self.material = material
+        self.calls: list[str] = []
+
+    def reserve_next(self, wake_id: str) -> InspirationMaterial | None:
+        self.calls.append(wake_id)
+        return self.material
+
+
 class _TickStack(TypedDict):
     orchestrator: TurnOrchestrator
     bridge: object
@@ -136,6 +151,8 @@ def make_stack(
     rules: tuple[IntentRule, ...] | None = None,
     policy_config: ActionPolicyConfig | None = None,
     resources: PolicyResources | None = None,
+    inspiration_queue: InspirationMaterialQueue | None = None,
+    inspiration_intent_kinds: tuple[str, ...] = (),
 ) -> _TickStack:
     """Build one durable production stack with a wired cognitive ticker."""
     persona = persona or make_persona()
@@ -170,6 +187,8 @@ def make_stack(
         intent_lifecycle=IntentLifecycleService(intent_backend),
         runtime_id=runtime_id,
         fact_reader=observation_fact_reader(orchestrator),
+        inspiration_queue=inspiration_queue,
+        inspiration_intent_kinds=inspiration_intent_kinds,
     )
     return {
         "orchestrator": orchestrator,
@@ -697,3 +716,66 @@ def test_ct11c_state_persisted_but_intent_missing_fills_intent(tmp_path: Path) -
 def _ensure(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def test_allowed_proactive_tick_reserves_inspiration_after_policy_admission(
+    tmp_path: Path,
+) -> None:
+    material = InspirationMaterial(
+        "insp-tick-1",
+        "Possible connection to explore (not established): A may relate to B.",
+    )
+    queue = _InspirationQueue(material)
+    stack = make_stack(
+        tmp_path,
+        inspiration_queue=queue,
+        inspiration_intent_kinds=("reach_out",),
+    )
+    ticker = stack["ticker"]
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = ticker.tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+
+    assert report.policy_allowed == 1
+    assert report.wake_signal is not None
+    assert queue.calls == [report.wake_signal.wake_id]
+    wake_context = ticker.get_pending_wake_context(
+        report.wake_signal.wake_id
+    )
+    assert wake_context is not None
+    assert wake_context["inspiration_material"] == material
+
+
+def test_non_inspiration_intent_does_not_touch_material_queue(
+    tmp_path: Path,
+) -> None:
+    queue = _InspirationQueue(
+        InspirationMaterial(
+            "insp-tick-2",
+            "Possible connection to explore (not established): A may relate to B.",
+        )
+    )
+    stack = make_stack(
+        tmp_path,
+        inspiration_queue=queue,
+        inspiration_intent_kinds=("spontaneous_share",),
+    )
+    ticker = stack["ticker"]
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = ticker.tick(
+        scope=stack["scope"],
+        now=BASE + timedelta(hours=2),
+    )
+
+    assert report.policy_allowed == 1
+    assert report.wake_signal is not None
+    assert queue.calls == []
+    wake_context = ticker.get_pending_wake_context(
+        report.wake_signal.wake_id
+    )
+    assert wake_context is not None
+    assert wake_context["inspiration_material"] is None
+
