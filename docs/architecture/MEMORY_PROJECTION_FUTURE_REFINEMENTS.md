@@ -121,7 +121,34 @@ Baseline
 
 without turning raw history into routine prompt context.
 
-## 6. LCE replaceability
+## 6. Derived-relation correction persistence
+
+LCE may be wrong even when every supporting canonical Memory item is factually
+valid.
+
+The correction path therefore needs a durable cognition-layer record that can
+say:
+
+```text
+derived relation R was explicitly rejected
+supporting Memory remains valid
+R must not be regenerated from the same unchanged support
+```
+
+This record is not canonical Memory and must not mutate factual history. It is a
+negative constraint over derived cognition.
+
+The correction should remain visible to later rebuild/sleep-dream discovery and
+may itself be superseded if genuinely new authorized evidence reopens the
+question.
+
+This is different from source invalidation:
+
+- source invalidation says factual support is no longer valid;
+- relation correction says the support may still be true, but LCE's logical
+  connection was wrong.
+
+## 7. LCE replaceability
 
 Keep LCE Core substrate-agnostic.
 
