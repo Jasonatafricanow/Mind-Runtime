@@ -238,16 +238,50 @@ session = open_lce_projection_binding(
 assert session is not None
 
 with session:
-    session.sync_all()                 # slow/batch catch-up
-    # or:
-    session.sync_memory_ids(ids)       # nearline new canonical Memory
+    # sleep/dream latent-discovery pass
+    session.sync_all()
     session.bootstrap_trajectory(
         knowledge_cutoff=cutoff,
     )
 ```
 
-Scheduling remains a composition policy. Binding Path B does not require MR to
-run a nightly full-history recomputation.
+The default production role is **sleep/dream latent discovery**, not
+"every new Memory -> Path B". Online explicit logical structure is already
+owned by Thread and reaches LCE through Path A.
+
+`sync_memory_ids(...)` remains available for explicit repair, replay,
+laboratory work and bounded operator-driven catch-up. Its existence does not
+make per-Memory Path B processing the default MR production scheduler.
+
+The sleep/dream scheduler should select bounded unresolved material and avoid a
+nightly full-history recomputation.
+
+## Derived-cognition correction boundary
+
+Accepted LCE cognition is reusable, but it is not infallible.
+
+If factual MR Memory remains valid while LCE has inferred a wrong relation, an
+authorized correction may invalidate the **derived relation** without deleting
+the supporting Memory.
+
+Required behavior:
+
+```text
+valid canonical Memory
+    -> wrong LCE relation
+    -> explicit correction
+    -> relation removed from current usable cognition
+    -> dependent derived structure revalidated/rebuilt
+    -> current cognition may roll back
+    -> rejected historical revision remains auditable
+```
+
+Historical visibility and current validity are separate.
+
+A correction should persist strongly enough that an unchanged later sleep/dream
+bootstrap does not immediately recreate the same rejected relation. That
+persistent relation-level negative-constraint ledger is an LCE control-plane
+follow-up; MR must not emulate it by deleting or mutating factual Memory.
 
 ## Persistence and restart
 
@@ -318,10 +352,12 @@ complete pytest/coverage suite.
 
 LCE remains opt-in. `default_adapter(..., lce_enabled=False)` is the default.
 
-Thread formation/maturity remains a bounded online projection policy; its
-future wake-up, capacity and TTL refinements are recorded separately.
-Idle/sleep/dream **scheduling policy** remains deferred, but the latent Path B
-runtime it would invoke is now bound.
+Thread formation/maturity remains the bounded online projection policy for
+explicit logical lines; its future wake-up, capacity and TTL refinements are
+recorded separately. Path B is the sleep/dream latent-discovery consumer for
+history that did not become an explicit mature Thread. The LCE runtime is
+already bound; only the bounded sleep/dream invocation policy remains
+composition work.
 
 Enabling either path does not grant LCE factual write authority. LCE may persist
 derived cognition and rebuildable projection state only.
