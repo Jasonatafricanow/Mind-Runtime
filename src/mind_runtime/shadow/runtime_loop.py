@@ -40,12 +40,12 @@ from pathlib import Path
 
 from mind_runtime.binding_registry import BindingRegistryReader
 from mind_runtime.cognition import (
+    TICK_INTERACTION_PREFIX,
     CognitiveMode,
     CognitiveTickConfig,
     CognitiveTicker,
     CognitiveTickReport,
     InspirationMaterialQueue,
-    TICK_INTERACTION_PREFIX,
 )
 from mind_runtime.contracts import Scope, ScopeDomain
 from mind_runtime.contracts.surface import SurfaceProjectionPort
