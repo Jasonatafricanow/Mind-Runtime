@@ -57,10 +57,10 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
-      - name: Install verified LCE compatibility baseline
+      - name: Install verified current LCE baseline
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@5894a2334943d9a12310992fedcc1932a473b3d2"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@aff149256bc6b8323a795c8811bb877356baaa2c"
       - name: Verify MR-LCE binding
         run: python -m pytest tests/lce_binding tests/memory_retrieval -q
 
