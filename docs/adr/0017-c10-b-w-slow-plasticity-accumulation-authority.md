@@ -392,8 +392,8 @@ WRITER does NOT own time-driven evolution of the slow state.
 
 | Gap | Status | Mitigation |
 |---|---|---|
-| No time-driven decay | Deferred to Step C | If needed, this is the natural Step C owner |
-| No recovery schedule | Deferred to Step C | Same |
+| No time-driven decay | **By design; not a gap** | 2026-09-28 addendum freezes slow state as event-driven only |
+| No recovery schedule | **By design; not a gap** | Long-term recovery requires new accepted contributions |
 | No autonomous `S_{t-1}` evolution between windows | By design | Slow character comes from rolling window, not from smoothing |
 | No clamp on A_t | Not needed | A_t ∈ [0,1] by construction |
 
@@ -470,7 +470,7 @@ Not from any multiplicative constant in the writer.
 | C10-B-W-ONTO | No change: longitudinal target dimension authority unchanged |
 | `src/mind_runtime/slow_plasticity/writer.py` | MUST BE REFACTORED: remove LR, replace additive accumulation with rolling-window salience-weighted mean, remove hard clamp; expose `slow_window_size = N` configuration |
 | `src/mind_runtime/dynamics/engine.py` | NO CHANGE: DynamicsEngine does NOT own slow-state dynamics; longitudinal path bypasses it (topology) |
-| (future) `SlowDynamicsPolicy` | Step C owner — deferred ADR required before production use |
+| `SlowDynamicsPolicy` for slow state | **Not authorized** by the 2026-09-28 addendum; autonomous recovery belongs to Fast-state dynamics |
 
 ---
 
@@ -480,7 +480,7 @@ Not from any multiplicative constant in the writer.
 
 1. Freeze Decisions 1, 2, 2.5, 3, 4
 2. Mark the current `writer.py` as NON-CONFORMANT pending refactor
-3. Register Step C as an acknowledged gap (deferred ADR)
+3. Historical note only: the former Step C gap is closed by the 2026-09-28 addendum as "no autonomous slow dynamics"
 
 ### Phase 2 (B-W refactor — mechanical once ADR accepted)
 
@@ -549,7 +549,7 @@ Architecture authority verdict (pending acceptance):
 | `learning_rate` | ✅ does not exist |
 | empty window | ✅ RETAIN / no-write only |
 | writer clamp | ✅ deleted |
-| decay/recovery | ✅ deferred to Step C |
+| decay/recovery | ✅ no autonomous slow decay/recovery; event-driven only (2026-09-28 addendum) |
 
 Current writer is non-conformant in three ways:
 1. Uses additive accumulation (conflates Step A and Step B)
