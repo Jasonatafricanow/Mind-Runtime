@@ -316,6 +316,77 @@ This seam provides **message material**, not send authority. Persona initiative,
 Intent scheduling, ActionPolicy, cooldowns and final Body wording remain outside
 LCE.
 
+## Automatic background Inspiration wiring
+
+MR now has a bounded background worker around the LCE projection session:
+
+```text
+canonical MR Memory
+    -> LceInspirationBackgroundWorker
+    -> sync only canonical Memory IDs not yet checkpointed
+    -> DAYDREAM / DREAM Path-B discovery
+    -> LCE Inspiration queue
+```
+
+The worker persists only execution progress in
+`background_inspiration.sqlite`; factual authority remains canonical MR
+Memory and derived cognition remains in LCE stores.
+
+An explicitly enabled cognitive tick runs the background pass before the normal
+proactive Intent evaluation:
+
+```text
+scheduled cognitive tick
+    -> background LCE pass (DAYDREAM by default; DREAM may be selected explicitly)
+    -> pending InspirationMaterial
+    -> normal IntentEngine
+    -> Persona initiative admission where the Intent rule requires it
+    -> ActionPolicy
+    -> WakeSignal
+```
+
+Only Intent kinds that already carry `minimum_initiative` are eligible to
+reserve Inspiration Material in the production composition. This preserves the
+existing authority direction: the material can supply **what to think/say
+about**, but it cannot manufacture the desire or permission to contact the
+user.
+
+Once a proactive Wake has passed policy, the ticker may reserve one material
+and place only the public two-field object into the authoritative wake context:
+
+```text
+material_id
+content
+```
+
+The DecisionContext compiler converts it to an essential
+`INSPIRATION` context item. The provider renderer treats it as
+`UNTRUSTED_DATA`; internal Line/branch/provenance state remains hidden.
+
+Lifecycle is tied to the existing proactive delivery path:
+
+```text
+Guard REJECT      -> release reservation
+delivery ABORT    -> release reservation
+REWRITE           -> keep reservation for the same wake
+delivery COMMIT   -> consume Inspiration Material
+```
+
+A successful external delivery is therefore the consumption boundary. Merely
+discovering, reserving, rendering, or guarding the material does not consume it.
+
+The worker is incremental. It checkpoints processed canonical Memory IDs and
+does not run a full Path-B bootstrap on every clock tick when neither canonical
+Memory nor the discovery version changed. Background derived-cognition failures
+are fail-soft relative to the existing proactive ticker; they do not roll back
+canonical Memory or create alternate factual state.
+
+The production Xiyue composition remains opt-in. Setting
+`MR_LCE_INSPIRATION_ENABLED=true` enables the Inspiration binding and also
+requires/enables the underlying Memory and LCE composition. The feature still
+depends on the existing proactive cognitive-tick scheduler; it does not create
+a second outbound scheduler or bypass Host/Body/Guard/Delivery.
+
 ## Derived-cognition correction boundary
 
 Accepted LCE cognition is reusable, but it is not infallible.
@@ -355,6 +426,7 @@ Memory:
     worktrees/
     projection_state/projection_state.sqlite
     inspiration/inspiration.sqlite
+    background_inspiration.sqlite
     lines/
         authority/
     structures/
@@ -399,6 +471,9 @@ MR's integration tests cover:
 - Path B restart/replay over canonical MR Memory;
 - accepted cognition readback across Path A and Path B;
 - narrow Inspiration Material read/consume seam;
+- incremental background catch-up and replay checkpointing;
+- post-policy material reservation;
+- release-on-reject/abort and consume-on-delivery-commit lifecycle;
 - default-OFF/no-dependency behavior.
 
 Run:
@@ -416,10 +491,11 @@ LCE remains opt-in. `default_adapter(..., lce_enabled=False)` is the default.
 
 Thread formation/maturity remains the bounded online projection policy for
 explicit logical lines; its future wake-up, capacity and TTL refinements are
-recorded separately. Path B is the sleep/dream latent-discovery consumer for
-history that did not become an explicit mature Thread. The LCE runtime is
-already bound; only the bounded sleep/dream invocation policy remains
-composition work.
+recorded separately. Path B is the sleep/dream latent-discovery consumer for history that did not
+become an explicit mature Thread. The bounded background invocation worker is
+now wired into the cognitive-tick composition. What remains deliberately
+unimplemented is an autonomous CognitiveModeController that decides
+ACTIVE↔DAYDREAM↔SLEEP↔DREAM from fatigue/circadian state.
 
 Enabling either path does not grant LCE factual write authority. LCE may persist
 derived cognition and rebuildable projection state only.
