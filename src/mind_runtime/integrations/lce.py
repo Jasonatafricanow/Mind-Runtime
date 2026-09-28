@@ -1,13 +1,14 @@
 """MR bindings for current LCE Core plus bounded Thread handoff/readback.
 
-MR remains the only factual Memory authority. LCE receives stable canonical
-Memory IDs and owns only derived Baseline cognition.
+MR remains the only factual Memory authority. LCE receives authorized
+canonical source views and owns only derived cognition/projection state.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,9 +31,7 @@ from mind_runtime.runtime_binding import (
 )
 
 if TYPE_CHECKING:
-    from lce.contracts.baseline import Baseline
     from lce.contracts.consolidation import (
-        CandidateBaseline,
         ConsolidationResult,
         SemanticConsolidatorPort,
     )
@@ -290,23 +289,6 @@ class LceAcceptedUnderstanding:
     relevance: float
 
 
-class _PrecomputedThreadConsolidator:
-    """Return an already-reasoned Thread product without invoking a model."""
-
-    def __init__(self, candidate: CandidateBaseline) -> None:
-        self._candidate = candidate
-
-    def consolidate(
-        self,
-        *,
-        memories: tuple[MemoryItemView, ...],
-        previous_baseline: Baseline | None,
-        context: Mapping[str, object] | None = None,
-    ) -> CandidateBaseline:
-        del memories, previous_baseline, context
-        return self._candidate
-
-
 def _accepted_understandings(
     adapter: MrMemorySubstrateAdapter,
     store: SqliteBaselineStore,
@@ -452,6 +434,7 @@ class LceThreadHandoffSession:
 
     _adapter: MrMemorySubstrateAdapter
     _store: SqliteBaselineStore
+    _drafts: Any | None = None
 
     @property
     def db_path(self) -> Path:
@@ -488,35 +471,54 @@ class LceThreadHandoffSession:
         if not thread.mature or thread.working_summary is None:
             raise ValueError("Thread is not mature for LCE handoff")
         try:
-            from lce.contracts.consolidation import CandidateBaseline
-            from lce.core.engine import LceCore
+            from lce.cognition.external import (
+                PrecomputedDraftInput,
+                PrecomputedDraftIntake,
+            )
         except ImportError as exc:
             raise LceIntegrationUnavailable(
                 "install the current optional lce-core package"
             ) from exc
 
+        if self._drafts is None:
+            raise LceIntegrationUnavailable(
+                "current LCE Thread handoff requires a draft store"
+            )
+
         support = thread.handoff_memory_ids
-        # Revalidate every canonical support point before LCE sees the candidate.
+        # Revalidate every canonical support point before LCE sees the draft.
         self._adapter.get_by_ids(support)
-        candidate = CandidateBaseline(
+        payload = json.dumps(
+            {
+                "thread_id": thread.thread_id,
+                "support": support,
+                "summary": thread.working_summary,
+                "updated_at": thread.updated_at.isoformat(),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        processing_input_id = (
+            "mr-thread-input:"
+            + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+        )
+        draft = PrecomputedDraftInput(
+            region_id=f"{_THREAD_REGION_PREFIX}{thread.thread_id}",
             content=thread.working_summary,
             supporting_memory_ids=support,
-            model_trace={},
-        )
-        core = LceCore(
-            memory_substrate=self._adapter,
-            baseline_store=self._store,
-            consolidator=_PrecomputedThreadConsolidator(candidate),
-        )
-        return core.consolidate(
-            f"{_THREAD_REGION_PREFIX}{thread.thread_id}",
-            support,
+            processing_input_id=processing_input_id,
             context={
                 "source": "mr-thread",
                 "open_question": thread.open_question,
                 "thread_status": thread.status.value,
             },
         )
+        intake = PrecomputedDraftIntake(
+            memory_substrate=self._adapter,
+            baseline_store=self._store,
+            draft_store=self._drafts,
+        )
+        return intake.stage_and_promote(draft)
 
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4
@@ -526,7 +528,11 @@ class LceThreadHandoffSession:
         )
 
     def close(self) -> None:
-        self._store.close()
+        if self._drafts is not None:
+            self._drafts.close()
+        close = getattr(self._store, "close", None)
+        if callable(close):
+            close()
 
     def __enter__(self) -> LceThreadHandoffSession:
         return self
@@ -537,10 +543,13 @@ class LceThreadHandoffSession:
 
 @dataclass(frozen=True)
 class LceReadSession:
-    """Read-only capability for accepted LCE cognition."""
+    """Read-only capability for accepted LCE cognition from both paths."""
 
     _adapter: MrMemorySubstrateAdapter
     _store: SqliteBaselineStore
+    _projection_reader: Any | None = None
+    _projection_substrate: Any | None = None
+    _projection_source: Any | None = None
 
     @property
     def db_path(self) -> Path:
@@ -549,14 +558,76 @@ class LceReadSession:
     def accepted_understandings(
         self, current_context: str | None, *, limit: int = 4
     ) -> tuple[LceAcceptedUnderstanding, ...]:
-        return _accepted_understandings(
-            self._adapter,
-            self._store,
-            current_context=current_context,
-            limit=limit,
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError("limit must be an integer in [0, 100]")
+        if limit == 0:
+            return ()
+        items = list(
+            _accepted_understandings(
+                self._adapter,
+                self._store,
+                current_context=current_context,
+                limit=limit,
+            )
         )
+        if (
+            self._projection_reader is not None
+            and self._projection_source is not None
+        ):
+            query_tokens = set(lexical_tokens(current_context or ""))
+            for view in self._projection_reader.query(current_context):
+                memory_ids: set[str] = set()
+                source_refs: set[str] = set()
+                valid = True
+                for source_id in view.supporting_source_refs:
+                    try:
+                        memory_ids.update(
+                            self._projection_source.memory_ids_for_source(
+                                source_id
+                            )
+                        )
+                        source_refs.update(
+                            self._projection_source.original_source_refs(
+                                source_id
+                            )
+                        )
+                    except KeyError:
+                        valid = False
+                        break
+                if not valid or not memory_ids:
+                    continue
+                if query_tokens:
+                    overlap = len(
+                        query_tokens & set(lexical_tokens(view.content))
+                    )
+                    relevance = overlap / len(query_tokens)
+                else:
+                    relevance = 1.0
+                items.append(
+                    LceAcceptedUnderstanding(
+                        content=view.content,
+                        baseline_id=view.baseline_id,
+                        region_id=view.region_id,
+                        revision_number=view.revision_number,
+                        supporting_memory_ids=tuple(sorted(memory_ids)),
+                        source_refs=tuple(sorted(source_refs)),
+                        relevance=min(1.0, relevance),
+                    )
+                )
+        by_id = {item.baseline_id: item for item in items}
+        ordered = sorted(
+            by_id.values(),
+            key=lambda item: (
+                -item.relevance,
+                item.region_id,
+                -item.revision_number,
+            ),
+        )
+        return tuple(ordered[:limit])
 
     def close(self) -> None:
+        if self._projection_substrate is not None:
+            self._projection_substrate.close()
         self._store.close()
 
     def __enter__(self) -> LceReadSession:
@@ -602,6 +673,32 @@ def _scope_lce_root(adapter: MrMemorySubstrateAdapter) -> Path:
     return adapter._paths.lce_root / scope_address
 
 
+def _scope_lce_baseline_root(adapter: MrMemorySubstrateAdapter) -> Path:
+    """Current shared Baseline root for Thread and latent-discovery paths."""
+    return _scope_lce_root(adapter) / "baselines"
+
+
+def _scope_lce_worktree_root(adapter: MrMemorySubstrateAdapter) -> Path:
+    return _scope_lce_root(adapter) / "worktrees"
+
+
+def _ensure_current_lce_layout(adapter: MrMemorySubstrateAdapter) -> None:
+    """Migrate the pre-Path-B Baseline DB into the shared current layout once.
+
+    The old file is retained as a backup. After the current file exists all
+    writers use only the new layout, so an old deployment cannot be treated as
+    an independent second cognition authority.
+    """
+    scope_root = _scope_lce_root(adapter)
+    legacy = scope_root / "lce_baselines.sqlite"
+    current_root = _scope_lce_baseline_root(adapter)
+    current = current_root / "lce_baselines.sqlite"
+    if current.exists() or not legacy.exists():
+        return
+    current_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(legacy, current)
+
+
 def open_lce_thread_handoff(
     binding: RuntimeBinding,
     scope: Scope,
@@ -624,10 +721,16 @@ def open_lce_thread_handoff(
     _verify_binding(binding, adapter._paths)
     CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
     try:
+        from lce.cognition.worktree import CognitionWorktreeStore
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
-    return LceThreadHandoffSession(adapter, SqliteBaselineStore(_scope_lce_root(adapter)))
+    _ensure_current_lce_layout(adapter)
+    return LceThreadHandoffSession(
+        adapter,
+        SqliteBaselineStore(_scope_lce_baseline_root(adapter)),
+        CognitionWorktreeStore(_scope_lce_worktree_root(adapter)),
+    )
 
 
 def open_lce_read_binding(
@@ -651,15 +754,69 @@ def open_lce_read_binding(
     )
     _verify_binding(binding, adapter._paths)
     CanonicalMemoryStore(adapter._paths.memory_db, read_only=True).close()
-    root = _scope_lce_root(adapter)
-    db_path = root / "lce_baselines.sqlite"
-    if not db_path.exists():
+    current_root = _scope_lce_baseline_root(adapter)
+    current_db = current_root / "lce_baselines.sqlite"
+    legacy_root = _scope_lce_root(adapter)
+    legacy_db = legacy_root / "lce_baselines.sqlite"
+    if current_db.exists():
+        root = current_root
+    elif legacy_db.exists():
+        # Read-only compatibility for a pre-Path-B deployment. A write-capable
+        # session performs the one-time migration.
+        root = legacy_root
+    else:
         return None
     try:
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the current optional lce-core package") from exc
-    return LceReadSession(adapter, SqliteBaselineStore(root))
+
+    store = SqliteBaselineStore(root)
+    projection_reader = None
+    projection_substrate = None
+    projection_source = None
+    projection_db = (
+        _scope_lce_root(adapter)
+        / "projection_state"
+        / "projection_state.sqlite"
+    )
+    if root == current_root and projection_db.exists():
+        try:
+            from lce.read_api import AcceptedUnderstandingReadAPI
+            from lce.reference_memory.composite import ProjectionSubstrate
+            from lce.reference_memory.projection_state import (
+                SqliteProjectionStateStore,
+            )
+
+            from mind_runtime.integrations.lce_projection import (
+                MrLceCanonicalSourceAdapter,
+            )
+        except ImportError as exc:
+            store.close()
+            raise LceIntegrationUnavailable(
+                "install the current optional lce-core package"
+            ) from exc
+        projection_source = MrLceCanonicalSourceAdapter(adapter)
+        state = SqliteProjectionStateStore(
+            _scope_lce_root(adapter) / "projection_state"
+        )
+        projection_substrate = ProjectionSubstrate(
+            projection_source,
+            state,
+            close_source=False,
+            close_state=True,
+        )
+        projection_reader = AcceptedUnderstandingReadAPI(
+            memory=projection_substrate,
+            baseline_store=store,
+        )
+    return LceReadSession(
+        adapter,
+        store,
+        projection_reader,
+        projection_substrate,
+        projection_source,
+    )
 
 
 def open_lce_binding(
@@ -692,7 +849,8 @@ def open_lce_binding(
         from lce.store.sqlite_store import SqliteBaselineStore
     except ImportError as exc:
         raise LceIntegrationUnavailable("install the frozen optional lce-core package") from exc
-    store = SqliteBaselineStore(_scope_lce_root(adapter))
+    _ensure_current_lce_layout(adapter)
+    store = SqliteBaselineStore(_scope_lce_baseline_root(adapter))
     try:
         core = LceCore(memory_substrate=adapter, baseline_store=store, consolidator=consolidator)
         return LceBindingSession(_GenericLceCore(core), store, adapter)

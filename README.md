@@ -100,8 +100,8 @@ and canonical Memory support retain the durable trace.
 Failed or disabled compilation leaves the Thread intact and never rolls back
 canonical Memory.
 
-Unstructured history remains available for future idle/sleep/dream LCE
-discovery. The same historical-context composition is the single outward read
+Unstructured history is now available to the bound LCE Path B runtime for
+nearline or future idle/sleep/dream discovery. The same historical-context composition is the single outward read
 boundary: it prefers accepted Baselines, may expose at most a bounded relevant
 active Thread projection, then fills remaining budget with canonical Memory
 detail. Raw Evidence/source text is retained primarily for provenance,
@@ -137,10 +137,10 @@ It is read-only with respect to MR state: the UI/query layer does not become ano
 MR has an optional LCE integration under `src/mind_runtime/integrations/lce.py`.
 LCE remains a separate repository and is not vendored into MR Core.
 
-The integration keeps canonical Memory authority in MR while supporting three
-bounded operations: explicit-ID LCE Core consolidation, no-model compilation of
-a mature Thread's already-reasoned working structure, and readback of accepted
-Baseline cognition into HistoricalContext. When production LCE composition is
+The integration keeps canonical Memory authority in MR while supporting
+explicit-ID Core consolidation, no-model mature-Thread compilation through
+LCE's current draft lineage, latent Path B projection over a read-only canonical
+Memory source adapter, and accepted-cognition readback into HistoricalContext. When production LCE composition is
 enabled, the normal post-commit Thread path performs that compilation
 automatically and retires the lower-level Thread projection after Baseline
 acceptance.
@@ -149,10 +149,11 @@ Accepted cognition is preferred over ordinary Memory retrieval inside the same
 bounded history budget, so previously compiled longitudinal logic does not need
 to be reconstructed every turn.
 
-The full standalone LCE V1 discovery runtime is not copied into MR because its
-standalone Reference Memory owns source evidence as well as derived cognition.
-Any future latent-discovery binding must keep MR as the sole factual substrate
-and LCE storage derived-only. See ADR-0026.
+LCE remains separately installed rather than vendored. Its current external
+projection seam lets MR supply canonical Memory as the sole factual source while
+LCE persists only derived Semantic Blocks, vectors, Lines, authority signals,
+Worktrees and Baselines. Path B therefore reuses the current LCE algorithms
+without creating a second factual database. See ADR-0026 and ADR-0033.
 
 ## Verified status
 
@@ -163,7 +164,7 @@ The current public repository separates deterministic/local verification from cl
 | Persistent state, bindings, commit/abort, restart recovery | Implemented and regression-tested | `src/mind_runtime/`, `tests/`, restart validation |
 | Deterministic certification | Implemented | `certification/`, validation tests, current CI |
 | Observation Window | Implemented as a read-only inspection surface | `src/observation_window/` |
-| Layered Memory projections / LCE integration | Canonical-Memory binding, automatic mature-Thread projection upgrade when enabled, accepted-cognition readback | `src/mind_runtime/memory/`, `src/mind_runtime/integrations/lce.py`, ADR-0033 |
+| Layered Memory projections / LCE integration | Canonical-Memory authority, mature-Thread Path A upgrade, external-source Path B with decentralized evidence convergence, combined accepted-cognition readback | `src/mind_runtime/memory/`, `src/mind_runtime/integrations/lce*.py`, ADR-0033 |
 | Live shadow validation | Incomplete / externally blocked | certification and architecture records |
 | General-purpose longitudinal cognition inside MR | Not a product claim | longitudinal research remains separate or bounded |
 

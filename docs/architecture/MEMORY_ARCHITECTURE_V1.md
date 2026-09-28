@@ -680,22 +680,33 @@ This section distinguishes architecture from implementation.
   through Path A. An accepted Baseline deletes the temporary Thread projection,
   so the same logical product is not maintained in both layers. Failed or
   disabled compilation leaves the Thread intact and never rolls back Memory.
-- LCE standalone V1 still owns its latent Semantic Block -> structure ->
-  Worktree -> Baseline research/runtime path.
-- MR exposes a bounded read-only temporal view for LCE Path B. Evidence/source
-  chronology remains separate from proposition-valid Reality time, and multiple
-  Reality Observations remain separate rather than being collapsed.
-- Path B can inject that MR-authoritative temporal view through the existing LCE
-  consolidator context without copying canonical Memory into an LCE factual store.
+- current LCE Path B is now composed directly over MR canonical Memory through
+  LCE's external-source projection seam. MR supplies a read-only canonical
+  source adapter; LCE owns only derived Semantic Blocks, vectors, structures,
+  Lines, authority signals, Worktrees and Baselines.
+- Memory rows emitted from one admitted interaction are grouped into one Path B
+  Raw-Evidence authority unit. Extraction fanout therefore cannot become
+  multiple independent votes in LCE's decentralized convergence algorithm.
+- LCE's current authority rule is preserved in embedded mode: similarity/local
+  geometry proposes candidates, while Raw-grounded multidimensional convergence
+  authorizes persistent Line identity. Derived repetitions do not create factual
+  support and unresolved tradeoffs remain UNKNOWN.
+- MR's bounded temporal information remains source metadata rather than a second
+  proposition store. Source chronology and proposition-valid Reality time stay
+  distinct, and multiple Reality Observations remain separate.
+- Path A and Path B now share the same per-Scope Baseline store and accepted
+  read boundary. Path A support is canonical Memory IDs; Path B support closes
+  through Semantic Blocks to grouped MR source IDs and is translated back to
+  canonical Memory/Evidence provenance on MR readback.
 
 ### Current implementation gaps relative to this frozen design
 
-1. **Autonomous latent-discovery scheduling remains separate from the production read seam.**  
-   MR now supplies canonical Memory plus authoritative temporal context to the
-   LCE consolidator without a second factual store. What remains optional is
-   when/how an idle or nearline policy chooses unstructured Memory
-   neighborhoods; that scheduler is not a correctness requirement and does
-   not change factual authority.
+1. **Autonomous latent-discovery scheduling remains a policy, not an algorithm gap.**  
+   The current Path B runtime is bound and can process all canonical Memory in
+   batch or selected newly admitted Memory nearline. What remains optional is
+   when an idle/sleep/dream scheduler invokes the slow bootstrap or chooses a
+   subset for catch-up. That scheduling choice does not change factual
+   authority.
 
 2. **Accepted cognition serving remains opt-in.**  
    `build_memory_history(..., lce_enabled=True)` prefers applicable accepted

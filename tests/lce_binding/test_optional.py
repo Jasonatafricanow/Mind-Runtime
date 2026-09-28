@@ -102,6 +102,7 @@ sys.path.insert(0, sys.argv[3])
 from mind_runtime.integrations.lce import (
     open_lce_binding, open_lce_read_binding, open_lce_thread_handoff,
 )
+from mind_runtime.integrations.lce_projection import open_lce_projection_binding
 from mind_runtime.runtime_binding import production_binding
 from mind_runtime.contracts import Scope, ScopeDomain
 root = Path(sys.argv[2])
@@ -114,6 +115,9 @@ assert open_lce_thread_handoff(
     binding, scope, production_root=root/'prod', lab_root=root/'lab'
 ) is None
 assert open_lce_read_binding(
+    binding, scope, production_root=root/'prod', lab_root=root/'lab'
+) is None
+assert open_lce_projection_binding(
     binding, scope, production_root=root/'prod', lab_root=root/'lab'
 ) is None
 assert not root.exists()
