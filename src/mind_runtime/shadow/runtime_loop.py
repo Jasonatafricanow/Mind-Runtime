@@ -44,6 +44,7 @@ from mind_runtime.cognition import (
     CognitiveTickConfig,
     CognitiveTicker,
     CognitiveTickReport,
+    TICK_INTERACTION_PREFIX,
 )
 from mind_runtime.contracts import Scope, ScopeDomain
 from mind_runtime.contracts.surface import SurfaceProjectionPort
