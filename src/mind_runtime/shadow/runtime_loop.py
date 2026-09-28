@@ -44,6 +44,7 @@ from mind_runtime.cognition import (
     CognitiveTickConfig,
     CognitiveTicker,
     CognitiveTickReport,
+    InspirationMaterialQueue,
     TICK_INTERACTION_PREFIX,
 )
 from mind_runtime.contracts import Scope, ScopeDomain
@@ -524,7 +525,7 @@ def build_cognitive_components(
     policy_resources: tuple[str, ...] | None,
     intent_db: str | Path | None,
     cognitive_tick_config: CognitiveTickConfig | None = None,
-    inspiration_worker: object | None = None,
+    inspiration_worker: InspirationMaterialQueue | None = None,
 ) -> dict[str, object]:
     """Wire the real Intent/Policy authorities for the cognitive tick.
 
