@@ -395,6 +395,10 @@ class LceProjectionSession:
     def db_path(self) -> Path:
         return Path(self.core.baselines.db_path)
 
+    def canonical_memory_ids(self) -> tuple[str, ...]:
+        """Current ACTIVE canonical Memory IDs visible to the LCE source."""
+        return self._source.current_memory_ids()
+
     def sync_all(self) -> tuple[ProcessResult, ...]:
         """Compile every current canonical source; replay is idempotent."""
         return cast(
