@@ -1,67 +1,105 @@
-# D11L Entry Requirements
+# D11L Entry Requirements — Superseded
 
-- **Date:** 2026-08-24
-- **Authority:**
-  `docs/superpowers/specs/2026-08-23-d11s-deterministic-certification-and-d11l-entry-design.md`
-  and `docs/adr/0008-split-d11-certification-and-live-shadow.md`
-- **Produced by:** D11S.7
-- **Current status:** `D11L: BLOCKED_BY_EXTERNAL_ENVIRONMENT`
+- **Original date:** 2026-08-24
+- **Superseded:** 2026-09-29
+- **Current authority:** `docs/adr/0035-rescope-d11l-host-live-path-validation.md`
+- **Historical authority:** ADR-0008 and the original D11S/D11L design
+- **Current status:** legacy eleven-field gate retired
 
-## Purpose and boundary
+## Why this document was superseded
 
-This document records the evidence that a separately reviewed D11L design must
-provide before live shadow validation can begin. It does not create a host
-adapter, authorize traffic, name owners who have not accepted responsibility,
-or treat repository simulations as operational evidence.
+This file originally defined D11L as an eleven-field production-entry gate
+because MR had no real host integration. It required a Kayla host, formal
+traffic sampling, wall-clock observation, privacy/retention governance,
+kill-switch ownership, rollback exercises, release thresholds, and model-drift
+handling before any live validation could begin.
 
-D11S fixed-clock certification may establish `READY FOR D11L: YES` only as
-readiness to enter the D11L design and environment gate. It does not mean that
-D11L execution is currently possible. D11 remains incomplete, live shadow
-validation has not been performed, and D11P remains unauthorized.
+That boundary is now stale.
 
-## Mandatory entry fields
+MR is currently integrated with the xiyue/Hermes gateway. The old checklist
+therefore mixes together:
 
-| # | Mandatory field | Current availability | Required owner or authority | Required admissible evidence | Fail-closed behavior |
-|---:|---|---|---|---|---|
-| 1 | Real Kayla host and deployment boundary | **Unavailable.** No real Kayla host or deployable boundary is identified in repository evidence. | A host/platform owner must accept the named runtime, environment, deployment unit, and isolation boundary. | Reviewed host inventory, deployment topology, environment identity, and access boundary from the real operating environment. | No host adapter, shadow connection, or traffic may be enabled. |
-| 2 | Eligible traffic and exclusions | **Unavailable.** No real interaction population, eligibility rule, or exclusion list is approved. | Product, safety, and host owners must jointly approve eligibility and exclusions. | Executable traffic definition tied to real host fields, explicit exclusions, and validation samples from the named environment. | Treat all traffic as ineligible. |
-| 3 | Feature flag owner and default-OFF behavior | **Unavailable.** No exact flag, owner, scope, or default is approved. | A named operational flag owner with authority over the real host must accept responsibility. | Flag definition, default-OFF proof, scope rules, authorization path, audit trail, and negative test from the real environment. | The feature remains OFF; absence or ambiguity is OFF, never implicit enablement. |
-| 4 | Phase transitions | **Unavailable.** Shadow, context-assist, and controlled-takeover entry/exit transitions are not designed or approved. | A named D11L release authority plus safety owner must approve every phase transition. | Separately reviewed state machine with prerequisites, approvals, rollback edges, and evidence required for each transition. | Remain outside D11L; no later phase may be inferred from elapsed time or partial success. |
-| 5 | Sampling method and minimum sample | **Unavailable.** No population method, stratification, exclusion handling, or minimum sample exists. | A named experiment/measurement owner and safety reviewer must approve the method. | Sampling specification tied to eligible traffic, bias analysis, minimum sample calculation, and reproducible selection audit. | No acceptance rate or safety conclusion may be calculated or claimed. |
-| 6 | Wall-clock observation duration | **Unavailable.** Fixed-clock 30/90-day simulation is not real elapsed observation time. | A named D11L measurement owner must approve start/stop criteria and minimum duration. | Timestamped evidence from the real host covering the approved continuous or cumulative wall-clock window and interruptions. | Report `LIVE SHADOW VALIDATION: NOT PERFORMED`; never convert virtual days into operating days. |
-| 7 | Privacy classification, redaction, and retention | **Unavailable.** No field-level live-traffic classification, redaction policy, or trace-retention schedule is approved. | Named privacy/security/data-governance owners must approve classification and handling. | Field inventory, classification, collection purpose, redaction tests, access controls, retention/deletion rules, and compliance approval. | Collect and retain no live D11L traces. |
-| 8 | Kill switch owner, latency, and test | **Unavailable.** No owner, maximum activation latency, mechanism, or real-environment exercise is approved. | A named 24/7 operational owner with authority to disable the feature must accept responsibility. | Kill-switch implementation identity, alert/runbook, maximum latency SLO, authorization path, and timed real-environment exercise. | D11L cannot start; an untested or ownerless kill switch is equivalent to no kill switch. |
-| 9 | Rollback owner, target, and recovery verification | **Unavailable.** No rollback owner, known-good target, restoration objective, or recovery test exists. | A named release/operations owner must own rollback execution and verification. | Immutable rollback target, dependency/data compatibility analysis, runbook, recovery objectives, and successful real-environment rollback/recovery exercise. | No deployment or traffic transition may occur. |
-| 10 | Acceptance, pause, abort, and incident thresholds | **Unavailable.** No operational metric definitions or numeric thresholds are approved. | Named safety, product, and incident authorities must approve thresholds and escalation ownership. | Exact metrics, denominators, windows, minimum samples, acceptance/pause/abort values, incident classes, alert routes, and decision authority. | Any missing metric, denominator, or threshold blocks progression; safety uncertainty pauses/aborts rather than passes. |
-| 11 | Model/provider versions and drift handling | **Unavailable.**（注：owner 嘉森已于 2026-08-26 认领并拍板允许切换不冻结——决策记录见 `2026-08-26-d11l-entry-claims-accepted.md`；本字段在证据完备前保持 Unavailable，反映"未满足"而非"未认领"。） | Named model/platform and D11L safety owners must own version changes and drift decisions. | Exact provider/model/version/config identity, monitoring signals, drift thresholds, freeze/re-certification rules, and tested fallback behavior. | Unidentified or changed model/provider state blocks or pauses D11L until separately reviewed and re-certified as required. |
+- MR core readiness;
+- host integration readiness;
+- live end-to-end verification;
+- broader production rollout governance.
 
-## Evidence admission rules
+ADR-0035 separates those claims. The eleven-row checklist below is no longer
+an active blocker and must not be used to conclude that MR core closure is
+incomplete.
 
-- Synthetic traffic, scripted providers, local fixtures, Golden scenarios, and
-  fixed-clock certification cannot fill any field above.
-- A repository path, planned owner, or proposed threshold is not evidence of
-  real-environment availability or operational acceptance.
-- Every owner must be a named authority who has accepted the duty; ownership is
-  not inferred from code authorship or component maintainership.
-- Evidence must identify the real host/environment, collection time, source,
-  version, approval, and integrity reference. Missing lineage is unavailable.
-- Partial completion of a row leaves that row unavailable. Completion of ten
-  rows cannot compensate for one missing mandatory row.
+## Current D11L contract
 
-## Required next decision
+D11L now means **real host live-path validation** for a named integration.
 
-All eleven mandatory fields are currently unavailable. D11L execution must not
-begin, no live traffic may be admitted, and no shadow-validation claim may be
-emitted.
+For the current xiyue/Hermes profile, the minimum live evidence is:
+
+| Check | Required evidence | Current state at `89ed89b` |
+|---|---|---|
+| Host binding | xiyue/Hermes gateway is bound to the intended MR revision and enable state | **READY** |
+| Real E2E round trip | real account message enters xiyue, MR participates, Body/model responds, reply is delivered to the same account | **NOT YET VERIFIED** |
+| Readiness recovery | healthy MR + OW => READY; OW loss => DEGRADED; OW recovery => READY | **VERIFIED** |
+| Restart/autostart | supported restart brings MR-side services back and restores READY without waiting for a first chat | **NOT YET VERIFIED** |
+| Fail-closed bypass | disabled MR does not construct/partially activate an adapter; enabled-path startup failure cannot claim READY | **VERIFIED BY INTEGRATION/TEST EVIDENCE** |
+
+Repository fixtures, scripted providers, and deterministic simulations may
+support these checks but cannot substitute for the real E2E or restart checks.
+
+## Status vocabulary
+
+Status reports should publish the axes separately:
+
+```text
+MR core readiness:              READY | DEGRADED | NOT READY
+host integration readiness:     READY | DEGRADED | NOT READY
+real E2E live-path verification: VERIFIED | NOT VERIFIED
+restart/autostart verification: VERIFIED | NOT VERIFIED
+long-run production proof:      CLAIMED | NOT CLAIMED
+```
+
+Do not collapse these into the legacy statement:
 
 ```text
 D11L: BLOCKED_BY_EXTERNAL_ENVIRONMENT
-LIVE SHADOW VALIDATION: NOT PERFORMED
 D11: INCOMPLETE
 READY FOR D11P: NO
 ```
 
-Later availability requires a separately reviewed D11L design revision that
-replaces each unavailable entry with admissible external evidence and records
-the named approving owner. This document is a current fail-closed entry
-package, not a promise that those prerequisites will become available.
+unless a specific historical D11 release plan explicitly chooses to use that
+old phase model.
+
+## Evidence rules that still apply
+
+The important anti-overclaim rule is retained:
+
+- fixed-clock 30/90-day simulation is not wall-clock production operation;
+- synthetic traffic is not a real user round trip;
+- a READY health endpoint is not proof that a message completed the full path;
+- tests must not self-authorize a live-validation claim;
+- evidence should identify the host, revision, time, and relevant readiness
+  transitions without retaining message content unnecessarily.
+
+## Broader rollout governance
+
+The following items from the original checklist remain useful when a deployment
+actually needs them, but they are deployment-profile requirements rather than
+universal D11L prerequisites:
+
+- traffic eligibility, exclusions, sampling, and minimum sample;
+- prolonged wall-clock observation;
+- privacy classification, redaction, and trace retention;
+- formal kill-switch ownership and activation SLO;
+- rollback target and recovery exercise;
+- acceptance/pause/abort thresholds and incident routing;
+- provider/model drift policy.
+
+A broader release plan may require all or some of them. Their absence does not,
+by itself, make the MR core or a controlled single-owner host integration
+architecturally incomplete.
+
+## Historical note
+
+The original eleven-field table is intentionally not preserved as an active
+checklist in this file. Git history retains it at the pre-ADR-0035 revision.
+Use that historical revision only when auditing the August 2026 Product Slice
+decision process.
