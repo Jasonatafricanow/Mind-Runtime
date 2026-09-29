@@ -121,6 +121,24 @@ class TestGatewayEpochOwnership:
 class TestIngressAdmissionAndBacklogGating:
     """Requirements B, C, D: Fail-closed on xiyue, backlog quarantine before begin_turn."""
 
+    def test_foreign_ready_epoch_cannot_admit_a_turn(self, isolated_readiness_env):
+        mr_seam.begin_runtime_epoch(pid=os.getpid(), started_at="2026-09-05T12:00:00+00:00")
+        record = mr_seam.load_readiness()
+        record.update(
+            epoch_id="epoch-foreign",
+            gateway_pid=99999,
+            core_ready=True,
+            bundle_state="READY",
+            runtime_ready_at="2026-09-05T12:01:00+00:00",
+        )
+        mr_seam.save_readiness(record)
+
+        verdict = mr_seam.check_ingress_admission("xiyue", None)
+
+        assert not verdict.admitted
+        assert verdict.status == "NOT_READY"
+        assert "epoch" in verdict.reason
+
     def test_disabled_mr_leaves_hermes_conversation_admitted(
         self, isolated_readiness_env, monkeypatch
     ):

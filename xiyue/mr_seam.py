@@ -33,6 +33,7 @@ _ADAPTER_PATH = None
 
 _RUNTIME_DIR = Path.home() / ".hermes" / "profiles" / "xiyue" / "runtime"
 _DEFAULT_READINESS_FILE = _RUNTIME_DIR / "readiness.json"
+_active_gateway_epoch: tuple[str, int, str] | None = None
 
 
 def _env_enabled(name: str) -> bool:
@@ -45,6 +46,16 @@ def get_readiness_file_path() -> Path:
     if override:
         return Path(override)
     return _DEFAULT_READINESS_FILE
+
+
+def _owns_readiness_epoch(data: dict[str, Any]) -> bool:
+    """Only this gateway process's startup epoch may authorize ingress."""
+    expected = _active_gateway_epoch
+    return expected is not None and (
+        data.get("epoch_id"),
+        data.get("gateway_pid"),
+        data.get("gateway_started_at"),
+    ) == expected
 
 
 _TRACE_JOURNAL = None
@@ -390,6 +401,7 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
     GATEWAY OWNED: Only called by the real gateway process startup hook
     (or explicit test fixtures). Non-gateway processes must never call this.
     """
+    global _active_gateway_epoch
     cur_pid, cur_started = get_gateway_process_identity()
     target_pid = pid if pid is not None else cur_pid
     target_started = started_at if started_at is not None else cur_started
@@ -421,6 +433,7 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
         "reasons": ["epoch_initialized"],
     }
     save_readiness(record)
+    _active_gateway_epoch = (epoch_id, target_pid, target_started)
     return record
 
 
@@ -623,7 +636,9 @@ def mark_runtime_ready(
     file_pid = current.get("gateway_pid")
 
     # If epoch does not belong to cur_pid, reject write from foreign process
-    if not _allow_test_write and (file_pid is None or file_pid != cur_pid):
+    if not _allow_test_write and (
+        file_pid is None or file_pid != cur_pid or not _owns_readiness_epoch(current)
+    ):
         _logger.debug(
             "mark_runtime_ready called from PID %s but epoch belongs to PID %s; write ignored",
             cur_pid,
@@ -687,7 +702,7 @@ def _bundle_reconciliation_loop(
     """Continuously reconcile OW health from the Gateway-owned process."""
     while not stop_event.is_set():
         current = load_readiness()
-        if current.get("gateway_pid") != os.getpid():
+        if current.get("gateway_pid") != os.getpid() or not _owns_readiness_epoch(current):
             return
         try:
             reconcile_bundle_readiness(adapter=adapter, ow_port=ow_port)
@@ -767,6 +782,13 @@ def check_ingress_admission(
         return IngressVerdict(admitted=True, status="DISABLED", reason="mr_disabled")
 
     ready_data = load_readiness()
+    if not _owns_readiness_epoch(ready_data):
+        return IngressVerdict(
+            admitted=False,
+            status="NOT_READY",
+            reason="readiness_epoch_mismatch",
+            error_message="Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
+        )
     if not ready_data.get("core_ready", False):
         return IngressVerdict(
             admitted=False,
