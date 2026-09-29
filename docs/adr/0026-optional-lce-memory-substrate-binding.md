@@ -156,10 +156,10 @@ Automatic Thread opening/maturity policy and full latent-discovery scheduling
 remain separate product work. The presence of this adapter does not claim that
 general-purpose longitudinal cognition is solved.
 
-## 2026-09-28 current-LCE implementation addendum
+## 2026-09-29 current-LCE implementation addendum
 The original compatibility pin above is preserved as historical binding
 authority. MR now verifies the current LCE revision
-`aff149256bc6b8323a795c8811bb877356baaa2c` in CI.
+`863b0cfd36a2dc9e51aa8e15e1f682aca7220ef4` in CI.
 
 The factual authority decision is unchanged: MR canonical Memory remains the
 source and LCE remains derived cognition only. The newer LCE external-source
