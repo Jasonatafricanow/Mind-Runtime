@@ -35,6 +35,7 @@ def isolated_readiness_env(monkeypatch, tmp_path):
     """Set up an isolated readiness file in a temporary directory."""
     rf = tmp_path / "readiness.json"
     monkeypatch.setenv("MR_READINESS_PATH", str(rf))
+    monkeypatch.setenv("MR_ENABLED", "true")
     return rf
 
 
@@ -119,6 +120,45 @@ class TestGatewayEpochOwnership:
 
 class TestIngressAdmissionAndBacklogGating:
     """Requirements B, C, D: Fail-closed on xiyue, backlog quarantine before begin_turn."""
+
+    def test_foreign_ready_epoch_cannot_admit_a_turn(self, isolated_readiness_env):
+        mr_seam.begin_runtime_epoch(pid=os.getpid(), started_at="2026-09-05T12:00:00+00:00")
+        record = mr_seam.load_readiness()
+        record.update(
+            epoch_id="epoch-foreign",
+            gateway_pid=99999,
+            core_ready=True,
+            bundle_state="READY",
+            runtime_ready_at="2026-09-05T12:01:00+00:00",
+        )
+        mr_seam.save_readiness(record)
+
+        verdict = mr_seam.check_ingress_admission("xiyue", None)
+
+        assert not verdict.admitted
+        assert verdict.status == "NOT_READY"
+        assert "epoch" in verdict.reason
+
+    def test_disabled_mr_leaves_hermes_conversation_admitted(
+        self, isolated_readiness_env, monkeypatch
+    ):
+        monkeypatch.setenv("MR_ENABLED", "false")
+
+        def unexpected_adapter():
+            raise AssertionError("Disabled MR must not construct an adapter")
+
+        monkeypatch.setattr(mr_seam, "get_mr_adapter", unexpected_adapter)
+        handle, verdict = mr_seam.begin_turn_clean(
+            message="hello",
+            channel="telegram",
+            session_id="disabled-mr",
+            profile="xiyue",
+        )
+
+        assert handle is None
+        assert verdict.admitted
+        assert verdict.status == "DISABLED"
+        assert not isolated_readiness_env.exists()
 
     def test_not_ready_fails_closed_for_profile_xiyue(self, isolated_readiness_env):
         # Epoch initialized as NOT_READY
