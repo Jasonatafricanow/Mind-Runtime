@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -128,3 +129,15 @@ def create_app(
         }
 
     return app
+
+
+
+def create_app_from_env() -> FastAPI:
+    from mind_runtime.competition.aml.profile import (
+        build_runtime_from_env,
+    )
+
+    return create_app(
+        build_runtime_from_env(),
+        auth_token=os.environ.get("AML_AUTH_TOKEN"),
+    )
