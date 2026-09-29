@@ -387,6 +387,7 @@ class AmlCompetitionRuntime:
             canonical=canonical,
             product=product,
             projection_compiler=compiler,
+            decision=self._decision,
         )
         visible: list[AmlMessage] = []
         try:
