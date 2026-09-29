@@ -323,7 +323,7 @@ def render_bounded(bounded) -> str | None:
 @dataclass(frozen=True)
 class IngressVerdict:
     admitted: bool
-    status: str  # "READY" | "NOT_READY" | "PRE_READY_BACKLOG" | "FAILED"
+    status: str  # "DISABLED" | "READY" | "NOT_READY" | "PRE_READY_BACKLOG" | "FAILED"
     reason: str
     error_message: str | None = None
 
@@ -763,6 +763,8 @@ def check_ingress_admission(
     """Pre-turn gating executed strictly before adapter.begin_turn()."""
     if profile != "xiyue":
         return IngressVerdict(admitted=True, status="READY", reason="non_xiyue_profile")
+    if not _env_enabled("MR_ENABLED"):
+        return IngressVerdict(admitted=True, status="DISABLED", reason="mr_disabled")
 
     ready_data = load_readiness()
     if not ready_data.get("core_ready", False):
@@ -812,6 +814,8 @@ def begin_turn_clean(
     """
     verdict = check_ingress_admission(profile=profile, source_occurred_at=occurred_at)
     if not verdict.admitted:
+        return None, verdict
+    if verdict.status == "DISABLED":
         return None, verdict
 
     adapter = get_mr_adapter()
