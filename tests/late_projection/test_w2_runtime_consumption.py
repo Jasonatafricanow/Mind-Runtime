@@ -965,3 +965,72 @@ def test_w2_10_legacy_independent_slow_deny_commits_fast_only(tmp_path):
     assert backend.get_application_receipt(receipt_id).status is ApplicationStatus.COMMITTED
     journal.close()
     backend.close()
+
+
+def test_post_commit_publication_failure_without_backend_is_not_durable(
+    monkeypatch,
+) -> None:
+    orchestrator = TurnOrchestrator(
+        clock=FakeClock(NOW),
+        trace=TraceRecorder(),
+    )
+    orchestrator.begin_turn(interaction())
+    orchestrator.ingest(typed_evidence())
+    orchestrator.run()
+    canonical_before = orchestrator.canonical
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected in-memory publication failure")
+
+    monkeypatch.setattr(
+        TurnOrchestrator,
+        "_publish_committed_states",
+        fail,
+    )
+    with pytest.raises(
+        CanonicalPersistenceError,
+        match="in-memory canonical publication failed",
+    ):
+        orchestrator.commit_turn()
+
+    assert orchestrator.state is not TurnState.COMMITTED
+    assert orchestrator.canonical == canonical_before
+
+
+def test_post_commit_reload_failure_is_distinct_from_durable_commit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    orchestrator, backend, journal = _production_stack(tmp_path)
+    orchestrator.begin_turn(interaction())
+    orchestrator.ingest(typed_evidence())
+    orchestrator.run()
+
+    def fail_publish(*args, **kwargs):
+        raise RuntimeError("injected publication failure")
+
+    def fail_reload(*args, **kwargs):
+        raise RuntimeError("injected reload failure")
+
+    monkeypatch.setattr(
+        TurnOrchestrator,
+        "_publish_committed_states",
+        fail_publish,
+    )
+    monkeypatch.setattr(
+        TurnOrchestrator,
+        "_refresh_canonical_from_backend",
+        fail_reload,
+    )
+
+    with pytest.raises(PostCommitPublicationError) as raised:
+        orchestrator.commit_turn()
+
+    assert raised.value.canonical_reloaded is False
+    assert orchestrator.state is TurnState.COMMITTED
+    assert orchestrator.commit_marker_store.has_commit(
+        interaction_id=interaction().interaction_id,
+        scope=interaction().scope,
+    )
+    journal.close()
+    backend.close()
