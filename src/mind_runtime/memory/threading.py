@@ -16,8 +16,8 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from mind_runtime.contracts import Scope, SemanticEventCandidate
-from mind_runtime.decision import DecisionCapability
 from mind_runtime.contracts.common import require_aware_utc
+from mind_runtime.decision import DecisionCapability
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
 from mind_runtime.memory.product import (
     MAX_THREAD_CURRENT_SUPPORT,
