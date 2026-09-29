@@ -153,33 +153,6 @@ def build_runtime_from_env() -> AmlCompetitionRuntime:
 
     lce_provider = None
     lce_interpreter = None
-    if lce_enabled:
-        lce_profile = _triplet("AML_LCE")
-        if lce_profile is not None:
-            from mind_runtime.competition.aml.lce_providers import (
-                OpenAICompatibleBoundedInterpreter,
-                OpenAICompatibleLceSemanticProvider,
-            )
-
-            endpoint, api_key, model = lce_profile
-            timeout = float(
-                os.environ.get(
-                    "AML_LCE_TIMEOUT_SECONDS",
-                    "20",
-                )
-            )
-            lce_provider = OpenAICompatibleLceSemanticProvider(
-                endpoint=endpoint,
-                api_key=api_key,
-                model=model,
-                timeout_seconds=timeout,
-            )
-            lce_interpreter = OpenAICompatibleBoundedInterpreter(
-                endpoint=endpoint,
-                api_key=api_key,
-                model=model,
-                timeout_seconds=timeout,
-            )
 
     decision = build_decision_capability(
         DecisionModelConfig(
