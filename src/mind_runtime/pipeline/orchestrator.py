@@ -1860,16 +1860,24 @@ class TurnOrchestrator:
             # exits successfully, COMMITTED is an irreversible authority fact.
             # A publication/reload problem is a degraded post-commit condition,
             # never an abortable persistence failure.
+            canonical_before_publish = dict(self._canonical)
             try:
                 self._publish_committed_states(projected_states, slow_plans)
-            except Exception as exc:
+            except Exception as publish_exc:
+                if self._state_backend is None:
+                    self._canonical = canonical_before_publish
+                    raise CanonicalPersistenceError(
+                        "in-memory canonical publication failed before "
+                        "durable admission completed"
+                    ) from publish_exc
                 self.state = TurnState.COMMITTED
                 canonical_reloaded = False
+                cause: Exception = publish_exc
                 try:
                     self._refresh_canonical_from_backend()
                     canonical_reloaded = True
                 except Exception as reload_exc:
-                    exc = reload_exc
+                    cause = reload_exc
                 self._drop_checkpoint(turn.interaction.interaction_id)
                 self._trace.record(
                     turn.interaction.interaction_id,
@@ -1895,7 +1903,7 @@ class TurnOrchestrator:
                         else "durable commit exists but canonical reload also failed"
                     ),
                     canonical_reloaded=canonical_reloaded,
-                ) from exc
+                ) from cause
 
             # Telemetry (best-effort, fail-open)
             if self._telemetry_sink is not None:
