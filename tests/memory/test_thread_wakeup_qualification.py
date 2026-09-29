@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from mind_runtime.decision import (
     DecisionAnswer,
@@ -62,7 +63,9 @@ class _OfflineBackend:
         raise DecisionModelUnavailable("offline")
 
 
-def _plane(tmp_path):
+def _plane(
+    tmp_path: Path,
+) -> tuple[CanonicalMemoryStore, MemoryProductStore]:
     path = tmp_path / "memory.sqlite"
     canonical = CanonicalMemoryStore(path)
     canonical._commit(
@@ -98,7 +101,7 @@ def _plane(tmp_path):
 
 
 def test_low_lexical_continuation_can_reuse_existing_thread(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     canonical, product = _plane(tmp_path)
     product.open_thread(
@@ -137,16 +140,16 @@ def test_low_lexical_continuation_can_reuse_existing_thread(
 
 
 def test_same_entity_distinct_intent_may_choose_none_and_open_new_thread(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     canonical, product = _plane(tmp_path)
     product.open_thread(
         thread_id="laptop-purchase",
         scope=memory().scope,
-        open_question="Will I replace my laptop?",
+        open_question="Will I buy the M4 laptop?",
         supporting_memory_ids=("m1",),
         at=NOW,
-        working_summary="A replacement purchase remains undecided.",
+        working_summary="The M4 purchase remains undecided.",
     )
     backend = _ChoiceBackend("none")
     service = ThreadAutoUpdateService(
@@ -162,8 +165,8 @@ def test_same_entity_distinct_intent_may_choose_none_and_open_new_thread(
                 candidate_id="benchmarks",
                 refs=("e3",),
                 action="track",
-                question="How does the M4 benchmark technically?",
-                summary="This is a technical benchmark investigation.",
+                question="Does the M4 benchmark affect purchase?",
+                summary="Technical benchmark comparison is a separate task.",
             ),
         ),
         at=NOW,
@@ -176,7 +179,7 @@ def test_same_entity_distinct_intent_may_choose_none_and_open_new_thread(
 
 
 def test_decision_plane_disambiguates_two_competing_threads(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     canonical, product = _plane(tmp_path)
     product.open_thread(
@@ -222,7 +225,7 @@ def test_decision_plane_disambiguates_two_competing_threads(
 
 
 def test_unavailable_decision_preserves_baseline_new_thread_behavior(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     canonical, product = _plane(tmp_path)
     product.open_thread(
