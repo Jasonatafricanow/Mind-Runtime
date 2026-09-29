@@ -31,6 +31,7 @@ from mind_runtime.contracts.host import (
     HostCommitReceipt,
     HostCommitRequest,
     HostInspectRequest,
+    HostProviderProseRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnResult,
@@ -39,6 +40,10 @@ from mind_runtime.contracts.host import (
 from mind_runtime.host import MindRuntimeHostAdapter
 from mind_runtime.pipeline.orchestrator import TurnOrchestrator, TurnState
 from mind_runtime.pipeline.trace import TraceRecorder
+from mind_runtime.state.persistence import (
+    SqliteCommitMarkerStore,
+    SqliteStateBackend,
+)
 
 NOW = datetime(2026, 8, 20, 14, 0, tzinfo=UTC)
 RUNTIME_ID = "runtime-hi1"
@@ -113,7 +118,7 @@ def test_t5_commit_promotes_projection(
     # (PROCESSING, DISPATCHING, AWAITING_COMMIT). We do not depend on which
     # specific one — only that commit() promotes to COMMITTED.
     req = HostCommitRequest(
-        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
     )
     receipt = adapter.commit_turn(req)
     assert isinstance(receipt, HostCommitReceipt)
@@ -134,7 +139,7 @@ def test_t6_abort_discards_projection(
 ) -> None:
     adapter.begin_turn(turn_request)
     req = HostAbortRequest(
-        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
     )
     receipt = adapter.abort_turn(req)
     assert isinstance(receipt, HostAbortReceipt)
@@ -152,12 +157,12 @@ def test_t6_commit_after_abort_fails(
     adapter.begin_turn(turn_request)
     adapter.abort_turn(
         HostAbortRequest(
-            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+            turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
         )
     )
     assert orchestrator.state is TurnState.ABORTED
     commit_req = HostCommitRequest(
-        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
     )
     receipt = adapter.commit_turn(commit_req)
     # Once aborted, the adapter refuses to commit. The Host gets
@@ -191,7 +196,7 @@ def test_t4_double_begin_turn_idempotent_fact_plane(
     )
     adapter.begin_turn(req)
     adapter.commit_turn(
-        HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id)
+        HostCommitRequest(turn_id=f"turn-{req.interaction_id}", interaction_id=req.interaction_id)
     )
     fake_clock.advance(timedelta(seconds=1))
     req2 = HostTurnRequest(
@@ -485,7 +490,7 @@ def test_t10_no_extra_step_calls_after_begin_turn(
     )
     adapter.begin_turn(req)
     adapter.commit_turn(
-        HostCommitRequest(turn_id=req.interaction_id, interaction_id=req.interaction_id)
+        HostCommitRequest(turn_id=f"turn-{req.interaction_id}", interaction_id=req.interaction_id)
     )
 
     # step() should have been called exactly once during begin_turn.
@@ -509,13 +514,13 @@ def test_abort_already_aborted_is_idempotent(
     adapter.begin_turn(turn_request)
     r1 = adapter.abort_turn(
         HostAbortRequest(
-            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+            turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
         )
     )
     assert r1.status is HostStatus.OK
     r2 = adapter.abort_turn(
         HostAbortRequest(
-            turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+            turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
         )
     )
     assert r2.status is HostStatus.OK
@@ -527,7 +532,7 @@ def test_commit_already_committed_is_idempotent(
 ) -> None:
     adapter.begin_turn(turn_request)
     commit_req = HostCommitRequest(
-        turn_id=turn_request.interaction_id, interaction_id=turn_request.interaction_id
+        turn_id=f"turn-{turn_request.interaction_id}", interaction_id=turn_request.interaction_id
     )
     r1 = adapter.commit_turn(commit_req)
     assert r1.status is HostStatus.OK
@@ -571,7 +576,7 @@ def test_r1_same_process_identical_replay_returns_already_processed(
     assert result1.outcome is HostStatus.OK
     adapter.commit_turn(
         HostCommitRequest(
-            turn_id=turn_request.interaction_id,
+            turn_id=f"turn-{turn_request.interaction_id}",
             interaction_id=turn_request.interaction_id,
         )
     )
@@ -590,7 +595,7 @@ def test_r2_conflicting_payload_fails_closed(
     adapter.begin_turn(turn_request)
     adapter.commit_turn(
         HostCommitRequest(
-            turn_id=turn_request.interaction_id,
+            turn_id=f"turn-{turn_request.interaction_id}",
             interaction_id=turn_request.interaction_id,
         )
     )
@@ -624,7 +629,7 @@ def test_r3_replay_does_not_rerun_cognition(
     adapter.begin_turn(turn_request)
     adapter.commit_turn(
         HostCommitRequest(
-            turn_id=turn_request.interaction_id,
+            turn_id=f"turn-{turn_request.interaction_id}",
             interaction_id=turn_request.interaction_id,
         )
     )
@@ -651,7 +656,7 @@ def test_r4_bounded_host_decision_context_returned_on_normal_turn(
     # Replay returns the same bounded_context.
     adapter.commit_turn(
         HostCommitRequest(
-            turn_id=turn_request.interaction_id,
+            turn_id=f"turn-{turn_request.interaction_id}",
             interaction_id=turn_request.interaction_id,
         )
     )
@@ -944,3 +949,564 @@ def test_host_proactive_turn_result_contract_validation_and_as_dict() -> None:
     )
     d_none = res_none.as_dict()
     assert d_none["bounded_context"] is None
+
+
+def test_late_terminal_operations_do_not_mutate_new_current_turn(
+    adapter: MindRuntimeHostAdapter,
+    user_scope: Scope,
+) -> None:
+    first = HostTurnRequest(
+        interaction_id="late-A",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW,
+        user_message="turn A",
+        channel="test",
+    )
+    a = adapter.begin_turn(first)
+    committed = adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=a.turn_id,
+            interaction_id=a.interaction_id,
+        )
+    )
+    assert committed.status is HostStatus.OK
+
+    second = HostTurnRequest(
+        interaction_id="late-B",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW + timedelta(seconds=1),
+        user_message="turn B",
+        channel="test",
+    )
+    b = adapter.begin_turn(second)
+    state_before = adapter.orchestrator.state
+    current_turn = adapter.orchestrator._require_turn()
+    assert current_turn.interaction.turn_id == b.turn_id
+
+    retry_commit = adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=a.turn_id,
+            interaction_id=a.interaction_id,
+        )
+    )
+    assert retry_commit.status is HostStatus.OK
+    assert "already_committed" in retry_commit.reason_codes
+    assert adapter.orchestrator.state is state_before
+    assert adapter.orchestrator._require_turn().interaction.turn_id == b.turn_id
+
+    late_abort = adapter.abort_turn(
+        HostAbortRequest(
+            turn_id=a.turn_id,
+            interaction_id=a.interaction_id,
+        )
+    )
+    assert late_abort.status is HostStatus.FAILED
+    assert "cannot_abort_committed" in late_abort.reason_codes
+    assert adapter.orchestrator.state is state_before
+    assert adapter.orchestrator._require_turn().interaction.turn_id == b.turn_id
+
+
+def test_wrong_turn_identity_fails_without_mutating_current_turn(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+    state_before = adapter.orchestrator.state
+
+    receipt = adapter.commit_turn(
+        HostCommitRequest(
+            turn_id="turn-not-current",
+            interaction_id="not-current",
+        )
+    )
+
+    assert receipt.status is HostStatus.FAILED
+    assert receipt.reason_codes == ("turn_identity_mismatch",)
+    assert adapter.orchestrator.state is state_before
+    assert (
+        adapter.orchestrator._require_turn().interaction.turn_id
+        == begun.turn_id
+    )
+
+
+def test_inspect_wrong_turn_identity_does_not_expose_current_refs(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    adapter.begin_turn(turn_request)
+
+    result = adapter.inspect(
+        HostInspectRequest(
+            interaction_id="other-interaction",
+            turn_id="turn-other-interaction",
+            include_trace=True,
+            include_decision_context=True,
+            include_projection=True,
+        )
+    )
+
+    assert result.turn_status is HostTurnStatus.FAILED
+    assert result.decision_context_ref is None
+    assert result.situation_ref is None
+    assert result.expression_ref is None
+    assert result.projection_ref is None
+    assert result.trace == ()
+
+
+def test_terminal_replay_rejects_runtime_or_scope_identity_change(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+    adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=begun.turn_id,
+            interaction_id=begun.interaction_id,
+        )
+    )
+
+    other_scope = Scope(
+        domain=ScopeDomain.USER,
+        user_id="different-user",
+    )
+    replay = HostTurnRequest(
+        interaction_id=turn_request.interaction_id,
+        runtime_id="different-runtime",
+        scope=other_scope,
+        occurred_at=turn_request.occurred_at,
+        user_message=turn_request.user_message,
+        channel=turn_request.channel,
+        session_id=turn_request.session_id,
+        host_metadata=turn_request.host_metadata,
+    )
+
+    result = adapter.begin_turn(replay)
+
+    assert result.status is HostTurnStatus.FAILED
+    assert result.outcome is HostStatus.FAILED
+    assert result.bounded_context is None
+    assert result.reason_codes == (
+        "interaction_id_conflict",
+        "identity_mismatch",
+    )
+
+
+def test_terminal_replay_checks_full_authoritative_payload(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+    adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=begun.turn_id,
+            interaction_id=begun.interaction_id,
+        )
+    )
+    changed_session = HostTurnRequest(
+        interaction_id=turn_request.interaction_id,
+        runtime_id=turn_request.runtime_id,
+        scope=turn_request.scope,
+        occurred_at=turn_request.occurred_at,
+        user_message=turn_request.user_message,
+        channel=turn_request.channel,
+        session_id="different-session",
+        host_metadata=turn_request.host_metadata,
+    )
+
+    result = adapter.begin_turn(changed_session)
+
+    assert result.outcome is HostStatus.FAILED
+    assert result.bounded_context is None
+    assert result.reason_codes == (
+        "interaction_id_conflict",
+        "payload_mismatch",
+    )
+
+
+def test_post_commit_publication_failure_stays_committed_and_is_degraded(
+    tmp_path,
+    trace: TraceRecorder,
+    user_scope: Scope,
+) -> None:
+    db_path = tmp_path / "post-commit.db"
+    backend = SqliteStateBackend(db_path)
+    markers = SqliteCommitMarkerStore(db_path)
+    orchestrator = TurnOrchestrator(
+        clock=FakeClock(NOW),
+        trace=trace,
+        state_backend=backend,
+        commit_markers=markers,
+    )
+    adapter = MindRuntimeHostAdapter(
+        orchestrator=orchestrator,
+        trace=trace,
+    )
+    request = HostTurnRequest(
+        interaction_id="post-commit-warning",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW,
+        user_message="durably commit me",
+        channel="test",
+    )
+    begun = adapter.begin_turn(request)
+
+    with patch.object(
+        orchestrator,
+        "_publish_committed_states",
+        side_effect=RuntimeError("publish once"),
+    ):
+        receipt = adapter.commit_turn(
+            HostCommitRequest(
+                turn_id=begun.turn_id,
+                interaction_id=begun.interaction_id,
+            )
+        )
+
+    assert receipt.status is HostStatus.DEGRADED
+    assert "projection_committed" in receipt.reason_codes
+    assert "post_commit_publication_recovered" in receipt.reason_codes
+    assert orchestrator.state is TurnState.COMMITTED
+    assert markers.has_commit(
+        interaction_id=request.interaction_id,
+        scope=request.scope,
+    )
+    assert backend.load_states()
+    with pytest.raises(RuntimeError, match="cannot abort"):
+        orchestrator.abort_turn()
+    assert orchestrator.state is TurnState.COMMITTED
+
+    host_abort = adapter.abort_turn(
+        HostAbortRequest(
+            turn_id=begun.turn_id,
+            interaction_id=begun.interaction_id,
+        )
+    )
+    assert host_abort.status is HostStatus.FAILED
+    assert "cannot_abort_committed" in host_abort.reason_codes
+    backend.close()
+
+
+def test_abort_wrong_turn_identity_fails_without_mutating_current_turn(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+    state_before = adapter.orchestrator.state
+
+    receipt = adapter.abort_turn(
+        HostAbortRequest(
+            turn_id="turn-not-current",
+            interaction_id="not-current",
+        )
+    )
+
+    assert receipt.status is HostStatus.FAILED
+    assert receipt.reason_codes == ("turn_identity_mismatch",)
+    assert adapter.orchestrator.state is state_before
+    assert (
+        adapter.orchestrator._require_turn().interaction.turn_id
+        == begun.turn_id
+    )
+
+
+def test_commit_before_begin_fails_identity_without_creating_turn(
+    adapter: MindRuntimeHostAdapter,
+) -> None:
+    receipt = adapter.commit_turn(
+        HostCommitRequest(
+            turn_id="turn-never-begun",
+            interaction_id="never-begun",
+        )
+    )
+
+    assert receipt.status is HostStatus.FAILED
+    assert receipt.reason_codes == ("turn_identity_mismatch",)
+    assert adapter.orchestrator.observations == ()
+
+
+def test_inspect_historical_terminal_does_not_read_new_current_turn(
+    adapter: MindRuntimeHostAdapter,
+    user_scope: Scope,
+) -> None:
+    first = HostTurnRequest(
+        interaction_id="inspect-history-A",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW,
+        user_message="history A",
+        channel="test",
+    )
+    a = adapter.begin_turn(first)
+    a_context = a.decision_context_ref
+    adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=a.turn_id,
+            interaction_id=a.interaction_id,
+        )
+    )
+
+    second = HostTurnRequest(
+        interaction_id="inspect-history-B",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW + timedelta(seconds=1),
+        user_message="history B",
+        channel="test",
+    )
+    b = adapter.begin_turn(second)
+    assert b.decision_context_ref != a_context
+
+    historical = adapter.inspect(
+        HostInspectRequest(
+            interaction_id=a.interaction_id,
+            turn_id=a.turn_id,
+            include_decision_context=True,
+            include_projection=True,
+        )
+    )
+
+    assert historical.turn_status is HostTurnStatus.COMMITTED
+    assert historical.turn_id == a.turn_id
+    assert historical.decision_context_ref == a_context
+    assert historical.decision_context_ref != b.decision_context_ref
+
+
+def test_post_commit_reload_failure_preserves_commit_and_requires_recovery(
+    tmp_path,
+    trace: TraceRecorder,
+    user_scope: Scope,
+) -> None:
+    db_path = tmp_path / "post-commit-reload-failure.db"
+    backend = SqliteStateBackend(db_path)
+    markers = SqliteCommitMarkerStore(db_path)
+    orchestrator = TurnOrchestrator(
+        clock=FakeClock(NOW),
+        trace=trace,
+        state_backend=backend,
+        commit_markers=markers,
+    )
+    adapter = MindRuntimeHostAdapter(
+        orchestrator=orchestrator,
+        trace=trace,
+    )
+    request = HostTurnRequest(
+        interaction_id="post-commit-reload-failure",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW,
+        user_message="durable commit survives reload warning",
+        channel="test",
+    )
+    begun = adapter.begin_turn(request)
+
+    with (
+        patch.object(
+            orchestrator,
+            "_publish_committed_states",
+            side_effect=RuntimeError("publish failure"),
+        ),
+        patch.object(
+            orchestrator,
+            "_refresh_canonical_from_backend",
+            side_effect=RuntimeError("reload failure"),
+        ),
+    ):
+        receipt = adapter.commit_turn(
+            HostCommitRequest(
+                turn_id=begun.turn_id,
+                interaction_id=begun.interaction_id,
+            )
+        )
+
+    assert receipt.status is HostStatus.DEGRADED
+    assert "projection_committed" in receipt.reason_codes
+    assert (
+        "post_commit_publication_requires_recovery"
+        in receipt.reason_codes
+    )
+    assert orchestrator.state is TurnState.COMMITTED
+    assert markers.has_commit(
+        interaction_id=request.interaction_id,
+        scope=request.scope,
+    )
+    abort = adapter.abort_turn(
+        HostAbortRequest(
+            turn_id=begun.turn_id,
+            interaction_id=begun.interaction_id,
+        )
+    )
+    assert abort.status is HostStatus.FAILED
+    assert "cannot_abort_committed" in abort.reason_codes
+    backend.close()
+
+
+def test_guard_wrong_turn_identity_fails_closed(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    adapter.begin_turn(turn_request)
+
+    result = adapter.guard_provider_prose(
+        HostProviderProseRequest(
+            turn_id="turn-other",
+            interaction_id="other",
+            prose="provider text",
+        )
+    )
+
+    assert result.status is HostStatus.FAILED
+    assert result.reason_codes == ("ValueError",)
+
+
+def test_commit_failure_with_abort_failure_still_returns_failed_receipt(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+
+    with (
+        patch.object(
+            adapter.orchestrator,
+            "commit_turn",
+            side_effect=RuntimeError("commit failed"),
+        ),
+        patch.object(
+            adapter.orchestrator,
+            "abort_turn",
+            side_effect=RuntimeError("abort also failed"),
+        ),
+    ):
+        receipt = adapter.commit_turn(
+            HostCommitRequest(
+                turn_id=begun.turn_id,
+                interaction_id=begun.interaction_id,
+            )
+        )
+
+    assert receipt.status is HostStatus.FAILED
+    assert receipt.reason_codes == ("commit_failed", "RuntimeError")
+
+
+def test_abort_failure_returns_failed_receipt_without_terminal_record(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+
+    with patch.object(
+        adapter.orchestrator,
+        "abort_turn",
+        side_effect=RuntimeError("abort failed"),
+    ):
+        receipt = adapter.abort_turn(
+            HostAbortRequest(
+                turn_id=begun.turn_id,
+                interaction_id=begun.interaction_id,
+            )
+        )
+
+    assert receipt.status is HostStatus.FAILED
+    assert receipt.reason_codes == ("abort_failed", "RuntimeError")
+    assert adapter._terminal == {}
+
+
+def test_inspect_current_turn_recovery_failure_is_non_authoritative(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    begun = adapter.begin_turn(turn_request)
+
+    with patch.object(
+        adapter.orchestrator,
+        "recover",
+        side_effect=RuntimeError("no recovery"),
+    ):
+        result = adapter.inspect(
+            HostInspectRequest(
+                interaction_id=begun.interaction_id,
+                turn_id=begun.turn_id,
+                include_decision_context=False,
+                include_projection=False,
+            )
+        )
+
+    assert result.turn_id == begun.turn_id
+    assert result.recovery_decision is None
+    assert result.decision_context_ref is None
+    assert result.projection_ref is None
+
+
+def test_ambiguous_terminal_identity_fails_closed_on_inspect(
+    adapter: MindRuntimeHostAdapter,
+    user_scope: Scope,
+) -> None:
+    first = HostTurnRequest(
+        interaction_id="ambiguous-A",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW,
+        user_message="A",
+        channel="test",
+    )
+    a = adapter.begin_turn(first)
+    adapter.commit_turn(
+        HostCommitRequest(
+            turn_id=a.turn_id,
+            interaction_id=a.interaction_id,
+        )
+    )
+    record = next(iter(adapter._terminal.values()))
+    adapter._terminal[("duplicate-runtime", user_scope, a.interaction_id)] = record
+
+    second = HostTurnRequest(
+        interaction_id="ambiguous-B",
+        runtime_id=RUNTIME_ID,
+        scope=user_scope,
+        occurred_at=NOW + timedelta(seconds=1),
+        user_message="B",
+        channel="test",
+    )
+    adapter.begin_turn(second)
+
+    result = adapter.inspect(
+        HostInspectRequest(
+            interaction_id=a.interaction_id,
+            turn_id=a.turn_id,
+        )
+    )
+
+    assert result.turn_status is HostTurnStatus.FAILED
+    assert result.decision_context_ref is None
+
+
+def test_record_terminal_rejects_wrong_interaction(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    adapter.begin_turn(turn_request)
+
+    with pytest.raises(
+        RuntimeError,
+        match="terminal record interaction does not match",
+    ):
+        adapter._record_terminal("wrong-interaction", committed=True)
+
+
+def test_record_terminal_requires_bound_host_request(
+    adapter: MindRuntimeHostAdapter,
+    turn_request: HostTurnRequest,
+) -> None:
+    adapter.begin_turn(turn_request)
+    adapter._pending_requests.pop(turn_request.interaction_id)
+
+    with pytest.raises(
+        RuntimeError,
+        match="terminal record has no bound Host request",
+    ):
+        adapter._record_terminal(
+            turn_request.interaction_id,
+            committed=True,
+        )

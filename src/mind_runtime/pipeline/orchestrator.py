@@ -178,12 +178,23 @@ class StaleProjectionError(RuntimeError):
 
 
 class CanonicalPersistenceError(RuntimeError):
-    """An authority-bearing canonical write failed durably (MR-RUNTIME-05 §9).
+    """An authority-bearing canonical write failed before durable commit.
 
-    The admission fails loudly instead of continuing silently: no commit
-    marker, no in-memory canonical advance, no receipt success. The turn
-    stays open for the caller's abort/recovery path.
+    No authoritative commit marker may exist for this failure class. The turn
+    remains abortable because durable canonical admission did not complete.
     """
+
+
+class PostCommitPublicationError(RuntimeError):
+    """Durable commit succeeded, but post-commit in-memory publication failed.
+
+    This is not a failed admission. Callers must preserve COMMITTED authority
+    and may surface a degraded/recovery warning, but must never abort the turn.
+    """
+
+    def __init__(self, message: str, *, canonical_reloaded: bool) -> None:
+        super().__init__(message)
+        self.canonical_reloaded = canonical_reloaded
 
 
 def _current_states(states: tuple[RuntimeState, ...]) -> tuple[RuntimeState, ...]:
@@ -1845,24 +1856,54 @@ class TurnOrchestrator:
                     raise CanonicalPersistenceError(msg) from exc
                 raise
 
-            # 3. Publish only after COMMIT. A publication failure cannot undo
-            # the durable receipt; reload from the committed backend and expose
-            # an explicit recovery event to the caller/audit trace.
+            # 3. Publish only after COMMIT. Once the durable transaction above
+            # exits successfully, COMMITTED is an irreversible authority fact.
+            # A publication/reload problem is a degraded post-commit condition,
+            # never an abortable persistence failure.
+            canonical_before_publish = dict(self._canonical)
             try:
                 self._publish_committed_states(projected_states, slow_plans)
-            except Exception as exc:
-                self._refresh_canonical_from_backend()
+            except Exception as publish_exc:
+                if self._state_backend is None:
+                    self._canonical = canonical_before_publish
+                    raise CanonicalPersistenceError(
+                        "in-memory canonical publication failed before "
+                        "durable admission completed"
+                    ) from publish_exc
                 self.state = TurnState.COMMITTED
+                canonical_reloaded = False
+                cause: Exception = publish_exc
+                try:
+                    self._refresh_canonical_from_backend()
+                    canonical_reloaded = True
+                except Exception as reload_exc:
+                    cause = reload_exc
+                self._drop_checkpoint(turn.interaction.interaction_id)
                 self._trace.record(
                     turn.interaction.interaction_id,
                     "post_commit_publication_failed",
-                    outcome="reloaded_from_canonical",
+                    outcome=(
+                        "reloaded_from_canonical"
+                        if canonical_reloaded
+                        else "durable_commit_requires_recovery"
+                    ),
                     at=self._clock.now(),
                 )
-                raise CanonicalPersistenceError(
+                self._trace.record(
+                    turn.interaction.interaction_id,
+                    "commit",
+                    outcome="durable_post_commit_warning",
+                    at=self._clock.now(),
+                )
+                raise PostCommitPublicationError(
                     f"post-commit publication failed for {turn.interaction.interaction_id}; "
-                    "canonical state reloaded from durable commit"
-                ) from exc
+                    + (
+                        "canonical state reloaded from durable commit"
+                        if canonical_reloaded
+                        else "durable commit exists but canonical reload also failed"
+                    ),
+                    canonical_reloaded=canonical_reloaded,
+                ) from cause
 
             # Telemetry (best-effort, fail-open)
             if self._telemetry_sink is not None:
@@ -1983,6 +2024,12 @@ class TurnOrchestrator:
 
     def _abort_turn_admitted(self) -> None:
         turn = self._require_turn()
+        if self.state is TurnState.COMMITTED:
+            raise RuntimeError(
+                "cannot abort a durably committed turn"
+            )
+        if self.state is TurnState.ABORTED:
+            return
         _mr_thread_trace("ORCH_ABORT_ENTRY", self, turn.interaction.interaction_id)
         # D5.3 UnitOfWork abort: the projection is discarded; ingested facts
         # stay committed (G13b). The turn's derived state never touched

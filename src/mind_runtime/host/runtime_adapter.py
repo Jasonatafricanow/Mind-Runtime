@@ -49,6 +49,7 @@ from mind_runtime.contracts import (
     IntentStatus,
     Interaction,
     InteractionStatus,
+    Scope,
     SyncFields,
 )
 from mind_runtime.contracts.host import (
@@ -70,6 +71,7 @@ from mind_runtime.contracts.host import (
 )
 from mind_runtime.contracts.intent import WakeSignal
 from mind_runtime.pipeline.orchestrator import (
+    PostCommitPublicationError,
     StaleProjectionError,
     TurnOrchestrator,
     TurnState,
@@ -281,41 +283,77 @@ def _empty_bounded_context(reason: str) -> HostDecisionContext:
     )
 
 
+def _replay_key(request: HostTurnRequest) -> tuple[str, Scope, str]:
+    return (request.runtime_id, request.scope, request.interaction_id)
+
+
+def _request_fingerprint(
+    request: HostTurnRequest,
+) -> tuple[
+    datetime,
+    str,
+    str,
+    str | None,
+    tuple[tuple[str, str], ...],
+]:
+    """Authoritative Host payload identity inside one replay namespace."""
+    return (
+        request.occurred_at,
+        request.user_message,
+        request.channel,
+        request.session_id,
+        request.host_metadata,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Replay / terminal-state store
 # ---------------------------------------------------------------------------
 
 
 class _TerminalRecord:
-    """Record of a completed turn, kept in-memory for Host replay handling."""
+    """Completed Host turn, bound to one runtime/scope/interaction identity."""
 
     __slots__ = (
         "interaction_id",
-        "user_message",
+        "runtime_id",
+        "scope",
+        "request_fingerprint",
         "bounded_context",
         "turn_id",
         "terminal_status",
+        "terminal_at",
         "decision_context_ref",
+        "situation_ref",
         "expression_ref",
+        "projection_ref",
     )
 
     def __init__(
         self,
-        interaction_id: str,
-        user_message: str,
+        *,
+        request: HostTurnRequest,
         bounded_context: HostDecisionContext | None,
         turn_id: str,
         terminal_status: HostTurnStatus,
+        terminal_at: datetime,
         decision_context_ref: str | None,
+        situation_ref: str | None,
         expression_ref: str | None,
+        projection_ref: str | None,
     ) -> None:
-        self.interaction_id = interaction_id
-        self.user_message = user_message
+        self.interaction_id = request.interaction_id
+        self.runtime_id = request.runtime_id
+        self.scope = request.scope
+        self.request_fingerprint = _request_fingerprint(request)
         self.bounded_context = bounded_context
         self.turn_id = turn_id
         self.terminal_status = terminal_status
+        self.terminal_at = terminal_at
         self.decision_context_ref = decision_context_ref
+        self.situation_ref = situation_ref
         self.expression_ref = expression_ref
+        self.projection_ref = projection_ref
 
 
 # ---------------------------------------------------------------------------
@@ -354,17 +392,13 @@ class MindRuntimeHostAdapter:
         self._pending_wake_contexts: dict[str, dict[str, Any]] = {}
         self._pending_exec_contexts: dict[str, Any] = {}
         self._guard_admissions: dict[str, _GuardAdmission] = {}
-        # Terminal record store: interaction_id -> _TerminalRecord.
-        # Populated at commit/abort time. Acts as the in-process
-        # replay guard; the stored user_message is used for the
-        # same-payload check on replay.
-        self._terminal: dict[str, _TerminalRecord] = {}
-        # Pending store: interaction_id -> user_message. Populated at
-        # begin_turn time so commit/abort can finalize the terminal
-        # record without reverse-lookup through Observation IDs or
-        # FrozenMapping internals. Cleared when the terminal record
-        # is written.
-        self._pending_user_message: dict[str, str] = {}
+        # Replay namespace is runtime + scope + interaction. A collision on
+        # interaction_id across namespaces fails closed rather than exposing
+        # another scope's bounded context.
+        self._terminal: dict[tuple[str, Scope, str], _TerminalRecord] = {}
+        # One orchestrator owns one active turn, so pending Host requests may
+        # be indexed by interaction_id while the turn is non-terminal.
+        self._pending_requests: dict[str, HostTurnRequest] = {}
 
     @property
     def orchestrator(self) -> TurnOrchestrator:
@@ -378,9 +412,24 @@ class MindRuntimeHostAdapter:
         # If interaction_id is already terminal, return the previous
         # terminal result without re-entering the cognition pipeline.
         # This is the at-least-once delivery contract.
-        terminal = self._terminal.get(request.interaction_id)
+        terminal = self._terminal.get(_replay_key(request))
         if terminal is not None:
             return self._handle_replay(request, terminal)
+        if any(
+            record.interaction_id == request.interaction_id
+            for record in self._terminal.values()
+        ):
+            return HostTurnResult(
+                turn_id=f"turn-{request.interaction_id}",
+                interaction_id=request.interaction_id,
+                status=HostTurnStatus.FAILED,
+                outcome=HostStatus.FAILED,
+                bounded_context=None,
+                decision_context_ref=None,
+                expression_ref=None,
+                debug_ref=f"debug-{request.interaction_id}",
+                reason_codes=("interaction_id_conflict", "identity_mismatch"),
+            )
 
         interaction = _interaction_from_request(request)
         evidence = _evidence_from_request(request)
@@ -401,10 +450,9 @@ class MindRuntimeHostAdapter:
                 reason_codes = ("ingest_committed",)
             self._orchestrator.run()
             bounded = _bounded_context(self._orchestrator)
-            # Stash the original user_message so commit/abort can later
-            # finalize the _TerminalRecord. This avoids reverse-lookup
-            # through Observation IDs or FrozenMapping internals.
-            self._pending_user_message[request.interaction_id] = request.user_message
+            # Preserve the authoritative Host request so terminal replay can
+            # validate runtime/scope and the complete idempotent payload.
+            self._pending_requests[request.interaction_id] = request
             return HostTurnResult(
                 turn_id=interaction.turn_id,
                 interaction_id=request.interaction_id,
@@ -441,7 +489,11 @@ class MindRuntimeHostAdapter:
           context. No re-entry into the cognition pipeline.
         - Different user_message: fail closed with interaction_id_conflict.
         """
-        if terminal.user_message != request.user_message:
+        if (
+            terminal.runtime_id != request.runtime_id
+            or terminal.scope != request.scope
+            or terminal.request_fingerprint != _request_fingerprint(request)
+        ):
             return HostTurnResult(
                 turn_id=terminal.turn_id,
                 interaction_id=request.interaction_id,
@@ -466,9 +518,111 @@ class MindRuntimeHostAdapter:
             reason_codes=("replay", "no_reentry"),
         )
 
+    def _terminal_for_turn(
+        self,
+        *,
+        turn_id: str | None,
+        interaction_id: str,
+    ) -> _TerminalRecord | None:
+        matches = [
+            record
+            for record in self._terminal.values()
+            if record.interaction_id == interaction_id
+            and (turn_id is None or record.turn_id == turn_id)
+        ]
+        if len(matches) > 1:
+            raise ValueError("HOST_TURN_IDENTITY_AMBIGUOUS")
+        return matches[0] if matches else None
+
+    def _current_turn_matches(
+        self,
+        *,
+        turn_id: str | None,
+        interaction_id: str,
+    ) -> bool:
+        try:
+            turn = self._orchestrator._require_turn()
+        except RuntimeError:
+            return False
+        return (
+            turn.interaction.interaction_id == interaction_id
+            and (turn_id is None or turn.interaction.turn_id == turn_id)
+        )
+
+    def _bind_turn_operation(
+        self,
+        *,
+        turn_id: str,
+        interaction_id: str,
+    ) -> _TerminalRecord | None:
+        """Bind a mutating Host operation to current or historical identity."""
+        if self._current_turn_matches(
+            turn_id=turn_id,
+            interaction_id=interaction_id,
+        ):
+            return None
+        terminal = self._terminal_for_turn(
+            turn_id=turn_id,
+            interaction_id=interaction_id,
+        )
+        if terminal is not None:
+            return terminal
+        raise ValueError("HOST_TURN_IDENTITY_MISMATCH")
+
+    def _require_current_turn_identity(
+        self,
+        *,
+        turn_id: str,
+        interaction_id: str,
+    ) -> None:
+        if not self._current_turn_matches(
+            turn_id=turn_id,
+            interaction_id=interaction_id,
+        ):
+            raise ValueError("HOST_TURN_IDENTITY_MISMATCH")
+
     # ----- commit_turn -------------------------------------------------
 
     def commit_turn(self, request: HostCommitRequest) -> HostCommitReceipt:
+        try:
+            terminal = self._bind_turn_operation(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+            )
+        except ValueError:
+            return HostCommitReceipt(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostStatus.FAILED,
+                committed_at=datetime.now(UTC),
+                reason_codes=("turn_identity_mismatch",),
+            )
+        if terminal is not None:
+            return HostCommitReceipt(
+                turn_id=terminal.turn_id,
+                interaction_id=terminal.interaction_id,
+                status=(
+                    HostStatus.OK
+                    if terminal.terminal_status is HostTurnStatus.COMMITTED
+                    else HostStatus.FAILED
+                ),
+                committed_at=terminal.terminal_at,
+                projected_state_refs=(
+                    (terminal.projection_ref,)
+                    if terminal.projection_ref is not None
+                    else ()
+                ),
+                commit_marker_ref=(
+                    f"commit-marker-{terminal.interaction_id}"
+                    if terminal.terminal_status is HostTurnStatus.COMMITTED
+                    else None
+                ),
+                reason_codes=(
+                    ("already_committed",)
+                    if terminal.terminal_status is HostTurnStatus.COMMITTED
+                    else ("cannot_commit_aborted",)
+                ),
+            )
         if self._orchestrator.state is TurnState.COMMITTED:
             return HostCommitReceipt(
                 turn_id=request.turn_id,
@@ -491,6 +645,28 @@ class MindRuntimeHostAdapter:
             if self._orchestrator.surface_handoff_request() is not None:
                 self._orchestrator.acknowledge_surface_delivery()
             self._orchestrator.commit_turn()
+        except PostCommitPublicationError as exc:
+            _logger.warning("HI-1 post-commit publication warning: %s", exc)
+            self._record_terminal(request.interaction_id, committed=True)
+            projection_ref = _projection_ref(self._orchestrator)
+            return HostCommitReceipt(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostStatus.DEGRADED,
+                committed_at=datetime.now(UTC),
+                projected_state_refs=(
+                    (projection_ref,) if projection_ref is not None else ()
+                ),
+                commit_marker_ref=f"commit-marker-{request.interaction_id}",
+                reason_codes=(
+                    "projection_committed",
+                    (
+                        "post_commit_publication_recovered"
+                        if exc.canonical_reloaded
+                        else "post_commit_publication_requires_recovery"
+                    ),
+                ),
+            )
         except (StaleProjectionError, RuntimeError, ValueError) as exc:
             _logger.warning("HI-1 commit_turn failed: %s", exc)
             # MR-RUNTIME-05: a failed admission must not leave the turn open
@@ -523,12 +699,10 @@ class MindRuntimeHostAdapter:
     def guard_provider_prose(self, request: HostProviderProseRequest) -> HostProviderProseResult:
         """SURFACE_V1 Guard gate before the Host sends provider prose outward."""
         try:
-            turn = self._orchestrator._require_turn()
-            if (
-                turn.interaction.interaction_id != request.interaction_id
-                or turn.interaction.turn_id != request.turn_id
-            ):
-                raise ValueError("SURFACE_GUARD_TURN_MISMATCH")
+            self._require_current_turn_identity(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+            )
             verdict = self._orchestrator.guard_surface_provider_prose(request.prose)
             return HostProviderProseResult(
                 interaction_id=request.interaction_id,
@@ -549,6 +723,37 @@ class MindRuntimeHostAdapter:
     # ----- abort_turn --------------------------------------------------
 
     def abort_turn(self, request: HostAbortRequest) -> HostAbortReceipt:
+        try:
+            terminal = self._bind_turn_operation(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+            )
+        except ValueError:
+            return HostAbortReceipt(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostStatus.FAILED,
+                aborted_at=datetime.now(UTC),
+                ingested_facts_retained=True,
+                reason_codes=("turn_identity_mismatch",),
+            )
+        if terminal is not None:
+            return HostAbortReceipt(
+                turn_id=terminal.turn_id,
+                interaction_id=terminal.interaction_id,
+                status=(
+                    HostStatus.OK
+                    if terminal.terminal_status is HostTurnStatus.ABORTED
+                    else HostStatus.FAILED
+                ),
+                aborted_at=terminal.terminal_at,
+                ingested_facts_retained=True,
+                reason_codes=(
+                    ("already_aborted",)
+                    if terminal.terminal_status is HostTurnStatus.ABORTED
+                    else ("cannot_abort_committed",)
+                ),
+            )
         if self._orchestrator.state is TurnState.ABORTED:
             return HostAbortReceipt(
                 turn_id=request.turn_id,
@@ -593,6 +798,32 @@ class MindRuntimeHostAdapter:
     # ----- inspect -----------------------------------------------------
 
     def inspect(self, request: HostInspectRequest) -> HostInspectResult:
+        current = self._current_turn_matches(
+            turn_id=request.turn_id,
+            interaction_id=request.interaction_id,
+        )
+        terminal = None
+        if not current:
+            try:
+                terminal = self._terminal_for_turn(
+                    turn_id=request.turn_id,
+                    interaction_id=request.interaction_id,
+                )
+            except ValueError:
+                terminal = None
+        if not current and terminal is None:
+            return HostInspectResult(
+                interaction_id=request.interaction_id,
+                turn_id=request.turn_id,
+                turn_status=HostTurnStatus.FAILED,
+                decision_context_ref=None,
+                situation_ref=None,
+                expression_ref=None,
+                projection_ref=None,
+                trace=(),
+                recovery_decision=None,
+            )
+
         if request.include_trace:
             trace = self._trace.trace(request.interaction_id)
             trace_pairs = tuple(
@@ -600,15 +831,38 @@ class MindRuntimeHostAdapter:
             )
         else:
             trace_pairs = ()
+
+        if terminal is not None:
+            return HostInspectResult(
+                interaction_id=terminal.interaction_id,
+                turn_id=terminal.turn_id,
+                turn_status=terminal.terminal_status,
+                decision_context_ref=(
+                    terminal.decision_context_ref
+                    if request.include_decision_context
+                    else None
+                ),
+                situation_ref=terminal.situation_ref,
+                expression_ref=terminal.expression_ref,
+                projection_ref=(
+                    terminal.projection_ref
+                    if request.include_projection
+                    else None
+                ),
+                trace=trace_pairs,
+                recovery_decision=None,
+            )
+
         recovery = None
         try:
             decision = self._orchestrator.recover(request.interaction_id)
             recovery = str(decision)
         except (RuntimeError, ValueError):
             recovery = None
+        turn = self._orchestrator._require_turn()
         return HostInspectResult(
             interaction_id=request.interaction_id,
-            turn_id=request.turn_id,
+            turn_id=turn.interaction.turn_id,
             turn_status=_to_turn_status(self._orchestrator.state),
             decision_context_ref=(
                 _decision_context_ref(self._orchestrator)
@@ -618,7 +872,9 @@ class MindRuntimeHostAdapter:
             situation_ref=_situation_ref(self._orchestrator),
             expression_ref=_expression_ref(self._orchestrator),
             projection_ref=(
-                _projection_ref(self._orchestrator) if request.include_projection else None
+                _projection_ref(self._orchestrator)
+                if request.include_projection
+                else None
             ),
             trace=trace_pairs,
             recovery_decision=recovery,
@@ -1559,25 +1815,29 @@ class MindRuntimeHostAdapter:
     # ----- internal: terminal record management -----------------------
 
     def _record_terminal(self, interaction_id: str, *, committed: bool) -> None:
-        """Record a terminal state for future Host-level replays.
-
-        Uses the user_message stashed by begin_turn (pending store) as
-        the replay-comparison key, so this method does not need to
-        reverse-lookup the orchestrator's observations or the
-        FrozenMapping private field.
-        """
+        """Freeze the current Host identity and result for safe replay."""
+        turn = self._orchestrator._require_turn()
+        if turn.interaction.interaction_id != interaction_id:
+            raise RuntimeError("terminal record interaction does not match current turn")
+        request = self._pending_requests.pop(interaction_id, None)
+        if request is None:
+            raise RuntimeError("terminal record has no bound Host request")
         bounded = _bounded_context(self._orchestrator)
-        terminal_status = HostTurnStatus.COMMITTED if committed else HostTurnStatus.ABORTED
-        user_message = self._pending_user_message.pop(interaction_id, "")
-        self._terminal[interaction_id] = _TerminalRecord(
-            interaction_id=interaction_id,
-            user_message=user_message,
-            bounded_context=bounded,
-            turn_id=f"turn-{interaction_id}",
-            terminal_status=terminal_status,
-            decision_context_ref=_decision_context_ref(self._orchestrator),
-            expression_ref=_expression_ref(self._orchestrator),
+        terminal_status = (
+            HostTurnStatus.COMMITTED if committed else HostTurnStatus.ABORTED
         )
+        record = _TerminalRecord(
+            request=request,
+            bounded_context=bounded,
+            turn_id=turn.interaction.turn_id,
+            terminal_status=terminal_status,
+            terminal_at=datetime.now(UTC),
+            decision_context_ref=_decision_context_ref(self._orchestrator),
+            situation_ref=_situation_ref(self._orchestrator),
+            expression_ref=_expression_ref(self._orchestrator),
+            projection_ref=_projection_ref(self._orchestrator),
+        )
+        self._terminal[_replay_key(request)] = record
 
 
 def _iso(value: datetime) -> str:
