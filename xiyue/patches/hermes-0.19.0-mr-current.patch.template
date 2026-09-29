@@ -1,62 +1,34 @@
 diff --git a/gateway/run.py b/gateway/run.py
-index 12b7477..e52633c 100644
+index 82a959c..90679a5 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
-@@ -24,6 +24,53 @@ except ModuleNotFoundError:
+@@ -24,6 +24,25 @@ except ModuleNotFoundError:
      # means UTF-8 stdio setup is skipped on Windows; POSIX is unaffected.
      pass
 __PATCH_CONTEXT_BLANK_1__
 +# --- Xiyue MR seam bootstrap (HI-2) ---
++import os as _mr_os
 +import sys as _mr_sys
-+_mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
-+_mr_sys.path.insert(0, __MR_SRC_LITERAL__)
-+_mr_sys.path.insert(0, __MR_XIYUE_LITERAL__)
-+try:
-+    import mr_seam as _mr_seam
-+    _mr_seam._MR_SRC = __MR_SRC_LITERAL__
-+    _mr_render_bounded = _mr_seam.render_bounded
-+except Exception:
-+    _mr_seam = None
-+    _mr_render_bounded = lambda b: None
 +
-+
-+def _mr_get_adapter():
-+    """Lazily get the thread-local MR adapter inside the worker thread.
-+
-+    IMPORTANT: get_mr_adapter() must NOT be evaluated at module import
-+    time — that would create the adapter on the main/import thread and
-+    re-introduce the cross-thread ownership bug. It is called from the
-+    worker thread (inside _run_agent_inner) on the first real message.
-+    """
-+    if _mr_seam is None:
-+        return None
++_mr_enabled = _mr_os.environ.get("MR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
++_mr_seam = None
++_mr_render_bounded = lambda b: None
++if _mr_enabled:
++    _mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
++    _mr_sys.path.insert(0, __MR_SRC_LITERAL__)
++    _mr_sys.path.insert(0, __MR_XIYUE_LITERAL__)
 +    try:
-+        return _mr_seam.get_mr_adapter()
++        import mr_seam as _mr_seam
++        _mr_seam._MR_SRC = __MR_SRC_LITERAL__
++        _mr_render_bounded = _mr_seam.render_bounded
 +    except Exception:
-+        return None
-+# --- end Xiyue MR seam bootstrap ---
-+
-+# --- Xiyue MR seam bootstrap (HI-2) ---
-+import sys as _mr_sys
-+_mr_sys.path.insert(0, __HERMES_SITE_PACKAGES_LITERAL__)
-+_mr_sys.path.insert(0, __MR_SRC_LITERAL__)
-+_mr_sys.path.insert(0, __MR_XIYUE_LITERAL__)
-+try:
-+    import mr_seam as _mr_seam
-+    _mr_seam._MR_SRC = __MR_SRC_LITERAL__
-+    _mr_seam.on_gateway_process_startup()
-+    _mr_adapter = _mr_seam.get_mr_adapter()
-+    _mr_render_bounded = _mr_seam.render_bounded
-+except Exception:
-+    _mr_seam = None
-+    _mr_adapter = None
-+    _mr_render_bounded = lambda b: None
++        _mr_seam = None
 +# --- end Xiyue MR seam bootstrap ---
 +
  import asyncio
  import concurrent.futures
  import dataclasses
-@@ -20943,7 +20990,53 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20943,7 +20962,56 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                      _conversation_kwargs["moa_config"] = moa_config
                  if _persist_user_timestamp_override is not None:
                      _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
@@ -99,9 +71,12 @@ __PATCH_CONTEXT_BLANK_1__
 +                            error_message="Mind Runtime processing failed. (MR_TURN_FAILED)",
 +                        )
 +                # --- end Xiyue MR begin seam ---
-+                if _mr_profile == "xiyue" and _mr_verdict is not None and not _mr_verdict.admitted and _mr_verdict.status in ("NOT_READY", "FAILED"):
++                if _mr_profile == "xiyue" and (
++                    (_mr_enabled and _mr_seam is None)
++                    or (_mr_verdict is not None and not _mr_verdict.admitted and _mr_verdict.status in ("NOT_READY", "FAILED"))
++                ):
 +                    result = {
-+                        "final_response": _mr_verdict.error_message or "Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
++                        "final_response": (getattr(_mr_verdict, "error_message", None) if _mr_verdict is not None else None) or "Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
 +                        "messages": [],
 +                        "api_calls": 0,
 +                        "completed": False,
@@ -111,14 +86,14 @@ __PATCH_CONTEXT_BLANK_1__
              finally:
                  unregister_gateway_notify(_approval_session_key)
                  # Cancel any pending clarify entries so blocked agent
-@@ -20963,6 +21056,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -20963,6 +21031,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 __PATCH_CONTEXT_BLANK_13__
              # Return final response, or a message if something went wrong
              final_response = result.get("final_response")
 +            # --- Xiyue MR seam: commit/abort (HI-2) ---
 +            try:
 +                if _mr_handle is not None:
-+                    _active_adapter = _mr_seam.get_mr_adapter() if _mr_seam else _mr_adapter
++                    _active_adapter = _mr_seam.get_mr_adapter() if _mr_seam else None
 +                    if _active_adapter is not None:
 +                        if final_response:
 +                            _active_adapter.commit_turn(_mr_handle)
@@ -141,3 +116,14 @@ __PATCH_CONTEXT_BLANK_13__
 __PATCH_CONTEXT_BLANK_1__
              # Extract actual token counts from the agent instance used for this run
              _last_prompt_toks = 0
+@@ -22817,6 +22908,10 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool =
+     atexit.register(remove_pid_file)
+     atexit.register(release_gateway_runtime_lock)
+__PATCH_CONTEXT_BLANK_1__
++    # Establish this process's MR epoch only after the gateway owns its runtime lock.
++    if _mr_seam is not None:
++        _mr_seam.on_gateway_process_startup()
++
+     try:
+         from hermes_cli.nous_auth_keepalive import start_nous_auth_keepalive
+__PATCH_CONTEXT_BLANK_1__
