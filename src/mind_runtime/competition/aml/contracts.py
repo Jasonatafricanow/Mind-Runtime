@@ -106,6 +106,7 @@ class AmlRuntimeConfig:
     lce_bootstrap_on_add: bool = True
     thread_cap: int = 4
     lce_cap: int = 8
+    hyde_min_results: int = 20
 
     def __post_init__(self) -> None:
         for value, name, low, high in (
@@ -119,6 +120,7 @@ class AmlRuntimeConfig:
             ),
             (self.thread_cap, "thread_cap", 0, 20),
             (self.lce_cap, "lce_cap", 0, 20),
+            (self.hyde_min_results, "hyde_min_results", 1, 100),
         ):
             if type(value) is not int or not low <= value <= high:
                 raise ValueError(
