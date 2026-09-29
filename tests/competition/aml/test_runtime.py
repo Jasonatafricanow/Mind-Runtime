@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,8 @@ from mind_runtime.competition.aml.contracts import (
 )
 from mind_runtime.competition.aml.journal import AmlRequestConflict
 from mind_runtime.competition.aml.runtime import AmlCompetitionRuntime
-from mind_runtime.contracts import SemanticEventCandidate
+from mind_runtime.contracts import Scope, SemanticEventCandidate
+from mind_runtime.memory.product import MemoryThread
 from mind_runtime.memory.store import CanonicalMemoryStore
 
 
@@ -101,7 +103,7 @@ def test_retry_after_canonical_stage_does_not_duplicate_memory(
     original = runtime._thread_stage
     calls = 0
 
-    def fail_once(*args, **kwargs):
+    def fail_once(*args: Any, **kwargs: Any) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -142,8 +144,8 @@ class _TrackSemantic:
         *,
         message: AmlMessage,
         visible_messages: tuple[AmlMessage, ...],
-        active_threads,
-        scope,
+        active_threads: tuple[MemoryThread, ...],
+        scope: Scope,
         origin_runtime_id: str,
         evidence_ref: str,
     ) -> tuple[SemanticEventCandidate, ...]:
