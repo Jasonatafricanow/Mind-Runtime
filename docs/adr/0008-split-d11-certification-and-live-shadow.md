@@ -2,6 +2,11 @@
 
 - **Date:** 2026-08-23
 - **Status:** Accepted after independent architecture-entry review
+- **2026-09-29 scope update:** The D11S decision remains authoritative. The
+  D11L entry/closure rules in this ADR are superseded by ADR-0035. In
+  particular, D11L is no longer a universal MR product-release gate or a
+  Kayla-specific eleven-field prerequisite; it is a named-host live-path
+  validation profile. Historical text below is retained for auditability.
 
 ## Problem
 
