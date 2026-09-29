@@ -761,14 +761,20 @@ def stop_bundle_readiness_reconciler() -> None:
 
 
 def on_gateway_process_startup() -> dict[str, Any]:
-    """Gateway boot hook: establish process epoch (NOT_READY) then evaluate readiness."""
+    """Gateway boot hook: establish epoch and keep bundle health current."""
     cur_pid, cur_started = get_gateway_process_identity()
     epoch_rec = begin_runtime_epoch(cur_pid, cur_started)
     try:
-        return mark_runtime_ready()
+        current = mark_runtime_ready()
     except Exception as exc:
         _logger.warning("on_gateway_process_startup mark_runtime_ready failed: %s", exc)
-        return epoch_rec
+        current = epoch_rec
+    try:
+        # OW may start after the gateway, before the first conversation.
+        start_bundle_readiness_reconciler(adapter=None)
+    except Exception as exc:
+        _logger.warning("on_gateway_process_startup reconciler failed: %s", exc)
+    return current
 
 
 def check_ingress_admission(

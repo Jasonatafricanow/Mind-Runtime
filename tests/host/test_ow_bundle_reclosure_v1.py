@@ -127,6 +127,49 @@ def test_gateway_reconciles_ow_late_start_without_moving_ingress_ready_at(
     assert current["runtime_ready_at"] == ingress_ready_at
 
 
+def test_gateway_startup_reconciles_ow_before_first_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mr_repo_imports: None
+) -> None:
+    """The bundle must recover when OW starts before any turn creates an adapter."""
+    from xiyue import mr_seam
+
+    mr_seam.stop_bundle_readiness_reconciler()
+    monkeypatch.setenv("MR_READINESS_PATH", str(tmp_path / "readiness.json"))
+    monkeypatch.setattr(
+        mr_seam,
+        "evaluate_mr_core_readiness",
+        lambda adapter=None: (True, {"mr_adapter_initialized": True}, []),
+    )
+    ow_is_healthy = {"value": False}
+    monkeypatch.setattr(
+        mr_seam,
+        "check_observation_window_up",
+        lambda port=8766: ow_is_healthy["value"],
+    )
+    start_reconciler = mr_seam.start_bundle_readiness_reconciler
+    monkeypatch.setattr(
+        mr_seam,
+        "start_bundle_readiness_reconciler",
+        lambda adapter=None: start_reconciler(adapter=adapter, interval_s=0.01),
+    )
+
+    try:
+        first = mr_seam.on_gateway_process_startup()
+        assert first["bundle_state"] == "DEGRADED"
+        ready_at = first["runtime_ready_at"]
+        ow_is_healthy["value"] = True
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            current = mr_seam.load_readiness()
+            if current["bundle_state"] == "READY":
+                break
+            time.sleep(0.01)
+        assert current["bundle_state"] == "READY"
+        assert current["runtime_ready_at"] == ready_at
+    finally:
+        mr_seam.stop_bundle_readiness_reconciler()
+
+
 def test_process_alive_without_health_is_not_ow_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mr_repo_imports: None
 ) -> None:
