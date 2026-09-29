@@ -19,6 +19,23 @@ class ThreadIdentityCandidate:
     support_text: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ThreadIdentityResolution:
+    decided: bool
+    thread_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.decided) is not bool:
+            raise TypeError("decided must be bool")
+        if self.thread_id is not None and (
+            not isinstance(self.thread_id, str)
+            or not self.thread_id.strip()
+        ):
+            raise ValueError("thread_id must be nonempty or None")
+        if not self.decided and self.thread_id is not None:
+            raise ValueError("undecided resolution cannot select a thread")
+
+
 class ThreadIdentityDecisionProjection:
     """Choose an existing OPEN Thread only when deterministic identity is weak.
 
@@ -61,9 +78,9 @@ class ThreadIdentityDecisionProjection:
         question: str | None,
         summary: str | None,
         candidates: tuple[ThreadIdentityCandidate, ...],
-    ) -> str | None:
+    ) -> ThreadIdentityResolution:
         if not self.available or not candidates:
-            return None
+            return ThreadIdentityResolution(False)
         bounded = candidates[: self._max_candidates]
         query = " ".join(
             value.strip()
@@ -71,7 +88,7 @@ class ThreadIdentityDecisionProjection:
             if isinstance(value, str) and value.strip()
         )
         if not query:
-            return None
+            return ThreadIdentityResolution(False)
         state: dict[str, str] = {"current_thread_signal": query[:4096]}
         options = ["none"]
         for index, candidate in enumerate(bounded):
@@ -102,21 +119,24 @@ class ThreadIdentityDecisionProjection:
             )
         )
         if result is None:
-            return None
+            return ThreadIdentityResolution(False)
         answer = result.answer("same_line")
         selected = answer.selected
-        if (
-            selected is None
-            or selected == "none"
-            or answer.probability(selected) < self._minimum_probability
-        ):
-            return None
+        if selected is None:
+            return ThreadIdentityResolution(False)
+        if answer.probability(selected) < self._minimum_probability:
+            return ThreadIdentityResolution(False)
+        if selected == "none":
+            return ThreadIdentityResolution(True, None)
         if not selected.startswith("thread_"):
-            return None
+            return ThreadIdentityResolution(False)
         try:
             index = int(selected.removeprefix("thread_"))
         except ValueError:
-            return None
+            return ThreadIdentityResolution(False)
         if not 0 <= index < len(bounded):
-            return None
-        return bounded[index].thread.thread_id
+            return ThreadIdentityResolution(False)
+        return ThreadIdentityResolution(
+            True,
+            bounded[index].thread.thread_id,
+        )
