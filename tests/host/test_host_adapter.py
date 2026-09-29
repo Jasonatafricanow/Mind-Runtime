@@ -31,6 +31,7 @@ from mind_runtime.contracts.host import (
     HostCommitReceipt,
     HostCommitRequest,
     HostInspectRequest,
+    HostProviderProseRequest,
     HostStatus,
     HostTurnRequest,
     HostTurnResult,
