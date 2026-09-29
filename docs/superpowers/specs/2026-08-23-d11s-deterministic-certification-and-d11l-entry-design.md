@@ -2,8 +2,12 @@
 
 **Status:** Approved after independent architecture-entry review
 
+**2026-09-29 scope note:** D11S portions remain authoritative. The D11L entry
+contract and phase-gate semantics are superseded by ADR-0035.
+
 **Authority:** ADR-0008, ADR-0003, ADR-0004, ADR-0007, the accepted D7R design,
-and the D10 integration report.
+and the D10 integration report. For current D11L semantics, ADR-0035 is the
+controlling authority.
 
 **Scope:** D11S implementation design plus D11L entry conditions. D11L host
 integration, D11P onboarding, Native Memory, distributed runtime, deployment,
@@ -408,26 +412,27 @@ A failed certification writes a report with failing invariant evidence but
 does not update runtime configuration, Persona, policies, Goldens, or gate
 status automatically.
 
-## 11. D11L Entry Contract
+## 11. D11L Entry Contract — Superseded by ADR-0035
 
-D11S produces a requirements document for D11L but no host adapter. D11L
-cannot begin until a separately reviewed design names all of:
+The original D11L contract in this specification was written before MR had a
+real host integration and is no longer an active eleven-field gate.
 
-- the real Kayla host and deployment boundary;
-- eligible interaction and exclusion definitions;
-- exact feature-flag owner and default-OFF behavior;
-- shadow, context-assist, and controlled-takeover phase transitions;
-- sampling method and minimum sample;
-- wall-clock observation duration;
-- privacy classification, field-level redaction, and trace retention;
-- kill-switch owner, maximum activation latency, and test procedure;
-- rollback owner, rollback target, and recovery verification;
-- acceptance, pause, abort, and incident thresholds;
-- model/provider versions and drift handling.
+Current D11L semantics are defined by ADR-0035:
 
-Synthetic or repository-only evidence cannot fill any missing item. Until all
-items are approved and the named environment exists, status is `D11L:
-BLOCKED_BY_EXTERNAL_ENVIRONMENT`.
+- D11L validates a named real host's live interaction path;
+- the current host profile is xiyue/Hermes, not a mandatory Kayla host;
+- minimum live evidence covers host binding, a real account end-to-end round
+  trip, readiness/dependency recovery, restart/autostart recovery, and
+  fail-closed bypass behavior;
+- repository-only or synthetic evidence cannot substitute for real E2E or
+  restart evidence;
+- sampling, prolonged wall-clock observation, privacy/retention programs,
+  formal kill-switch SLOs, rollback exercises, incident thresholds, and model
+  drift governance are conditional deployment controls rather than universal
+  D11L prerequisites.
+
+D11L completion or non-completion must not be used as a blanket verdict on MR
+core readiness. Status is reported on separate axes as defined by ADR-0035.
 
 ## 12. Test and Golden Strategy
 
