@@ -433,21 +433,23 @@ class ThreadAutoUpdateService:
             )
             for thread in threads
         )
-        selected_id = projection.choose(
+        resolution = projection.choose(
             question=question,
             summary=summary,
             candidates=candidates,
         )
-        if selected_id is not None:
+        if resolution.decided:
+            if resolution.thread_id is None:
+                return None
             return next(
                 (
                     thread
                     for thread in threads
-                    if thread.thread_id == selected_id
+                    if thread.thread_id == resolution.thread_id
                 ),
                 None,
             )
 
-        # Decision compute is optional. An unavailable/low-confidence/none
-        # judgment never degrades the pre-existing deterministic result.
+        # Decision compute is optional. Unavailable or low-confidence compute
+        # preserves the pre-existing deterministic result.
         return ranked[0][3] if ranked else None
