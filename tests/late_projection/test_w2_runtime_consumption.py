@@ -58,7 +58,12 @@ from mind_runtime.homeostasis.policy import (
 )
 from mind_runtime.host.runtime_adapter import _bounded_context
 from mind_runtime.host.xiyue_adapter import render_bounded_context
-from mind_runtime.pipeline.orchestrator import CanonicalPersistenceError, TurnOrchestrator
+from mind_runtime.pipeline.orchestrator import (
+    CanonicalPersistenceError,
+    PostCommitPublicationError,
+    TurnOrchestrator,
+    TurnState,
+)
 from mind_runtime.pipeline.trace import TraceRecorder
 from mind_runtime.slow_plasticity.writer import SlowPlasticityWriter
 from mind_runtime.state.definitions import StateDefinitionRegistry
@@ -767,8 +772,13 @@ def test_w2_12_post_commit_publication_failure_recovers_from_durable_state(tmp_p
         raise RuntimeError("injected publication failure")
 
     monkeypatch.setattr(TurnOrchestrator, "_publish_committed_states", fail)
-    with pytest.raises(CanonicalPersistenceError, match="post-commit publication failed"):
+    with pytest.raises(
+        PostCommitPublicationError,
+        match="post-commit publication failed",
+    ) as raised:
         orchestrator.commit_turn()
+    assert raised.value.canonical_reloaded is True
+    assert orchestrator.state is TurnState.COMMITTED
     assert orchestrator.commit_marker_store.has_commit(
         interaction_id=interaction().interaction_id, scope=interaction().scope
     )
