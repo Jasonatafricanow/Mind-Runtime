@@ -35,7 +35,7 @@ The compatibility baseline used by this integration is:
 
 ```text
 Jasonatafricanow/LCE-Longitudinal-Cognition-Engine
-commit 9edf4eb94c4eaef5b833b0f608f0895a58e05230
+commit 863b0cfd36a2dc9e51aa8e15e1f682aca7220ef4
 package lce-core 0.1.0
 ```
 
@@ -44,7 +44,7 @@ enables the integration should install and verify that source revision, for
 example:
 
 ```powershell
-python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
+python -m pip install "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@863b0cfd36a2dc9e51aa8e15e1f682aca7220ef4"
 ```
 
 Disabled composition does not import LCE or initialize its storage.

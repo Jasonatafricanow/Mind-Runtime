@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  LCE_BASELINE_SHA: 863b0cfd36a2dc9e51aa8e15e1f682aca7220ef4
+
 jobs:
   python:
     runs-on: ubuntu-latest
@@ -48,7 +51,7 @@ jobs:
       - name: Install optional current LCE for covered integration tests
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@${LCE_BASELINE_SHA}"
       - run: python -m coverage run -m pytest -q
       - run: python -m coverage report --show-missing
 
@@ -64,7 +67,7 @@ jobs:
       - name: Install verified current LCE baseline
         run: >-
           python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@9edf4eb94c4eaef5b833b0f608f0895a58e05230"
+          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@${LCE_BASELINE_SHA}"
       - name: Verify MR-LCE binding
         run: python -m pytest tests/lce_binding tests/memory_retrieval -q
 
