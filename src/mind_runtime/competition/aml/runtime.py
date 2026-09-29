@@ -45,10 +45,21 @@ from mind_runtime.integrations.lce_projection import (
 )
 from mind_runtime.memory.admission import MemoryAdmissionService
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
+from mind_runtime.memory.embedding import EmbeddingProvider
 from mind_runtime.memory.product import MemoryProductStore, ThreadStatus
 from mind_runtime.memory.providers.bm25 import (
     BM25RetrievalProvider,
     lexical_tokens,
+)
+from mind_runtime.memory.providers.dense import (
+    InMemoryDenseRetrievalProvider,
+    SqliteCachedEmbeddingProvider,
+)
+from mind_runtime.memory.providers.hybrid import (
+    HybridRRFProvider,
+    HyDEFallbackProvider,
+    QueryExpander,
+    RetrievalArm,
 )
 from mind_runtime.memory.retrieval import (
     MemoryRetrievalQuery,
@@ -184,6 +195,8 @@ class AmlCompetitionRuntime:
         config: AmlRuntimeConfig | None = None,
         semantic: AmlHostSemanticPort | None = None,
         retrieval_provider_factory: RetrievalProviderFactory | None = None,
+        embedding: EmbeddingProvider | None = None,
+        hyde_expander: QueryExpander | None = None,
         decision: DecisionCapability | None = None,
         lce_provider: SemanticDecisionProvider | None = None,
         lce_interpreter: BoundedInterpreter | None = None,
@@ -199,11 +212,9 @@ class AmlCompetitionRuntime:
                 "thread_enabled requires a Body/Host semantic adapter"
             )
         self._semantic = semantic
-        self._provider_factory = (
-            retrieval_provider_factory
-            if retrieval_provider_factory is not None
-            else BM25RetrievalProvider
-        )
+        self._provider_factory = retrieval_provider_factory
+        self._embedding = embedding
+        self._hyde_expander = hyde_expander
         self._decision = decision
         self._lce_provider = lce_provider
         self._lce_interpreter = lce_interpreter
@@ -245,6 +256,46 @@ class AmlCompetitionRuntime:
             scope=Scope(ScopeDomain.USER, user_id=user_id),
             paths=paths,
         )
+
+    def _retrieval_provider(
+        self,
+        *,
+        user_id: str,
+        memories: tuple[CommittedMemory, ...],
+    ) -> RetrievalProvider:
+        if self._provider_factory is not None:
+            return self._provider_factory(memories)
+
+        lexical: RetrievalProvider = BM25RetrievalProvider(memories)
+        provider: RetrievalProvider = lexical
+        if self._embedding is not None:
+            cache = SqliteCachedEmbeddingProvider(
+                self._embedding,
+                self.root
+                / "_derived_embedding_cache"
+                / f"{self._user_key(user_id)}.sqlite",
+            )
+            dense = InMemoryDenseRetrievalProvider(
+                memories,
+                embedding=cache,
+            )
+            provider = HybridRRFProvider(
+                (
+                    RetrievalArm("bm25", lexical),
+                    RetrievalArm("dense", dense),
+                ),
+                rrf_k=60,
+                candidate_multiplier=4,
+            )
+        if self._hyde_expander is not None:
+            provider = HyDEFallbackProvider(
+                provider,
+                self._hyde_expander,
+                min_results=self.config.hyde_min_results,
+                rrf_k=60,
+                candidate_multiplier=4,
+            )
+        return provider
 
     @staticmethod
     def _memory_ids_for_evidence(
@@ -605,7 +656,10 @@ class AmlCompetitionRuntime:
                         and memory.lifecycle is MemoryLifecycle.ACTIVE
                     )
                 )
-                provider = self._provider_factory(memories)
+                provider = self._retrieval_provider(
+                    user_id=request.user_id,
+                    memories=memories,
+                )
                 raw = MemoryRetrievalService(
                     store=canonical,
                     provider=provider,
