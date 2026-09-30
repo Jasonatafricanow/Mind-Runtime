@@ -474,11 +474,11 @@ def test_causal_page_navigation_and_lifecycle(populated_test_dbs: Path):
     causal_html = client.get("/causal").text
     # Standard navigation bar matching other pages
     assert '<div id="nav">' in causal_html
-    assert '<a href="/" class="nav-link">Overview</a>' in causal_html
-    assert '<a href="/timeline" class="nav-link">Timeline</a>' in causal_html
-    assert '<a href="/causal" class="nav-link active">Causal</a>' in causal_html
-    assert '<a href="/history" class="nav-link">History</a>' in causal_html
-    assert '<a href="/live-trace" class="nav-link">Live Trace</a>' in causal_html
+    assert '<a href="/" class="nav-link">状态</a>' in causal_html
+    assert '<a href="/timeline" class="nav-link">时间线</a>' in causal_html
+    assert '<a href="/causal" class="nav-link active">因果</a>' in causal_html
+    assert '<a href="/history" class="nav-link">历史</a>' in causal_html
+    assert '<a href="/live-trace" class="nav-link">实时链路</a>' in causal_html
 
     # Ensure broken old link targets do NOT exist in nav
     assert 'href="/overview"' not in causal_html
