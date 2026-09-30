@@ -40,7 +40,7 @@ def test_product_route_serves_light_state_page(theme_test_client: TestClient):
     res = theme_test_client.get("/")
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
-    assert "Companion State" in res.text
+    assert "MR 观察窗 — 状态" in res.text
     # OW-RESPONSIVE-I18N-ZH-V1: product headings are Chinese-first.
     assert "状态" in res.text
     assert "动态时序" in res.text
