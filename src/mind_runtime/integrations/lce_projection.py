@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from mind_runtime.contracts import InspirationMaterial, Scope
+from mind_runtime.contracts.common import require_aware_utc
 from mind_runtime.facts.persistence import SqliteFactReader
 from mind_runtime.integrations.lce import (
     LceAcceptedUnderstanding,
@@ -29,7 +32,7 @@ from mind_runtime.integrations.lce import (
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
-from mind_runtime.runtime_binding import RuntimeBinding
+from mind_runtime.runtime_binding import RuntimeBinding, bind_storage
 
 if TYPE_CHECKING:
     from lce.cognition.convergence import AuthorityConfig
@@ -54,6 +57,122 @@ if TYPE_CHECKING:
 
 
 _SOURCE_PREFIX = "mr-source:"
+_SYNC_DB_FILENAME = "mr_projection_sync.sqlite"
+_WARM_RECONCILE_LOCK = threading.Lock()
+_WARM_RECONCILED: set[str] = set()
+
+
+@dataclass(frozen=True, slots=True)
+class LceProjectionReconcileReport:
+    source_count: int
+    processed_sources: int
+    invalidated_sources: int
+    retired_sources: int
+    projection_rebuilt: bool
+    current: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _SyncReceipt:
+    evidence_id: str
+    source_fingerprint: str
+    source_state: str
+    status: str
+
+
+class _LceProjectionSyncLedger:
+    """Composition-owned producer/consumer receipts; never cognition authority."""
+
+    def __init__(self, path: Path) -> None:
+        self._conn = sqlite3.connect(str(path), timeout=30.0)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_sync (
+                evidence_id TEXT PRIMARY KEY,
+                source_fingerprint TEXT NOT NULL,
+                source_state TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def receipts(self) -> dict[str, _SyncReceipt]:
+        return {
+            str(row[0]): _SyncReceipt(
+                evidence_id=str(row[0]),
+                source_fingerprint=str(row[1]),
+                source_state=str(row[2]),
+                status=str(row[3]),
+            )
+            for row in self._conn.execute(
+                "SELECT evidence_id,source_fingerprint,source_state,status "
+                "FROM source_sync"
+            )
+        }
+
+    def pending_ids(self) -> tuple[str, ...]:
+        return tuple(
+            str(row[0])
+            for row in self._conn.execute(
+                "SELECT evidence_id FROM source_sync "
+                "WHERE status='pending' ORDER BY evidence_id"
+            )
+        )
+
+    def mark(
+        self,
+        *,
+        evidence_id: str,
+        source_fingerprint: str,
+        source_state: str,
+        status: str,
+    ) -> None:
+        if status not in {"pending", "synced", "missing"}:
+            raise ValueError("unsupported LCE sync receipt status")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO source_sync "
+                "(evidence_id,source_fingerprint,source_state,status,updated_at) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(evidence_id) DO UPDATE SET "
+                "source_fingerprint=excluded.source_fingerprint,"
+                "source_state=excluded.source_state,"
+                "status=excluded.status,"
+                "updated_at=excluded.updated_at",
+                (
+                    evidence_id,
+                    source_fingerprint,
+                    source_state,
+                    status,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+
+def _source_fingerprint(item: RawEvidence) -> str:
+    payload = {
+        "evidence_id": item.evidence_id,
+        "content": item.content,
+        "occurred_at": item.occurred_at.isoformat(),
+        "known_at": item.effective_known_at.isoformat(),
+        "ordering_key": item.effective_ordering_key,
+        "state": item.state,
+        "superseded_by": item.superseded_by,
+        "provenance": dict(item.provenance),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _effective_window_payload(window: object) -> dict[str, object] | None:
