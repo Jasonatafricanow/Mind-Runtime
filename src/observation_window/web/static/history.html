@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MR 观察窗 — 维度历史</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css">\n<script src="/static/display_zh.js"></script>
 <style>
 .history-row { display: grid; grid-template-columns: 70px 80px 60px 60px 60px 1fr; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #1c2128; font-family: var(--mono); font-size: 12px; align-items: center; }
 .history-row:hover { background: #1c2128; }
@@ -29,7 +29,7 @@
   <span id="nav-title">MR OBSERVATION</span>
   <a href="/" class="nav-link">状态</a>
   <a href="/timeline" class="nav-link">时间线</a>
-  <a href="/causal" class="nav-link">Causal</a>
+  <a href="/causal" class="nav-link">因果</a>
   <a href="/history" class="nav-link active">历史</a>
   <a href="/live-trace" class="nav-link">实时链路</a>
   <span id="live-badge">在线</span>
@@ -39,9 +39,9 @@
   <div class="card-title">持久状态（全部维度）</div>
   <div style="margin-bottom:8px">
     <label class="dim" style="font-size:11px">
-      Dimension:
+      维度：
       <select id="dim-filter" style="margin-left:4px">
-        <option value="">all</option>
+        <option value="">全部</option>
       </select>
     </label>
   </div>
