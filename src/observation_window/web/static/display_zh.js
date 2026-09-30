@@ -376,6 +376,53 @@
     "False": "否"
   };
 
+  var PIPELINE_CODES = {
+    "evidence": "证据",
+    "observation": "观察",
+    "transition": "状态转换",
+    "appraisal": "评估",
+    "action": "行动",
+    "interaction": "交互",
+    "event": "事件",
+    "history": "历史",
+    "recovery": "恢复",
+    "rule": "规则",
+    "decision": "决策",
+    "contribution": "贡献",
+    "fast_apply": "应用到快状态",
+    "fast_only": "仅应用到快状态",
+    "slow_accept": "接受为长期状态贡献",
+    "slow_damp": "长期状态贡献衰减处理",
+    "reject": "拒绝",
+    "accept": "接受",
+    "rewrite": "重写",
+    "positive": "正向",
+    "negative": "负向",
+    "neutral": "中性",
+    "unspecified": "未指定",
+    "relational_security": "关系安全",
+    "authoritative": "权威",
+    "derived": "派生",
+    "transient": "临时",
+    "primary": "主要",
+    "secondary": "次要",
+    "direct": "直接",
+    "indirect": "间接",
+    "supported": "有支持",
+    "unsupported": "无支持",
+    "action": "行动",
+    "fact": "事实",
+    "cognitive_meaning": "认知含义",
+    "inspiration": "灵感",
+    "internal_state": "内部状态",
+    "policy_constraint": "策略约束",
+    "persona_style": "人设风格",
+    "prior_expression": "先前表达",
+    "rewrite_guidance": "重写指导",
+    "surface_guidance": "表层表达指导",
+    "surface_control": "表层表达控制"
+  };
+
   /* Known reason codes → primary Chinese explanation (§6).
      Unknown reasons fail safe to the raw value — never guessed. */
   var REASONS = {
@@ -582,7 +629,7 @@
       MODALITY, SEMANTIC_RELATIONS, SEMANTIC_PRECISIONS, DAYPARTS,
       WINDOW_KINDS, MEMORY_LIFECYCLE, THREAD_STATUS, INTENT_STATUS,
       INTENT_KINDS, ACTION_DECISIONS, COGNITIVE_MODES, AUTHORITY_CLASSES,
-      RUNTIME_COMPONENTS, SOURCE_KINDS, BOOLS, REASONS, ORIGINS
+      RUNTIME_COMPONENTS, SOURCE_KINDS, BOOLS, PIPELINE_CODES, REASONS, ORIGINS
     ];
     var key = String(value);
     for (var i = 0; i < maps.length; i += 1) {
@@ -656,7 +703,8 @@
       COGNITIVE_MODES: COGNITIVE_MODES,
       AUTHORITY_CLASSES: AUTHORITY_CLASSES,
       RUNTIME_COMPONENTS: RUNTIME_COMPONENTS,
-      SOURCE_KINDS: SOURCE_KINDS
+      SOURCE_KINDS: SOURCE_KINDS,
+      PIPELINE_CODES: PIPELINE_CODES
     }
   };
 })(window);
