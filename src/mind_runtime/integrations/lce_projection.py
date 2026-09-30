@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 _SOURCE_PREFIX = "mr-source:"
 _SYNC_DB_FILENAME = "mr_projection_sync.sqlite"
 _WARM_RECONCILE_LOCK = threading.Lock()
-_WARM_RECONCILED: set[str] = set()
+_WARM_RECONCILED: dict[str, object] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1057,9 +1057,99 @@ def open_lce_projection_binding(
     return LceProjectionSession(core, source, adapter)
 
 
+@dataclass(frozen=True, slots=True)
+class LceCommittedMemoryProjection:
+    """Post-commit nearline consumer for MR canonical Memory."""
+
+    binding: RuntimeBinding
+    enabled: bool = False
+    production_root: Path | str | None = None
+    lab_root: Path | str | None = None
+
+    def sync_committed_interaction(
+        self,
+        *,
+        interaction_id: str,
+        scope: Scope,
+        committed_at: datetime,
+    ) -> None:
+        require_aware_utc(committed_at, "committed_at")
+        session = open_lce_projection_binding(
+            self.binding,
+            scope,
+            enabled=self.enabled,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        if session is None:
+            return
+        with session:
+            session.sync_committed_interaction(interaction_id)
+
+
+def warm_reconcile_lce_projection(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceProjectionReconcileReport | None:
+    """Synchronously prove MR canonical Memory and LCE are current at boot.
+
+    Successful reconciliation is cached only for this process/runtime/scope.
+    A process restart clears the cache and therefore re-runs the durable diff.
+    """
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    if not isinstance(scope, Scope):
+        raise TypeError("scope must be Scope")
+
+    paths = bind_storage(
+        binding,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    # LCE is enabled only together with Memory in production. A fresh runtime
+    # may not have admitted its first Memory yet, so establish the empty
+    # canonical store before opening the read-only source adapter.
+    CanonicalMemoryStore(paths.memory_db).close()
+    key = json.dumps(
+        [str(paths.root.resolve()), scope_json(scope)],
+        ensure_ascii=False,
+    )
+    with _WARM_RECONCILE_LOCK:
+        cached = _WARM_RECONCILED.get(key)
+        if isinstance(cached, LceProjectionReconcileReport):
+            return cached
+        session = open_lce_projection_binding(
+            binding,
+            scope,
+            enabled=True,
+            production_root=production_root,
+            lab_root=lab_root,
+        )
+        if session is None:
+            raise LceIntegrationUnavailable(
+                "enabled LCE projection binding did not open"
+            )
+        with session:
+            report = session.reconcile_canonical()
+        if not report.current:
+            raise RuntimeError(
+                "LCE warm reconciliation left pending canonical sources"
+            )
+        _WARM_RECONCILED[key] = report
+        return report
+
 __all__ = [
+    "LceCommittedMemoryProjection",
     "LceInspirationMaterial",
+    "LceProjectionReconcileReport",
     "LceProjectionSession",
     "MrLceCanonicalSourceAdapter",
     "open_lce_projection_binding",
+    "warm_reconcile_lce_projection",
 ]
