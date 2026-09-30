@@ -19,6 +19,7 @@ from mind_runtime.integrations.lce_projection import (
     LceCommittedMemoryProjection,
     LceInspirationMaterial,
     MrLceCanonicalSourceAdapter,
+    lce_projection_reconcile_required,
     open_lce_projection_binding,
     warm_reconcile_lce_projection,
 )
@@ -703,3 +704,70 @@ def test_committed_projection_consumes_only_requested_interaction_group(
         assert session.core.memory.get_pipeline_stage(
             by_interaction[("interaction-2",)].evidence_id
         ) is None
+
+
+def test_preopen_projection_failure_sets_dirty_and_next_terminal_reconciles(
+    projection_plane,
+    monkeypatch,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    projection = LceCommittedMemoryProjection(
+        binding=binding,
+        enabled=True,
+        **roots,
+    )
+
+    import mind_runtime.integrations.lce_projection as projection_mod
+
+    real_open = projection_mod.open_lce_projection_binding
+
+    def fail_open(*args, **kwargs):
+        raise RuntimeError("synthetic open failure")
+
+    monkeypatch.setattr(
+        projection_mod,
+        "open_lce_projection_binding",
+        fail_open,
+    )
+    with pytest.raises(RuntimeError, match="synthetic open failure"):
+        projection.sync_committed_interaction(
+            interaction_id="interaction-0",
+            scope=make_scope(),
+            committed_at=datetime.now(UTC),
+        )
+
+    assert lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    monkeypatch.setattr(
+        projection_mod,
+        "open_lce_projection_binding",
+        real_open,
+    )
+    projection.sync_committed_interaction(
+        interaction_id="interaction-1",
+        scope=make_scope(),
+        committed_at=datetime.now(UTC),
+    )
+
+    assert not lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        assert all(
+            session.core.memory.get_pipeline_stage(item.evidence_id)
+            == "complete"
+            for item in session._source.list_current_valid_evidence()
+        )
