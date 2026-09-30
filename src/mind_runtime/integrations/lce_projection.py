@@ -85,6 +85,7 @@ class _LceProjectionSyncLedger:
     """Composition-owned producer/consumer receipts; never cognition authority."""
 
     def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), timeout=30.0)
         self._conn.execute(
             """
@@ -94,6 +95,14 @@ class _LceProjectionSyncLedger:
                 source_state TEXT NOT NULL,
                 status TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sync_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
             """
         )
@@ -115,6 +124,28 @@ class _LceProjectionSyncLedger:
                 "FROM source_sync"
             )
         }
+
+    def reconcile_required(self) -> bool:
+        row = self._conn.execute(
+            "SELECT value FROM sync_meta WHERE key='reconcile_required'"
+        ).fetchone()
+        dirty = row is not None and str(row[0]) == "1"
+        if dirty:
+            return True
+        return self._conn.execute(
+            "SELECT 1 FROM source_sync WHERE status='pending' LIMIT 1"
+        ).fetchone() is not None
+
+    def set_reconcile_required(self, required: bool) -> None:
+        if type(required) is not bool:
+            raise TypeError("required must be bool")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO sync_meta(key,value) "
+                "VALUES('reconcile_required',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("1" if required else "0",),
+            )
 
     def pending_ids(self) -> tuple[str, ...]:
         return tuple(
@@ -726,6 +757,8 @@ class LceProjectionSession:
 
             rebuilt = self.core.ensure_current_projection() is not None
             current = not ledger.pending_ids()
+            if current:
+                ledger.set_reconcile_required(False)
             return LceProjectionReconcileReport(
                 source_count=len(materials),
                 processed_sources=processed,
@@ -1089,17 +1122,90 @@ class LceCommittedMemoryProjection:
         committed_at: datetime,
     ) -> None:
         require_aware_utc(committed_at, "committed_at")
+        if not self.enabled:
+            return
+        adapter = MrMemorySubstrateAdapter(
+            self.binding,
+            scope,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        _verify_binding(self.binding, adapter._paths)
+        ledger = _LceProjectionSyncLedger(
+            _scope_lce_root(adapter) / _SYNC_DB_FILENAME
+        )
+        try:
+            recover_first = ledger.reconcile_required()
+            # This durable marker is written before importing/opening LCE.
+            # Even dependency/open failures therefore become retryable work.
+            ledger.set_reconcile_required(True)
+        finally:
+            ledger.close()
+
         session = open_lce_projection_binding(
             self.binding,
             scope,
-            enabled=self.enabled,
+            enabled=True,
             production_root=self.production_root,
             lab_root=self.lab_root,
         )
         if session is None:
-            return
+            raise LceIntegrationUnavailable(
+                "enabled LCE projection binding did not open"
+            )
         with session:
+            if recover_first:
+                report = session.reconcile_canonical()
+                if not report.current:
+                    raise RuntimeError(
+                        "LCE recovery did not reach current canonical state"
+                    )
             session.sync_committed_interaction(interaction_id)
+
+        ledger = _LceProjectionSyncLedger(
+            _scope_lce_root(adapter) / _SYNC_DB_FILENAME
+        )
+        try:
+            if not ledger.pending_ids():
+                ledger.set_reconcile_required(False)
+        finally:
+            ledger.close()
+
+
+def lce_projection_reconcile_required(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> bool:
+    """Read the durable producer/consumer dirty state without running cognition."""
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    path = _scope_lce_root(adapter) / _SYNC_DB_FILENAME
+    if not path.exists():
+        return True
+    conn = sqlite3.connect(
+        f"file:{path.as_posix()}?mode=ro",
+        uri=True,
+        timeout=1.0,
+    )
+    try:
+        row = conn.execute(
+            "SELECT value FROM sync_meta WHERE key='reconcile_required'"
+        ).fetchone()
+        if row is not None and str(row[0]) == "1":
+            return True
+        return conn.execute(
+            "SELECT 1 FROM source_sync WHERE status='pending' LIMIT 1"
+        ).fetchone() is not None
+    finally:
+        conn.close()
 
 
 def warm_reconcile_lce_projection(
@@ -1165,6 +1271,7 @@ __all__ = [
     "LceProjectionReconcileReport",
     "LceProjectionSession",
     "MrLceCanonicalSourceAdapter",
+    "lce_projection_reconcile_required",
     "open_lce_projection_binding",
     "warm_reconcile_lce_projection",
 ]
