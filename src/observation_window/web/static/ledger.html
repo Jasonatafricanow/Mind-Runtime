@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — State Ledger</title>
+<title>MR 观察窗 — 状态台账</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/display_zh.js"></script>
 <script src="/static/runtime_scope.js"></script>
@@ -52,9 +52,9 @@
     <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
       <button id="btn-refresh" class="btn" style="background:#161b22; border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer;" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
       <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
-      <span class="mono dim" id="status-text" style="font-size:11px;">live</span>
+      <span class="mono dim" id="status-text" style="font-size:11px;">在线</span>
       <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
-      <span id="live-badge">LIVE</span>
+      <span id="live-badge">在线</span>
     </div>
   </div>
 
@@ -73,7 +73,7 @@
     </div>
     <div class="ledger-scroll">
     <div class="history-header">
-      <div>version</div><div>dimension</div><div>status</div><div>value</div><div>delta</div><div>updated_at</div><div>evidence / transitions</div>
+      <div>版本</div><div>维度</div><div>状态</div><div>数值</div><div>变化</div><div>更新时间</div><div>证据 / 转换</div>
     </div>
     <div id="history-list">
       <div class="empty">正在加载状态台账…</div>
@@ -191,9 +191,9 @@ function render() {
         </div>
       </div>
       <div id="ev-panel-${r.state_id}" class="evidence-panel" style="display:none">
-        <div class="dim" style="margin-bottom:4px">STATE ID: ${r.state_id}</div>
-        <div class="dim">EVIDENCE REFS: ${JSON.stringify(r.evidence_refs || [])}</div>
-        <div class="dim">TRANSITION REFS: ${JSON.stringify(r.transition_refs || [])}</div>
+        <div class="dim" style="margin-bottom:4px">状态 ID：${r.state_id}</div>
+        <div class="dim">证据引用：${JSON.stringify(r.evidence_refs || [])}</div>
+        <div class="dim">转换引用：${JSON.stringify(r.transition_refs || [])}</div>
       </div>
     `;
   }).join('');
