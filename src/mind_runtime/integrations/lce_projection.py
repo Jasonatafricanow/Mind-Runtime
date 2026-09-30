@@ -531,6 +531,44 @@ class LceProjectionSession:
         results: list[ProcessResult] = []
         with _ProjectionReceiptStore(self._receipt_path()) as receipts:
             known = receipts.load()
+            revised_source = any(
+                material.evidence_id in known
+                and known[material.evidence_id]
+                != _source_fingerprint(material)
+                for material in materials
+            )
+            if revised_source:
+                # A stable source identity with different canonical bytes cannot
+                # be appended as a compiler replay. Rebuild the derived Path-B
+                # stream from current canonical authority instead.
+                current = self._source.list_current_valid_evidence()
+                replay = getattr(
+                    self.core,
+                    "replay_projection_from_sources",
+                    None,
+                )
+                if not callable(replay):
+                    raise LceIntegrationUnavailable(
+                        "installed lce-core lacks forward replay API"
+                    )
+                replay(current)
+                for material in current:
+                    if (
+                        self.core.memory.get_pipeline_stage(
+                            material.evidence_id
+                        )
+                        != "complete"
+                    ):
+                        raise RuntimeError(
+                            "LCE forward replay did not complete every "
+                            "canonical source"
+                        )
+                    receipts.mark(
+                        material.evidence_id,
+                        _source_fingerprint(material),
+                    )
+                return ()
+
             for material in materials:
                 fingerprint = _source_fingerprint(material)
                 if (
@@ -605,6 +643,13 @@ class LceProjectionSession:
                     continue
                 pending.append(material)
 
+            source_revision = any(
+                material.evidence_id in known
+                and known[material.evidence_id]
+                != fingerprints[material.evidence_id]
+                for material in current
+            )
+
             checkpoint = self.core.memory.get_checkpoint(
                 self.core.compiler.lineage_id
             )
@@ -636,7 +681,7 @@ class LceProjectionSession:
                 )
             )
 
-            if historical_gap:
+            if historical_gap or source_revision:
                 replay = getattr(
                     self.core,
                     "replay_projection_from_sources",
