@@ -2,7 +2,10 @@
 
 from mind_runtime.facts.persistence import SqliteFactBackend
 from mind_runtime.facts.service import FactIngestService
-from mind_runtime.memory.admission import MemoryAdmissionService
+from mind_runtime.memory.admission import (
+    MemoryAdmissionService,
+    MemoryPostCommitProjection,
+)
 from mind_runtime.memory.extraction import MemoryExtractor
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
@@ -17,6 +20,7 @@ def build_bound_fact_service(
     clock: Clock,
     enabled: bool = False,
     extractor: MemoryExtractor | None = None,
+    post_commit_projection: MemoryPostCommitProjection | None = None,
 ) -> FactIngestService:
     if type(enabled) is not bool:
         raise ValueError("enabled must be bool")
@@ -31,6 +35,7 @@ def build_bound_fact_service(
             origin_runtime_id=binding.runtime_id,
             enabled=True,
             extractor=extractor,
+            post_commit_projection=post_commit_projection,
         )
     return FactIngestService(clock=clock, backend=backend, after_admission=hook)
 
