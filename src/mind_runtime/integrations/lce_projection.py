@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 _SOURCE_PREFIX = "mr-source:"
 _SYNC_DB_FILENAME = "mr_projection_sync.sqlite"
 _WARM_RECONCILE_LOCK = threading.Lock()
+_PROJECTION_WRITE_LOCK = threading.RLock()
 _WARM_RECONCILED: dict[str, object] = {}
 
 
@@ -539,12 +540,13 @@ class LceProjectionSession:
 
     def sync_all(self) -> tuple[ProcessResult, ...]:
         """Compile every current canonical source; replay is idempotent."""
-        return cast(
-            "tuple[ProcessResult, ...]",
-            self.core.run_batch(
-                self._source.list_current_valid_evidence()
-            ),
-        )
+        with _PROJECTION_WRITE_LOCK:
+            return cast(
+                "tuple[ProcessResult, ...]",
+                self.core.run_batch(
+                    self._source.list_current_valid_evidence()
+                ),
+            )
 
     def sync_memory_ids(
         self,
@@ -554,16 +556,17 @@ class LceProjectionSession:
     ) -> tuple[ProcessResult, ...]:
         if mode not in {"nearline", "batch"}:
             raise ValueError("mode must be nearline or batch")
-        materials = self._source.evidence_for_memory_ids(memory_ids)
-        if mode == "batch":
-            return cast(
-                "tuple[ProcessResult, ...]",
-                self.core.run_batch(materials),
+        with _PROJECTION_WRITE_LOCK:
+            materials = self._source.evidence_for_memory_ids(memory_ids)
+            if mode == "batch":
+                return cast(
+                    "tuple[ProcessResult, ...]",
+                    self.core.run_batch(materials),
+                )
+            return tuple(
+                self.core.process(material, mode="nearline")
+                for material in materials
             )
-        return tuple(
-            self.core.process(material, mode="nearline")
-            for material in materials
-        )
 
     @property
     def sync_db_path(self) -> Path:
@@ -590,6 +593,10 @@ class LceProjectionSession:
         return True
 
     def reconcile_canonical(self) -> LceProjectionReconcileReport:
+        with _PROJECTION_WRITE_LOCK:
+            return self._reconcile_canonical_locked()
+
+    def _reconcile_canonical_locked(self) -> LceProjectionReconcileReport:
         """Bring durable LCE projection state to the current MR source boundary.
 
         This is a warm-start producer/consumer reconciliation, not a full
@@ -734,6 +741,13 @@ class LceProjectionSession:
         self,
         interaction_id: str,
     ) -> tuple[ProcessResult, ...]:
+        with _PROJECTION_WRITE_LOCK:
+            return self._sync_committed_interaction_locked(interaction_id)
+
+    def _sync_committed_interaction_locked(
+        self,
+        interaction_id: str,
+    ) -> tuple[ProcessResult, ...]:
         """Nearline-consume one fully committed MR interaction group.
 
         Pending receipts from an earlier post-commit failure are retried first
@@ -839,9 +853,10 @@ class LceProjectionSession:
     ) -> TrajectoryRuntimeResult:
         if knowledge_cutoff.tzinfo != UTC:
             raise ValueError("knowledge_cutoff must be UTC")
-        return self.core.bootstrap_trajectory(
-            knowledge_cutoff=knowledge_cutoff
-        )
+        with _PROJECTION_WRITE_LOCK:
+            return self.core.bootstrap_trajectory(
+                knowledge_cutoff=knowledge_cutoff
+            )
 
     def discover_inspiration(
         self,
