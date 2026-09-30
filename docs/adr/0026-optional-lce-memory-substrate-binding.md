@@ -186,3 +186,35 @@ and latent Path B terminate in the same per-Scope Baseline store.
 
 This addendum changes implementation compatibility, not the ADR's one-way
 authority rule.
+
+## 2026-09-30 runtime-consumption addendum
+
+The external-source authority boundary now has an explicit producer/consumer
+runtime contract. Enabling LCE no longer means only "the read binding is
+available" or "mature Threads may hand off".
+
+MR now owns scheduling of derived consumption:
+
+```text
+canonical Memory authority
+    -> terminal interaction-group boundary
+    -> durable LCE sync obligation
+    -> nearline Path-B projection
+```
+
+The sync obligation is recorded before LCE is opened. LCE failure is therefore
+post-canonical derived failure: it cannot undo Memory or a terminal turn, and
+it remains retryable.
+
+On process reconstruction MR performs a warm reconciliation before an enabled
+LCE is considered current. It repairs missing projection inputs, propagates
+canonical lifecycle removals/invalidations, adopts already-complete legacy
+projection inputs without replaying cognition, and invokes LCE's public
+`ensure_current_projection()` recovery seam for stale derivation/crash state.
+
+Read-only LCE access is not a catch-up mechanism. Background Inspiration also
+no longer maintains an independent Memory-import cursor; the shared reconcile
+seam is the single catch-up owner.
+
+This changes scheduling/recovery only. MR Memory remains factual authority and
+LCE remains rebuildable derived cognition.
