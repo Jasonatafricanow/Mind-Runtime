@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — Dimension History</title>
+<title>MR 观察窗 — 维度历史</title>
 <link rel="stylesheet" href="/static/style.css">
 <style>
 .history-row { display: grid; grid-template-columns: 70px 80px 60px 60px 60px 1fr; gap: 8px; padding: 5px 8px; border-bottom: 1px solid #1c2128; font-family: var(--mono); font-size: 12px; align-items: center; }
@@ -27,16 +27,16 @@
 
 <div id="nav">
   <span id="nav-title">MR OBSERVATION</span>
-  <a href="/" class="nav-link">Overview</a>
-  <a href="/timeline" class="nav-link">Timeline</a>
+  <a href="/" class="nav-link">状态</a>
+  <a href="/timeline" class="nav-link">时间线</a>
   <a href="/causal" class="nav-link">Causal</a>
-  <a href="/history" class="nav-link active">History</a>
-  <a href="/live-trace" class="nav-link">Live Trace</a>
-  <span id="live-badge">LIVE</span>
+  <a href="/history" class="nav-link active">历史</a>
+  <a href="/live-trace" class="nav-link">实时链路</a>
+  <span id="live-badge">在线</span>
 </div>
 
 <div class="card">
-  <div class="card-title">Durable States (all dimensions)</div>
+  <div class="card-title">持久状态（全部维度）</div>
   <div style="margin-bottom:8px">
     <label class="dim" style="font-size:11px">
       Dimension:
@@ -46,10 +46,10 @@
     </label>
   </div>
   <div class="history-header">
-    <div>version</div><div>status</div><div>value</div><div>delta</div><div>updated_at</div><div>evidence / transitions</div>
+    <div>版本</div><div>状态</div><div>数值</div><div>变化</div><div>更新时间</div><div>证据 / 转换</div>
   </div>
   <div id="history-list">
-    <div class="empty">Loading…</div>
+    <div class="empty">正在加载…</div>
   </div>
 </div>
 
@@ -84,7 +84,7 @@ function render() {
                         .sort((a, b) => a.dimension.localeCompare(b.dimension) || a.version - b.version);
   const el = document.getElementById('history-list');
   if (rows.length === 0) {
-    el.innerHTML = '<div class="empty">NO DATA</div>';
+    el.innerHTML = '<div class="empty">暂无数据</div>';
     return;
   }
   // For each dimension, compute delta from previous version
@@ -116,7 +116,7 @@ function render() {
     const transition_section = trRefs ? `<div>tr: ${trRefs}</div>` : '';
     return `<div class="history-row">
       <div class="version">v${r.version}</div>
-      <div><span class="badge badge-${r.status === 'active' ? 'applied' : 'abstained'}">${esc(r.status)}</span></div>
+      <div><span class="badge badge-${r.status === 'active' ? 'applied' : 'abstained'}" title="${esc(r.status)}">${esc(OWDisplay.displayStatus(r.status))}</span></div>
       <div class="value">${esc(String(r.value))}</div>
       <div class="delta ${deltaCls}">${deltaStr}</div>
       <div class="dim">${formatTs(r.updated_at)}</div>
@@ -145,7 +145,7 @@ async function showEvidence(id) {
     const panel = document.createElement('div');
     panel.id = 'ev-panel-' + id;
     panel.className = 'evidence-panel';
-    panel.innerHTML = `<div style="margin-bottom:6px; font-weight:600; color:var(--accent)">Evidence: ${esc(id)}</div>${rows}`;
+    panel.innerHTML = `<div style="margin-bottom:6px; font-weight:600; color:var(--accent)">证据：${esc(id)}</div>${rows}`;
     document.querySelector('.history-row') ? document.getElementById('history-list').prepend(panel) : null;
   } catch (e) {
     // ignore
