@@ -773,6 +773,11 @@ def test_runtime_stack_wires_opt_in_lce_inspiration_worker(
 
     monkeypatch.setattr(
         projection_mod,
+        "warm_reconcile_lce_projection",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        projection_mod,
         "open_lce_projection_binding",
         lambda *_args, **_kwargs: projection_session,
     )
