@@ -605,13 +605,71 @@ class LceProjectionSession:
                     continue
                 pending.append(material)
 
-            if pending:
-                for result, material in zip(
+            checkpoint = self.core.memory.get_checkpoint(
+                self.core.compiler.lineage_id
+            )
+            last_order = (
+                (
+                    checkpoint.last_ordering_key,
+                    str(
+                        checkpoint.state.get(
+                            "last_evidence_id",
+                            "",
+                        )
+                    ),
+                )
+                if (
+                    checkpoint is not None
+                    and checkpoint.last_ordering_key is not None
+                )
+                else None
+            )
+            historical_gap = (
+                last_order is not None
+                and any(
+                    (
+                        material.effective_ordering_key,
+                        material.evidence_id,
+                    )
+                    < last_order
+                    for material in pending
+                )
+            )
+
+            if historical_gap:
+                replay = getattr(
+                    self.core,
+                    "replay_projection_from_sources",
+                    None,
+                )
+                if not callable(replay):
+                    raise LceIntegrationUnavailable(
+                        "installed lce-core lacks forward replay API"
+                    )
+                replay(current)
+                for material in current:
+                    if (
+                        self.core.memory.get_pipeline_stage(
+                            material.evidence_id
+                        )
+                        != "complete"
+                    ):
+                        raise RuntimeError(
+                            "LCE forward replay did not complete every "
+                            "canonical source"
+                        )
+                    receipts.mark(
+                        material.evidence_id,
+                        fingerprints[material.evidence_id],
+                    )
+                projected = len(current)
+                unchanged = 0
+            elif pending:
+                for _result, material in zip(
                     self.core.run_batch(pending),
                     pending,
                     strict=True,
                 ):
-                    del result
                     if (
                         self.core.memory.get_pipeline_stage(
                             material.evidence_id
