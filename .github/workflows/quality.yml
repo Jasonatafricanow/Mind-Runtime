@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  LCE_BASELINE_SHA: f6a4bc8164a65e69845444a7b697f8a1af0cd626
+  LCE_BASELINE_SHA: 72588085e4e9fcf656ad1d2e7354ed6295745f05
 
 jobs:
   python:
