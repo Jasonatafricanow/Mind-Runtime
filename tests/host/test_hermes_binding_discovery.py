@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import xiyue.mr_seam as mr_seam
 from tests.golden.fixtures.common import make_state
 
