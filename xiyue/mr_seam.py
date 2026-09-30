@@ -34,6 +34,7 @@ _ADAPTER_PATH = None
 _RUNTIME_DIR = Path.home() / ".hermes" / "profiles" / "xiyue" / "runtime"
 _DEFAULT_READINESS_FILE = _RUNTIME_DIR / "readiness.json"
 _active_gateway_epoch: tuple[str, int, str] | None = None
+_lce_startup_current: bool | None = None
 
 
 def _env_enabled(name: str) -> bool:
@@ -401,7 +402,8 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
     GATEWAY OWNED: Only called by the real gateway process startup hook
     (or explicit test fixtures). Non-gateway processes must never call this.
     """
-    global _active_gateway_epoch
+    global _active_gateway_epoch, _lce_startup_current
+    _lce_startup_current = None
     cur_pid, cur_started = get_gateway_process_identity()
     target_pid = pid if pid is not None else cur_pid
     target_started = started_at if started_at is not None else cur_started
@@ -428,6 +430,7 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
             "semantic_provider_available": False,
             "appraisal_provider_available": False,
             "slow_writer_active": False,
+            "lce_projection_current": False,
             "observation_window_up": False,
         },
         "reasons": ["epoch_initialized"],
@@ -511,6 +514,7 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
         "semantic_provider_available": False,
         "appraisal_provider_available": False,
         "slow_writer_active": False,
+        "lce_projection_current": False,
     }
     reasons = []
 
@@ -597,6 +601,15 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
             reasons.append("slow_plasticity_window_size_zero")
     except Exception as comp_exc:
         reasons.append(f"composition_failed: {comp_exc}")
+
+    lce_enabled = _env_enabled("MR_LCE_ENABLED") or _env_enabled(
+        "MR_LCE_INSPIRATION_ENABLED"
+    )
+    checks["lce_projection_current"] = (
+        not lce_enabled or _lce_startup_current is True
+    )
+    if lce_enabled and _lce_startup_current is not True:
+        reasons.append("lce_projection_not_reconciled")
 
     all_ok = all(checks.values())
     return all_ok, checks, reasons
@@ -761,9 +774,46 @@ def stop_bundle_readiness_reconciler() -> None:
 
 
 def on_gateway_process_startup() -> dict[str, Any]:
-    """Gateway boot hook: establish epoch and keep bundle health current."""
+    """Gateway boot hook: establish epoch and reconcile enabled LCE first."""
+    global _lce_startup_current
     cur_pid, cur_started = get_gateway_process_identity()
     epoch_rec = begin_runtime_epoch(cur_pid, cur_started)
+
+    lce_enabled = _env_enabled("MR_LCE_ENABLED") or _env_enabled(
+        "MR_LCE_INSPIRATION_ENABLED"
+    )
+    if lce_enabled:
+        try:
+            if not _ensure_mr_importable():
+                raise RuntimeError("mind_runtime not importable for LCE startup")
+            from mind_runtime.contracts import Scope, ScopeDomain
+            from mind_runtime.integrations.lce_projection import (
+                reconcile_lce_projection,
+            )
+            from mind_runtime.memory.store import CanonicalMemoryStore
+            from mind_runtime.runtime_binding import (
+                bind_storage,
+                discover_production_binding,
+            )
+
+            binding = discover_production_binding(persona_id="kayla_v0")
+            paths = bind_storage(binding)
+            CanonicalMemoryStore(paths.memory_db).close()
+            report = reconcile_lce_projection(
+                binding,
+                Scope(domain=ScopeDomain.USER, user_id="user"),
+                enabled=True,
+            )
+            _lce_startup_current = report is not None
+        except Exception as exc:  # noqa: BLE001
+            _lce_startup_current = False
+            _logger.warning(
+                "Gateway LCE startup reconciliation failed: %s",
+                type(exc).__name__,
+            )
+    else:
+        _lce_startup_current = True
+
     try:
         current = mark_runtime_ready()
     except Exception as exc:
