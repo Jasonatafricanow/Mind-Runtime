@@ -828,7 +828,7 @@ class LceProjectionSession:
                     status="synced",
                 )
             self.core.ensure_current_projection()
-            return cast("tuple[ProcessResult, ...]", results)
+            return results
         finally:
             ledger.close()
 
