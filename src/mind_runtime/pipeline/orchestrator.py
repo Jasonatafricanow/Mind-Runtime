@@ -79,6 +79,7 @@ from mind_runtime.facts.service import FactIngestService
 from mind_runtime.homeostasis.contracts import HomeostasisDecision
 from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.persistence import InMemoryIntentBackend
+from mind_runtime.memory.projection import MemoryPostCommitProjectionPort
 from mind_runtime.memory.pending import (
     PendingStatus,
     PendingWorkingEvidence,
@@ -307,6 +308,7 @@ class TurnOrchestrator:
         surface_projection_port: SurfaceProjectionPort | None = None,
         surface_delivery_backend: Any = None,
         thread_updates: ThreadUpdatePort | None = None,
+        memory_post_commit_projection: MemoryPostCommitProjectionPort | None = None,
     ) -> None:
         self.surface_projection_port = surface_projection_port
         self._surface_delivery_backend = surface_delivery_backend
@@ -315,6 +317,7 @@ class TurnOrchestrator:
         self._trace = trace
         self._telemetry_sink = telemetry_sink
         self._thread_updates = thread_updates
+        self._memory_post_commit_projection = memory_post_commit_projection
         # The D3 factual plane is the only ingest path: no direct Observation
         # construction may bypass authority/ownership/idempotency/provenance.
         self.fact_ingest = fact_ingest or FactIngestService(clock=clock)
@@ -1719,6 +1722,7 @@ class TurnOrchestrator:
             if interaction_replay:
                 self._drop_checkpoint(turn.interaction.interaction_id)
                 self.state = TurnState.COMMITTED
+                self._project_committed_memory(turn)
                 return
 
             slow_scope = None
@@ -1984,6 +1988,7 @@ class TurnOrchestrator:
                 )
             except Exception:
                 pass
+        self._project_committed_memory(turn)
         if self._thread_updates is not None and turn.transition_result is not None:
             try:
                 updated_threads = self._thread_updates.apply(
@@ -2013,6 +2018,35 @@ class TurnOrchestrator:
             "commit",
             at=self._clock.now(),
         )
+
+    def _project_committed_memory(self, turn: _Turn) -> None:
+        """Best-effort post-commit Memory -> higher projection handoff.
+
+        Canonical authority is already durable before this seam. Failure is
+        traced and left for restart reconciliation; it can never abort or
+        rewrite the committed turn.
+        """
+        projector = self._memory_post_commit_projection
+        if projector is None:
+            return
+        try:
+            projected = projector.project_interaction(
+                scope=turn.interaction.scope,
+                interaction_id=turn.interaction.interaction_id,
+            )
+            self._trace.record(
+                turn.interaction.interaction_id,
+                "memory.post_commit_projection",
+                outcome=f"{projected}_sources",
+                at=self._clock.now(),
+            )
+        except Exception as exc:
+            self._trace.record(
+                turn.interaction.interaction_id,
+                "memory.post_commit_projection_failed",
+                outcome=type(exc).__name__,
+                at=self._clock.now(),
+            )
 
     def abort_turn(self) -> None:
         try:
