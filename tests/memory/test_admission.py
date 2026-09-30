@@ -268,3 +268,76 @@ def test_orchestrator_consumes_new_once_when_memory_fails(tmp_path):
     orch.ingest(make_evidence())
     assert orch.observations == ()
     assert store.load_all() == ()
+
+
+class _ProjectionRecorder:
+    def __init__(self, *, fail_once=False):
+        self.calls = []
+        self.fail_once = fail_once
+
+    def project_committed_memories(self, memories):
+        self.calls.append(tuple(memory.memory_id for memory in memories))
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("projection unavailable")
+
+
+def test_memory_commit_notifies_derived_projection_after_durable_commit(tmp_path):
+    from mind_runtime.memory.admission import MemoryAdmissionService
+    from mind_runtime.memory.store import CanonicalMemoryStore
+
+    backend = SqliteFactBackend(tmp_path / "facts.sqlite")
+    store = CanonicalMemoryStore(tmp_path / "memory.sqlite")
+    projection = _ProjectionRecorder()
+    admission = MemoryAdmissionService(
+        store=store,
+        facts=backend,
+        clock=FakeClock(NOW),
+        origin_runtime_id="runtime-1",
+        enabled=True,
+        post_commit_projection=projection,
+    )
+    service = FactIngestService(
+        clock=FakeClock(NOW),
+        backend=backend,
+        after_admission=admission,
+    )
+
+    assert admit(service).disposition.value == "new"
+    memories = store.load_all()
+    assert len(memories) == 1
+    assert projection.calls == [(memories[0].memory_id,)]
+
+
+def test_projection_failure_preserves_memory_and_replay_retries(tmp_path):
+    from mind_runtime.memory.admission import MemoryAdmissionService
+    from mind_runtime.memory.store import CanonicalMemoryStore
+
+    backend = SqliteFactBackend(tmp_path / "facts.sqlite")
+    store = CanonicalMemoryStore(tmp_path / "memory.sqlite")
+    projection = _ProjectionRecorder(fail_once=True)
+    admission = MemoryAdmissionService(
+        store=store,
+        facts=backend,
+        clock=FakeClock(NOW),
+        origin_runtime_id="runtime-1",
+        enabled=True,
+        post_commit_projection=projection,
+    )
+    service = FactIngestService(
+        clock=FakeClock(NOW),
+        backend=backend,
+        after_admission=admission,
+    )
+
+    assert admit(service).disposition.value == "new"
+    memories = store.load_all()
+    assert len(memories) == 1
+    assert len(projection.calls) == 1
+
+    assert admit(service).disposition.value == "replay"
+    assert store.load_all() == memories
+    assert projection.calls == [
+        (memories[0].memory_id,),
+        (memories[0].memory_id,),
+    ]
