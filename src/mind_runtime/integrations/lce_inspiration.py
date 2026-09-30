@@ -16,7 +16,6 @@ from mind_runtime.contracts import InspirationMaterial
 from mind_runtime.integrations.lce_projection import LceProjectionSession
 
 _DISCOVERY_VERSION = "mr-lce-inspiration-v1"
-_SYNC_CHUNK_SIZE = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +29,7 @@ class BackgroundInspirationReport:
 
 
 class LceInspirationBackgroundWorker:
-    """Catch up canonical Memory, run one Path-B pass, and queue material.
+    """Run bounded Path-B discovery over an already reconciled projection.
 
     DAYDREAM/DREAM only decide which background execution lane is being used.
     They do not change LCE authority or create outbound permission.
@@ -132,9 +131,10 @@ class LceInspirationBackgroundWorker:
     ) -> BackgroundInspirationReport:
         """Run one bounded background pass.
 
-        New canonical Memory is synchronized incrementally. Full trajectory
-        bootstrap runs only when new canonical material arrived or when this
-        discovery version has never run for the namespace.
+        Canonical catch-up authority belongs to the shared MR->LCE reconcile
+        seam. This worker verifies that seam first, then uses its own processed
+        Memory IDs only to decide whether inspiration discovery needs another
+        pass.
         """
         if mode not in {CognitiveMode.DAYDREAM, CognitiveMode.DREAM}:
             raise ValueError("background inspiration mode must be DAYDREAM or DREAM")
@@ -146,9 +146,13 @@ class LceInspirationBackgroundWorker:
         new_ids = tuple(memory_id for memory_id in current_ids if memory_id not in processed)
         first_discovery = self._meta("discovery_version") != _DISCOVERY_VERSION
 
-        for offset in range(0, len(new_ids), _SYNC_CHUNK_SIZE):
-            chunk = new_ids[offset : offset + _SYNC_CHUNK_SIZE]
-            self._session.sync_memory_ids(chunk, mode="nearline")
+        # One reconciliation contract owns missing/invalid source handling.
+        # Do not maintain a second Memory-ID based ingestion path here.
+        reconcile = self._session.reconcile_canonical()
+        if not reconcile.current:
+            raise RuntimeError(
+                "LCE projection is not current before inspiration discovery"
+            )
 
         discovered: tuple[InspirationMaterial, ...] = ()
         if new_ids or first_discovery:
