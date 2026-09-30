@@ -79,12 +79,12 @@ from mind_runtime.facts.service import FactIngestService
 from mind_runtime.homeostasis.contracts import HomeostasisDecision
 from mind_runtime.intents.lifecycle import IntentLifecycleService
 from mind_runtime.intents.persistence import InMemoryIntentBackend
-from mind_runtime.memory.projection import MemoryPostCommitProjectionPort
 from mind_runtime.memory.pending import (
     PendingStatus,
     PendingWorkingEvidence,
     PendingWorkingOverlay,
 )
+from mind_runtime.memory.projection import MemoryPostCommitProjectionPort
 from mind_runtime.memory.threading import ThreadUpdatePort
 from mind_runtime.pipeline.checkpoints import (
     CheckpointStore,
