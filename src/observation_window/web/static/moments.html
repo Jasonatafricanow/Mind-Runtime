@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — Moments</title>
+<title>MR 观察窗 — 交互</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/display_zh.js"></script>
 <script src="/static/runtime_scope.js"></script>
@@ -53,7 +53,7 @@
 <div class="layout">
   <!-- Unified Navigation Bar -->
   <div id="nav">
-    <span id="nav-title">MR Observation</span>
+    <span id="nav-title">MR 观察窗</span>
     <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
     <div id="runtime-selector" class="runtime-selector" role="group"></div>
     <a href="/" class="nav-link">状态</a>
@@ -69,9 +69,9 @@
     <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
       <button id="btn-refresh" class="btn" class="btn-refresh" style="background:var(--surface); border:1px solid var(--border); color:var(--text-secondary); font-family:var(--body); font-size:12px; font-weight:500; padding:4px 12px; border-radius:6px; cursor:pointer;" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
       <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
-      <span class="mono dim" id="status-text" style="font-size:11px;">live</span>
+      <span class="mono dim" id="status-text" style="font-size:11px;">在线</span>
       <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
-      <span id="live-badge">LIVE</span>
+      <span id="live-badge">在线</span>
     </div>
   </div>
 
