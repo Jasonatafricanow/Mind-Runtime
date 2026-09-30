@@ -109,5 +109,5 @@ def test_selector_has_no_local_persistence_or_polling():
 def test_selector_label_uses_existing_i18n_seam():
     display = (_STATIC_DIR / "display_zh.js").read_text(encoding="utf-8")
     source = _SELECTOR_JS.read_text(encoding="utf-8")
-    assert '"runtimeSelector": "Runtime / 运行时"' in display
+    assert '"runtimeSelector": "运行时"' in display
     assert 'displayLabel("runtimeSelector")' in source

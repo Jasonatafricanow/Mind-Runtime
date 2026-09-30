@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — Companion State</title>
+<title>MR 观察窗 — 状态</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/display_zh.js"></script>
 <script src="/static/runtime_scope.js"></script>
@@ -255,7 +255,7 @@
 <div class="layout">
   <!-- Unified Navigation Bar -->
   <div id="nav">
-    <span id="nav-title">MR Observation</span>
+    <span id="nav-title">MR 观察窗</span>
     <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
     <div id="runtime-selector" class="runtime-selector" role="group"></div>
     <a href="/" class="nav-link active">状态</a>
@@ -271,9 +271,9 @@
     <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
       <button id="btn-refresh" class="btn-refresh" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
       <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
-      <span class="dim" id="status-text" style="font-size:12px;">live</span>
+      <span class="dim" id="status-text" style="font-size:12px;">在线</span>
       <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
-      <span id="live-badge">LIVE</span>
+      <span id="live-badge">在线</span>
     </div>
   </div>
 
@@ -291,8 +291,8 @@
     </div>
     <div class="runtime-secondary" style="margin-left:auto;" title="Runtime debug metadata">
       <span>PID <span id="hdr-gw-pid">—</span></span>
-      <span>Epoch <span id="hdr-epoch">—</span></span>
-      <span>Epoch 轮次 <span id="stat-epoch-turns">—</span></span>
+      <span>运行周期 <span id="hdr-epoch">—</span></span>
+      <span>本周期轮次 <span id="stat-epoch-turns">—</span></span>
     </div>
     <input type="checkbox" id="toggle-debug-states" style="display:none;" />
   </div>
@@ -303,7 +303,7 @@
     <div class="card-subtitle" style="margin-bottom:10px;">权威快状态 · 点击卡片聚焦轨迹</div>
     <div class="affect-cards-grid" id="affect-grid">
       <!-- 4 Cards populated dynamically -->
-      <div class="empty">Loading affect states...</div>
+      <div class="empty">正在加载情绪状态…</div>
     </div>
   </div>
 
@@ -321,7 +321,7 @@
         </div>
       </div>
     </div>
-    <div class="chart-subtitle" id="chart-title" style="margin-bottom:2px;">Irritation</div>
+    <div class="chart-subtitle" id="chart-title" style="margin-bottom:2px;">烦躁</div>
     <div class="chart-container" id="chart-box">
       <div class="chart-plot">
         <svg id="trend-svg" viewBox="0 0 1200 300" preserveAspectRatio="none"></svg>
@@ -838,7 +838,7 @@ function renderAccumulatedSelf(acc) {
       histBox.style.display = "block";
       histItems.innerHTML = history.map(h => `
         <div style="padding:3px 0; border-bottom:1px solid var(--border-soft); display:flex; justify-content:space-between;">
-          <span style="color:var(--dim);">v${h.version} [${h.status}]</span>
+          <span style="color:var(--dim);">v${h.version} [${esc(OWDisplay.displayStatus(h.status))}]</span>
           <span style="font-weight:600; color:var(--purple);">${h.value.toFixed(4)}</span>
           <span style="color:var(--faint);">${OWDisplay.fmtTime(h.updated_at) !== '—' ? OWDisplay.fmtTime(h.updated_at).slice(6) : '—'}</span>
         </div>

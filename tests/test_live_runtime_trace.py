@@ -170,8 +170,8 @@ def test_web_api_and_page_routes(tmp_path: Path):
     # 2. HTML page route
     r_page = client.get("/live-trace")
     assert r_page.status_code == 200
-    assert "MR Observation — Live Runtime Trace" in r_page.text
-    assert "GATEWAY MAY BE STALE — RESTART REQUIRED" in r_page.text
+    assert "MR 观察窗 — 实时链路" in r_page.text
+    assert "网关可能已过期 — 需要重启" in r_page.text
     assert "/api/live-trace" in r_page.text
     assert "setInterval(load, 1500)" in r_page.text
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — Overview</title>
-<link rel="stylesheet" href="/static/style.css">
+<title>MR 观察窗 — 概览</title>
+<link rel="stylesheet" href="/static/style.css">\n<script src="/static/display_zh.js"></script>
 <style>
 .bundle-header-card {
   background: var(--surface);
@@ -181,19 +181,19 @@
 <body>
 
 <div id="nav">
-  <span id="nav-title">MR OBSERVATION</span>
-  <a href="/" class="nav-link active">Overview</a>
-  <a href="/timeline" class="nav-link">Timeline</a>
-  <a href="/causal" class="nav-link">Causal</a>
-  <a href="/history" class="nav-link">History</a>
-  <a href="/live-trace" class="nav-link">Live Trace</a>
-  <span id="live-badge">LIVE</span>
+  <span id="nav-title">MR 观察窗</span>
+  <a href="/" class="nav-link active">状态</a>
+  <a href="/timeline" class="nav-link">时间线</a>
+  <a href="/causal" class="nav-link">因果</a>
+  <a href="/history" class="nav-link">历史</a>
+  <a href="/live-trace" class="nav-link">实时链路</a>
+  <span id="live-badge">在线</span>
 </div>
 
 <!-- Compact Bundle Header -->
 <div class="bundle-header-card" id="bundle-header-area">
   <div class="header-item">
-    <span class="header-label">Bundle:</span>
+    <span class="header-label">整体状态：</span>
     <span id="hdr-bundle-state" class="badge badge-not-ready">—</span>
   </div>
   <div class="header-item">
@@ -205,23 +205,23 @@
     <span id="hdr-mr" class="badge badge-not-ready">—</span>
   </div>
   <div class="header-item">
-    <span class="header-label">Semantic:</span>
+    <span class="header-label">语义：</span>
     <span id="hdr-semantic" class="badge badge-not-ready">—</span>
   </div>
   <div class="header-item">
-    <span class="header-label">Appraisal:</span>
+    <span class="header-label">评估：</span>
     <span id="hdr-appraisal" class="badge badge-not-ready">—</span>
   </div>
   <div class="header-item">
-    <span class="header-label">Slow Writer:</span>
+    <span class="header-label">长期状态写入：</span>
     <span id="hdr-slow-writer" class="badge badge-not-ready">—</span>
   </div>
   <div class="header-item">
-    <span class="header-label">OW:</span>
-    <span id="hdr-ow" class="badge badge-online">ONLINE</span>
+    <span class="header-label">观察窗：</span>
+    <span id="hdr-ow" class="badge badge-online">在线</span>
   </div>
   <div class="header-item" style="margin-left: auto;">
-    <span class="header-label">Ready At:</span>
+    <span class="header-label">就绪时间：</span>
     <span id="hdr-ready-at" class="header-val" style="color: var(--dim); font-size: 11px;">—</span>
   </div>
 </div>
@@ -231,10 +231,10 @@
   <div style="display: flex; flex-direction: column; gap: 8px;">
     <div class="card">
       <div class="states-header">
-        <div class="card-title" style="margin-bottom: 0;">Current States (Canonical)</div>
+        <div class="card-title" style="margin-bottom: 0;">当前权威状态</div>
         <label class="debug-toggle-label">
           <input type="checkbox" id="toggle-debug-states" onchange="renderAllStates()">
-          Show debug/placeholders
+          显示调试 / 占位项
         </label>
       </div>
       <div id="states-area">
@@ -242,7 +242,7 @@
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Last Turn Change</div>
+      <div class="card-title">最近轮次变化</div>
       <div id="last-change">—</div>
     </div>
   </div>
@@ -250,37 +250,37 @@
   <!-- Right: Turn Stats + Last Turn Details -->
   <div style="display: flex; flex-direction: column; gap: 8px;">
     <div class="card">
-      <div class="card-title">Turn Statistics</div>
+      <div class="card-title">轮次统计</div>
       <div class="turn-stats-grid">
         <div class="stat-box">
-          <div class="stat-box-title">Current Epoch Turns</div>
+          <div class="stat-box-title">当前运行周期轮次</div>
           <div class="stat-box-val" id="stat-epoch-turns">—</div>
         </div>
         <div class="stat-box">
-          <div class="stat-box-title">Persisted / Committed</div>
+          <div class="stat-box-title">已持久化 / 已提交</div>
           <div class="stat-box-val" id="stat-committed-turns">—</div>
         </div>
       </div>
       <div class="last-committed-box">
-        <span class="header-label">Last Committed Turn:</span>
+        <span class="header-label">最近提交轮次：</span>
         <div id="stat-last-committed" style="margin-top: 4px; color: var(--text);">—</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">Last Turn (Live)</div>
+      <div class="card-title">最近轮次（实时）</div>
       <div id="last-turn">
-        <div class="empty">No live turn yet</div>
+        <div class="empty">暂无实时轮次</div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Last Appraisal</div>
+      <div class="card-title">最近评估</div>
       <div id="last-appraisal">
         <div class="empty">—</div>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Last Decision</div>
+      <div class="card-title">最近决策</div>
       <div id="last-decision">
         <div class="empty">—</div>
       </div>
@@ -327,30 +327,30 @@ function statusBadgeClass(status) {
 function renderBundleHeader(h) {
   if (!h) return;
   const bState = document.getElementById('hdr-bundle-state');
-  bState.textContent = h.bundle_state || 'UNKNOWN';
+  bState.textContent = OWDisplay.displayStatus(h.bundle_state || 'UNKNOWN');
   bState.className = 'badge ' + statusBadgeClass(h.bundle_state);
 
   document.getElementById('hdr-gw-pid').textContent = h.gateway_pid != null ? h.gateway_pid : '—';
 
   const mr = document.getElementById('hdr-mr');
-  mr.textContent = h.mr_status || 'UNKNOWN';
+  mr.textContent = OWDisplay.displayStatus(h.mr_status || 'UNKNOWN');
   mr.className = 'badge ' + statusBadgeClass(h.mr_status);
 
   const sem = document.getElementById('hdr-semantic');
-  sem.textContent = h.semantic_status || 'UNKNOWN';
+  sem.textContent = OWDisplay.displayStatus(h.semantic_status || 'UNKNOWN');
   sem.className = 'badge ' + statusBadgeClass(h.semantic_status);
 
   const app = document.getElementById('hdr-appraisal');
-  app.textContent = h.appraisal_status || 'UNKNOWN';
+  app.textContent = OWDisplay.displayStatus(h.appraisal_status || 'UNKNOWN');
   app.className = 'badge ' + statusBadgeClass(h.appraisal_status);
 
   const sw = document.getElementById('hdr-slow-writer');
-  sw.textContent = h.slow_writer_status || 'UNKNOWN';
+  sw.textContent = OWDisplay.displayStatus(h.slow_writer_status || 'UNKNOWN');
   sw.className = 'badge ' + statusBadgeClass(h.slow_writer_status);
 
   document.getElementById('hdr-ow').textContent = h.ow_status || 'ONLINE';
 
-  let readyText = 'null';
+  let readyText = '—';
   if (h.runtime_ready_at) {
     const dt = new Date(h.runtime_ready_at);
     readyText = isNaN(dt.getTime()) ? h.runtime_ready_at : dt.toLocaleTimeString();
@@ -375,14 +375,14 @@ function renderTurnStats(ts) {
     lastEl.innerHTML = `<div><span class="dim">ix:</span> <span class="mono">${esc(ix)}</span></div>
       <div class="dim" style="margin-top:2px;">at ${esc(atStr)}</div>`;
   } else {
-    lastEl.innerHTML = '<span class="dim">None committed yet</span>';
+    lastEl.innerHTML = '<span class="dim">尚无已提交轮次</span>';
   }
 }
 
 function renderAllStates() {
   const el = document.getElementById('states-area');
   if (!cachedStates || cachedStates.length === 0) {
-    el.innerHTML = '<div class="empty">NO DATA</div>';
+    el.innerHTML = '<div class="empty">暂无数据</div>';
     return;
   }
 
@@ -396,7 +396,7 @@ function renderAllStates() {
 
   // 1. FAST STATE
   if (fastStates.length > 0) {
-    html += `<div class="section-title">FAST STATE (AFFECT)</div>`;
+    html += `<div class="section-title">快状态（情绪）</div>`;
     html += fastStates.map(renderSingleStateRow).join('');
   }
 
@@ -466,7 +466,7 @@ function renderSingleStateRow(s) {
   return `<div class="state-row">
     <div class="state-name-box">
       <span class="state-short-name">${esc(shortName)}${verBadge}</span>
-      <span class="state-full-dim" title="${esc(s.dimension)}">${esc(s.dimension)}</span>
+      <span class="state-full-dim" title="${esc(s.dimension)}">${esc(OWDisplay.displayDimension(s.dimension))}</span>
     </div>
     ${valHtml}
     ${deltaHtml}
@@ -477,7 +477,7 @@ function renderSingleStateRow(s) {
 
 function renderLastTurn(turn) {
   if (!turn) {
-    document.getElementById('last-turn').innerHTML = '<div class="empty">NO LIVE TURN</div>';
+    document.getElementById('last-turn').innerHTML = '<div class="empty">暂无实时轮次</div>';
     document.getElementById('last-change').innerHTML = '—';
     document.getElementById('last-appraisal').innerHTML = '<div class="empty">—</div>';
     document.getElementById('last-decision').innerHTML = '<div class="empty">—</div>';
@@ -504,12 +504,12 @@ function renderLastAppraisal(a) {
   if (!a) { el.innerHTML = '<div class="empty">—</div>'; return; }
   const pol = `polarity-${a.polarity || 'neutral'}`;
   el.innerHTML = `<div class="mono" style="font-size:11px">
-    <span class="${pol}">${esc(a.polarity || '?')}</span>
-    &nbsp; authority:<span class="dim">${esc(a.authority)}</span>
-    &nbsp; causal:<span class="dim">${esc(a.causal_status)}</span>
+    <span class="${pol}" title="${esc(a.polarity || '?')}">${esc(OWDisplay.displayCode(a.polarity || '?'))}</span>
+    &nbsp; 权威级别：<span class="dim" title="${esc(a.authority)}">${esc(OWDisplay.displayCode(a.authority))}</span>
+    &nbsp; 因果状态：<span class="dim" title="${esc(a.causal_status)}">${esc(OWDisplay.displayCode(a.causal_status))}</span>
   </div>
   <div class="dim mt4">confidence: ${a.provider_confidence?.toFixed(3) ?? '—'}</div>
-  <div class="dim">id: ${esc(a.appraisal_id)}</div>`;
+  <div class="dim">评估 ID：${esc(a.appraisal_id)}</div>`;
 }
 
 function renderLastDecision(d) {
@@ -521,7 +521,7 @@ function renderLastDecision(d) {
     <span class="badge ${cls}">${label}</span>
     &nbsp; rule:<span class="dim">${esc(d.rule_id)}</span>
   </div>
-  <div class="dim mt4">reason: <span class="mono">${esc(d.reason_code || d.abstention_reason || '?')}</span></div>
+  <div class="dim mt4">原因：<span class="mono" title="${esc(d.reason_code || d.abstention_reason || '?')}">${esc(OWDisplay.displayReason(d.reason_code || d.abstention_reason || '?'))}</span></div>
   <div class="dim">src: ${esc(d.source_ref || '?')}</div>`;
 }
 
@@ -531,7 +531,7 @@ function renderLastChange(c) {
   const sign = c.delta >= 0 ? '+' : '';
   const cls = c.delta > 0 ? 'delta-positive' : c.delta < 0 ? 'delta-negative' : 'delta-neutral';
   el.innerHTML = `<div class="mono">
-    <span class="dim-name">${esc(c.dimension)}</span>
+    <span class="dim-name" title="${esc(c.dimension)}">${esc(OWDisplay.shortDimension(c.dimension))}</span>
     <span class="dim-val">${c.before.toFixed(3)} → ${c.after.toFixed(3)}</span>
     <span class="${cls}">${sign}${c.delta.toFixed(3)}</span>
   </div>`;

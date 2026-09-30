@@ -362,11 +362,11 @@ def test_routes_and_backward_compatibility_aliases(product_ia_test_dbs: Path):
 
     # Primary V2 routes
     primary_routes = [
-        ("/", "Companion State"),
+        ("/", "MR 观察窗 — 状态"),
         ("/moments", "交互记录"),
-        ("/debug/causal", "Human Causal Trace"),
-        ("/debug/ledger", "State Ledger"),
-        ("/debug/live-trace", "RUNTIME HEADER"),
+        ("/debug/causal", "因果检查器"),
+        ("/debug/ledger", "状态台账"),
+        ("/debug/live-trace", "运行时信息"),
     ]
     for route, expected_text in primary_routes:
         res = client.get(route)
