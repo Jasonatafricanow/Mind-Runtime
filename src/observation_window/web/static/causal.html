@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MR Observation — Human Causal Trace</title>
+<title>MR 观察窗 — 因果检查器</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/display_zh.js"></script>
 <script src="/static/runtime_scope.js"></script>
@@ -329,7 +329,7 @@
 <body class="theme-dark">
 <div class="layout">
   <div id="nav">
-    <span id="nav-title">MR OBSERVATION</span>
+    <span id="nav-title">MR 观察窗</span>
     <span id="runtime-indicator" class="runtime-indicator" style="display:none; font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; background:#1c2738; color:var(--accent); border:1px solid #23482d; margin-left:8px;"></span>
     <div id="runtime-selector" class="runtime-selector" role="group"></div>
     <a href="/" class="nav-link">状态</a>
@@ -345,12 +345,12 @@
     <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
       <button id="btn-refresh" class="btn" style="background:#161b22; border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:4px; cursor:pointer;" onclick="manualRefresh()">⟳<span class="hide-narrow"> 刷新</span></button>
       <span class="conn-dot ok" id="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
-      <span class="mono dim" id="status-text" style="font-size:11px;">live</span>
+      <span class="mono dim" id="status-text" style="font-size:11px;">在线</span>
       <span class="mono dim" id="clock" style="font-size:11px; margin-left:4px;">--:--:--</span>
-      <span id="live-badge">LIVE</span>
+      <span id="live-badge">在线</span>
     </div>
     <!-- Backwards compatibility nav targets -->
-    <div style="display:none"><a href="/" class="nav-link">Overview</a><a href="/timeline" class="nav-link">Timeline</a><a href="/causal" class="nav-link active">Causal</a><a href="/history" class="nav-link">History</a><a href="/live-trace" class="nav-link">Live Trace</a></div>
+    <div style="display:none"><a href="/" class="nav-link">状态</a><a href="/timeline" class="nav-link">时间线</a><a href="/causal" class="nav-link active">因果</a><a href="/history" class="nav-link">历史</a><a href="/live-trace" class="nav-link">实时链路</a></div>
   </div>
 
   <div class="content" style="display: flex; gap: 16px; align-items: flex-start;">
@@ -522,7 +522,7 @@ async function fetchTurns(preserveSelection = false) {
       return;
     }
     const el = document.getElementById('turns-items');
-    if (el) el.innerHTML = `<div class="empty">Failed loading turns: ${esc(e.message)}</div>`;
+    if (el) el.innerHTML = `<div class="empty">加载轮次失败：${esc(e.message)}</div>`;
   }
 }
 
@@ -571,7 +571,7 @@ function renderSelector() {
   document.getElementById('turns-count').textContent = turnsData.length;
 
   if (!turnsData || turnsData.length === 0) {
-    itemsContainer.innerHTML = '<div class="empty">No committed interactions found.</div>';
+    itemsContainer.innerHTML = '<div class="empty">暂无已提交交互。</div>';
     pagContainer.innerHTML = '';
     return;
   }
@@ -651,7 +651,7 @@ function renderCausal(data) {
   const chains = data.chains || [];
 
   if (!ht && (!chains || chains.length === 0)) {
-    document.getElementById('detail-area').innerHTML = '<div class="card"><div class="empty">NO CAUSAL DATA for this turn</div></div>';
+    document.getElementById('detail-area').innerHTML = '<div class="card"><div class="empty">本轮暂无因果数据</div></div>';
     return;
   }
 
@@ -707,7 +707,7 @@ function renderHumanCard(ht) {
             <div class="badge-unavail" title="UNAVAILABLE / NOT PERSISTED">不可用 / 未持久化</div>
           `}
           <div class="prov-row">
-            <span class="prov-tag"><span class="k">evidence_id:</span><span class="v">${esc(u.evidence_id || '—')}</span></span>
+            <span class="prov-tag"><span class="k">证据 ID：</span><span class="v">${esc(u.evidence_id || '—')}</span></span>
             <span class="prov-tag"><span class="k">observation_id:</span><span class="v">${esc(u.observation_id || '—')}</span></span>
             <span class="prov-tag"><span class="k">interaction_id:</span><span class="v">${esc(u.interaction_id || ht.interaction_id)}</span></span>
           </div>
@@ -759,7 +759,7 @@ function renderHumanCard(ht) {
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-family:var(--mono); font-size:12px;">
               <span>valence: <span style="color:${app.valence >= 0 ? 'var(--green)' : 'var(--red)'}; font-weight:600;">${app.valence >= 0 ? '+' : ''}${app.valence}</span></span>
               <span>salience: <span>${esc(app.salience != null ? app.salience : '—')}</span></span>
-              <span>confidence: <span>${esc(app.appraisal_confidence != null ? app.appraisal_confidence : '—')}</span></span>
+              <span>置信度：<span>${esc(app.appraisal_confidence != null ? app.appraisal_confidence : '—')}</span></span>
               ${app.meanings && app.meanings.length ? `<span>meanings: <span class="dim">${esc(app.meanings.join(', '))}</span></span>` : ''}
             </div>
           ` : `
@@ -769,7 +769,7 @@ function renderHumanCard(ht) {
             </div>
           `}
           ${app.appraisal_id ? `
-            <div class="prov-row"><span class="prov-tag"><span class="k">appraisal_id:</span><span class="v">${esc(app.appraisal_id)}</span></span></div>
+            <div class="prov-row"><span class="prov-tag"><span class="k">评估 ID：</span><span class="v">${esc(app.appraisal_id)}</span></span></div>
           ` : ''}
         </div>
 
@@ -814,7 +814,7 @@ function renderHumanCard(ht) {
           ${homeo.status === 'AVAILABLE' ? `
             <div style="display:flex; flex-wrap:wrap; gap:12px; font-family:var(--mono); font-size:12px; align-items:center;">
               <span>裁定: <span style="font-weight:600; color:var(--accent);" title="${esc(homeo.disposition)}">${esc(OWDisplay.displayDisposition(homeo.disposition))}</span></span>
-              ${homeo.target_dimension ? `<span>target: <span class="dim">${esc(homeo.target_dimension)}</span></span>` : ''}
+              ${homeo.target_dimension ? `<span>目标：<span class="dim" title="${esc(homeo.target_dimension)}">${esc(OWDisplay.shortDimension(homeo.target_dimension))}</span></span>` : ''}
               ${homeo.salience != null ? `<span>salience: <span>${homeo.salience}</span></span>` : ''}
               ${homeo.reason ? `<span class="dim">(${reasonPair(homeo.reason)})</span>` : ''}
             </div>
@@ -825,7 +825,7 @@ function renderHumanCard(ht) {
             </div>
           `}
           ${homeo.decision_id ? `
-            <div class="prov-row"><span class="prov-tag"><span class="k">decision_id:</span><span class="v">${esc(homeo.decision_id)}</span></span></div>
+            <div class="prov-row"><span class="prov-tag"><span class="k">决策 ID：</span><span class="v">${esc(homeo.decision_id)}</span></span></div>
           ` : ''}
         </div>
 
@@ -836,7 +836,7 @@ function renderHumanCard(ht) {
           <div class="flow-step-header">
             <div class="flow-step-title">
               <span title="STATE DELTAS">6. 状态变化</span>
-              <span class="prov-badge prov-canonical">CANONICAL — cognition_state.sqlite</span>
+              <span class="prov-badge prov-canonical">权威状态 — cognition_state.sqlite</span>
             </div>
             <span class="mono dim" style="font-size:10px;">${changed.length} 个状态变化</span>
           </div>
@@ -869,7 +869,7 @@ function renderHumanCard(ht) {
             <details class="unchanged-details">
               <summary class="unchanged-summary">▶ ${unchanged.length} 个未变化状态</summary>
               <table class="unchanged-table">
-                <thead><tr><th>Dimension</th><th>Value</th><th>Version</th></tr></thead>
+                <thead><tr><th>维度</th><th>数值</th><th>版本</th></tr></thead>
                 <tbody>
                   ${unchanged.map(u => `
                     <tr>
@@ -915,7 +915,7 @@ function renderHumanCard(ht) {
           <div class="prov-row">
             <span class="prov-tag"><span class="k">slow_contribution_id:</span><span class="v">${esc(slow.slow_contribution_id || '—')}</span></span>
             <span class="prov-tag"><span class="k">source_decision_id:</span><span class="v">${esc(slow.source_decision_id || '—')}</span></span>
-            ${slow.write_status ? `<span class="prov-tag"><span class="k">write_status:</span><span class="v">${esc(slow.write_status)}</span></span>` : ''}
+            ${slow.write_status ? `<span class="prov-tag"><span class="k">写入状态：</span><span class="v" title="${esc(slow.write_status)}">${esc(OWDisplay.displayStatus(slow.write_status))}</span></span>` : ''}
           </div>
         </div>
 
@@ -985,19 +985,19 @@ function onToggleRawInspector(detailsEl) {
       if (chain.chain && chain.chain.length) {
         linkRows = chain.chain.map((l, i) => `
           <tr>
-            <td class="dim mono">[${i}] ${esc(l.kind)}</td>
+            <td class="dim mono" title="${esc(l.kind)}">[${i}] ${esc(OWDisplay.displayCode(l.kind))}</td>
             <td class="mono">${esc(l.label || l.identifier)}</td>
             <td class="mono">${l.amount != null ? l.amount.toFixed(4) : '—'}</td>
             <td class="mono">${l.confidence != null ? l.confidence.toFixed(3) : '—'}</td>
             <td class="mono">${l.applied ? '<span style="color:var(--green)">YES</span>' : '<span style="color:var(--red)">NO</span>'}</td>
-            <td class="dim mono">${esc(l.reason_code || '—')}</td>
+            <td class="dim mono" title="${esc(l.reason_code || '—')}">${esc(OWDisplay.displayReason(l.reason_code || '—'))}</td>
           </tr>
         `).join('');
       }
 
       return `
         <div style="margin-bottom: 12px; background:#0d1117; padding:8px 12px; border:1px solid var(--border); border-radius:4px;">
-          <div class="mono" style="font-weight:600; color:var(--accent); margin-bottom:6px;">${esc(chain.dimension)}</div>
+          <div class="mono" style="font-weight:600; color:var(--accent); margin-bottom:6px;" title="${esc(chain.dimension)}">${esc(OWDisplay.shortDimension(chain.dimension))}</div>
           <table style="width:100%; font-size:11px; margin-bottom:8px;">
             ${rows.map(r => `<tr><td class="dim mono" style="width:180px;">${esc(r[0])}</td><td class="mono">${esc(String(r[1]))}</td></tr>`).join('')}
           </table>
@@ -1016,7 +1016,7 @@ function onToggleRawInspector(detailsEl) {
   const rawJson = esc(JSON.stringify(data, null, 2));
 
   contentEl.innerHTML = `
-    ${chainRows || '<div class="dim mono" style="font-size:11px; margin-bottom:8px;">No structured causal chains generated.</div>'}
+    ${chainRows || '<div class="dim mono" style="font-size:11px; margin-bottom:8px;">未生成结构化因果链。</div>'}
     <div class="dim mono" style="font-size:10px; text-transform:uppercase; margin-bottom:4px;">Raw JSON:</div>
     <pre class="mono" style="font-size:11px; background:#05070a; padding:10px; border-radius:4px; max-height:400px; overflow:auto;">${rawJson}</pre>
   `;
