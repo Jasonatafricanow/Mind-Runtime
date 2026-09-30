@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import fields, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -678,7 +678,7 @@ def test_committed_projection_consumes_only_requested_interaction_group(
     projection.sync_committed_interaction(
         interaction_id="interaction-1",
         scope=make_scope(),
-        committed_at=datetime.now().astimezone(),
+        committed_at=datetime.now(UTC),
     )
 
     session = open_lce_projection_binding(
