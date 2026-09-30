@@ -484,6 +484,7 @@ def build_runtime_stack(
         policy_resources=turn_policy_resources,
         expression_guard=expression_guard,
         thread_updates=thread_updates,
+        memory_projection_updates=memory_projection_updates,
         # MR-RUNTIME-05: enroll the stack in the process-local, per-namespace
         # canonical admission authority — whole turns on this namespace are
         # serialized and each admitted turn refreshes from the durable base.
