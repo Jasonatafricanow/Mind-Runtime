@@ -548,3 +548,78 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.reserve_next("wake-durable") is None
         assert reopened.release_for_wake("wake-durable") is None
 
+
+def test_warm_reconcile_catches_up_only_missing_canonical_sources(
+    projection_plane,
+) -> None:
+    binding, roots, _, memories = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        first = session.reconcile_memory_ids((memories[0].memory_id,))
+        assert len(first) == 1
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        report = reopened.reconcile_canonical()
+        assert report.current_sources == 3
+        assert report.projected_sources == 2
+        assert report.invalidated_sources == 0
+        assert report.unchanged_sources == 1
+        assert len(
+            reopened.core.memory.list_current_valid_evidence()
+        ) == 3
+
+    again = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert again is not None
+    with again:
+        report = again.reconcile_canonical()
+        assert report.current_sources == 3
+        assert report.projected_sources == 0
+        assert report.invalidated_sources == 0
+        assert report.unchanged_sources == 3
+
+
+def test_projection_consumer_makes_new_memory_immediately_visible(
+    projection_plane,
+) -> None:
+    from mind_runtime.integrations.lce_projection import (
+        LceMemoryProjectionConsumer,
+    )
+
+    binding, roots, _, memories = projection_plane
+    consumer = LceMemoryProjectionConsumer(binding, **roots)
+    consumer.project_committed_memories((memories[0],))
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        assert (
+            session.core.memory.get_pipeline_stage(
+                _source(projection_plane)
+                .evidence_for_memory_ids((memories[0].memory_id,))[0]
+                .evidence_id
+            )
+            == "complete"
+        )
