@@ -416,20 +416,39 @@ class MrLceCanonicalSourceAdapter:
             raise KeyError(evidence_id)
         return self._raw_evidence(evidence_id, memories)
 
-    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
-        materials: list[RawEvidence] = []
-        for evidence_id, memories in self._groups().items():
-            material = self._raw_evidence(evidence_id, memories)
-            if material.current_valid:
-                materials.append(material)
+    def list_all_evidence(self) -> tuple[RawEvidence, ...]:
+        """Return all current canonical groups, including invalid lifecycle state."""
         return tuple(
             sorted(
-                materials,
+                (
+                    self._raw_evidence(evidence_id, memories)
+                    for evidence_id, memories in self._groups().items()
+                ),
                 key=lambda item: (
                     item.effective_ordering_key,
                     item.evidence_id,
                 ),
             )
+        )
+
+    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
+        return tuple(
+            item
+            for item in self.list_all_evidence()
+            if item.current_valid
+        )
+
+    def evidence_for_interaction_id(
+        self,
+        interaction_id: str,
+    ) -> tuple[RawEvidence, ...]:
+        if not isinstance(interaction_id, str) or not interaction_id.strip():
+            raise ValueError("interaction_id must be nonempty")
+        return tuple(
+            item
+            for item in self.list_all_evidence()
+            if interaction_id
+            in tuple(item.provenance.get("interaction_ids", ()))
         )
 
     def evidence_for_memory_ids(
