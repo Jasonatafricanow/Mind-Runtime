@@ -466,6 +466,7 @@ def load_readiness() -> dict[str, Any]:
                 "semantic_provider_available": False,
                 "appraisal_provider_available": False,
                 "slow_writer_active": False,
+                "lce_projection_current": False,
                 "observation_window_up": False,
             },
             "reasons": ["readiness_file_not_found"],
@@ -489,6 +490,7 @@ def load_readiness() -> dict[str, Any]:
                 "semantic_provider_available": False,
                 "appraisal_provider_available": False,
                 "slow_writer_active": False,
+                "lce_projection_current": False,
                 "observation_window_up": False,
             },
             "reasons": [f"corrupt_file: {exc}"],
@@ -496,13 +498,10 @@ def load_readiness() -> dict[str, Any]:
 
 
 def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], list[str]]:
-    """Pure, read-only evaluation of the 5 MR core components:
+    """Pure, read-only evaluation of enabled MR runtime components.
 
-    1. mr_adapter_initialized
-    2. runtime_db_available
-    3. semantic_provider_available
-    4. appraisal_provider_available
-    5. slow_writer_active
+    Core checks cover adapter/database/provider/slow-writer readiness plus
+    LCE projection reconciliation when LCE is enabled.
 
     Zero disk side effects (never writes readiness.json).
     Zero network API requests (no LLM connectivity probes).
