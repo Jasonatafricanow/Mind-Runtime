@@ -524,10 +524,19 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
             reasons.append("MR_ENABLED_not_true")
         elif not _ensure_mr_importable():
             reasons.append("mind_runtime_not_importable")
+        elif (
+            _env_enabled("MR_LCE_ENABLED")
+            or _env_enabled("MR_LCE_INSPIRATION_ENABLED")
+        ):
+            # With LCE enabled, an adapter object is evidence that
+            # build_runtime_stack completed canonical→LCE warm reconciliation.
+            # Mere composition construction cannot prove derived state current.
+            reasons.append("lce_warm_start_pending")
         else:
             try:
-                # Check composition object construction without side effects
-                comp = _load_production_composition()
+                # Without an enabled LCE derived consumer, composition
+                # construction remains sufficient for this pre-adapter probe.
+                _load_production_composition()
                 checks["mr_adapter_initialized"] = True
             except Exception as exc:
                 reasons.append(f"adapter_composition_error: {exc}")
