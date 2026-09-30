@@ -496,6 +496,10 @@ def build_runtime_stack(
         # serialized and each admitted turn refreshes from the durable base.
         turn_admission=NamespaceAdmissionAuthority.for_state_db(state_db),
     )
+    if lce_projection_consumer is not None:
+        orchestrator.lce_projection_consumer = lce_projection_consumer  # type: ignore[attr-defined]
+        orchestrator.lce_reconcile_report = lce_reconcile_report  # type: ignore[attr-defined]
+
     bridge = HermesProductionBridge(
         orchestrator,
         clock=clock,
