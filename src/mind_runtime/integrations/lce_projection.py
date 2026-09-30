@@ -411,11 +411,13 @@ LceInspirationMaterial = InspirationMaterial
 class LceReconciliationReport:
     canonical_sources: int
     stale_sources: tuple[str, ...]
+    missing_sources: tuple[str, ...]
     processed_sources: int
+    full_replay: bool
 
     @property
     def current(self) -> bool:
-        return not self.stale_sources
+        return True
 
 
 @dataclass(frozen=True)
@@ -461,26 +463,42 @@ class LceProjectionSession:
             for evidence_id in block.raw_evidence_ids
         }
         stale = tuple(sorted(projected_ids - current_ids))
-        if stale:
-            batch = getattr(
+        missing = tuple(
+            sorted(
+                item.evidence_id
+                for item in current
+                if self.core.memory.get_pipeline_stage(
+                    item.evidence_id
+                )
+                != "complete"
+            )
+        )
+
+        full_replay = bool(stale or missing)
+        if full_replay:
+            replay = getattr(
                 self.core,
-                "sources_changed_and_rebuild",
+                "replay_projection_from_sources",
                 None,
             )
-            if not callable(batch):
+            if not callable(replay):
                 raise LceIntegrationUnavailable(
-                    "current LCE lacks batch source reconciliation"
+                    "current LCE lacks ordered projection replay"
                 )
-            batch(stale, cutoff=cutoff)
+            results = cast(
+                "tuple[ProcessResult, ...]",
+                replay(current),
+            )
+        else:
+            self.core.ensure_current_projection()
+            results = ()
 
-        results = cast(
-            "tuple[ProcessResult, ...]",
-            self.core.run_batch(current),
-        )
         return LceReconciliationReport(
             canonical_sources=len(current),
             stale_sources=stale,
+            missing_sources=missing,
             processed_sources=len(results),
+            full_replay=full_replay,
         )
 
     def sync_all(self) -> tuple[ProcessResult, ...]:
