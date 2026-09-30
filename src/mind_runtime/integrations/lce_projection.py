@@ -565,6 +565,273 @@ class LceProjectionSession:
             for material in materials
         )
 
+    @property
+    def sync_db_path(self) -> Path:
+        return _scope_lce_root(self._legacy_adapter) / _SYNC_DB_FILENAME
+
+    def _projected_source_ids(self) -> set[str]:
+        return {
+            evidence_id
+            for block in self.core.memory.list_semantic_blocks(
+                current_valid_only=False
+            )
+            for evidence_id in block.raw_evidence_ids
+        }
+
+    def _retire_source(
+        self,
+        evidence_id: str,
+        *,
+        projected_source_ids: set[str],
+    ) -> bool:
+        if evidence_id not in projected_source_ids:
+            return False
+        self.core.source_changed_and_rebuild(evidence_id)
+        return True
+
+    def reconcile_canonical(self) -> LceProjectionReconcileReport:
+        """Bring durable LCE projection state to the current MR source boundary.
+
+        This is a warm-start producer/consumer reconciliation, not a full
+        re-import. Existing complete sources are adopted into the receipt
+        ledger without reprocessing; only missing/pending sources are run.
+        """
+        materials = self._source.list_all_evidence()
+        by_id = {item.evidence_id: item for item in materials}
+        projected = self._projected_source_ids()
+        ledger = _LceProjectionSyncLedger(self.sync_db_path)
+        processed = invalidated = retired = 0
+        try:
+            receipts = ledger.receipts()
+
+            # Historical projection inputs that no longer exist in canonical
+            # Memory must be retired explicitly. A tombstone receipt prevents
+            # repeating the same rebuild on every restart.
+            for evidence_id in sorted(
+                (projected | set(receipts)) - set(by_id)
+            ):
+                prior = receipts.get(evidence_id)
+                if prior is not None and prior.status == "missing":
+                    continue
+                if self._retire_source(
+                    evidence_id,
+                    projected_source_ids=projected,
+                ):
+                    invalidated += 1
+                    retired += 1
+                ledger.mark(
+                    evidence_id=evidence_id,
+                    source_fingerprint="-",
+                    source_state="MISSING",
+                    status="missing",
+                )
+
+            pending: list[RawEvidence] = []
+            for material in materials:
+                evidence_id = material.evidence_id
+                fingerprint = _source_fingerprint(material)
+                prior = receipts.get(evidence_id)
+
+                if (
+                    prior is not None
+                    and prior.status == "synced"
+                    and prior.source_fingerprint == fingerprint
+                    and prior.source_state == material.state
+                ):
+                    continue
+
+                if not material.current_valid:
+                    if self._retire_source(
+                        evidence_id,
+                        projected_source_ids=projected,
+                    ):
+                        invalidated += 1
+                    ledger.mark(
+                        evidence_id=evidence_id,
+                        source_fingerprint=fingerprint,
+                        source_state=material.state,
+                        status="synced",
+                    )
+                    continue
+
+                if (
+                    prior is not None
+                    and prior.status in {"synced", "missing"}
+                    and prior.source_state != "VALID"
+                ):
+                    raise RuntimeError(
+                        "canonical LCE source identity was reactivated under "
+                        "a terminal receipt"
+                    )
+                if (
+                    prior is not None
+                    and prior.status == "synced"
+                    and prior.source_state == "VALID"
+                    and prior.source_fingerprint != fingerprint
+                ):
+                    raise RuntimeError(
+                        "canonical LCE source changed under a stable source ID"
+                    )
+
+                # Migration path for deployments that predate MR-side sync
+                # receipts: LCE's complete pipeline stage is authoritative
+                # evidence that this immutable source was already consumed.
+                if (
+                    prior is None
+                    and self.core.memory.get_pipeline_stage(evidence_id)
+                    == "complete"
+                ):
+                    ledger.mark(
+                        evidence_id=evidence_id,
+                        source_fingerprint=fingerprint,
+                        source_state=material.state,
+                        status="synced",
+                    )
+                    continue
+
+                ledger.mark(
+                    evidence_id=evidence_id,
+                    source_fingerprint=fingerprint,
+                    source_state=material.state,
+                    status="pending",
+                )
+                pending.append(material)
+
+            if pending:
+                ordered = tuple(
+                    sorted(
+                        {item.evidence_id: item for item in pending}.values(),
+                        key=lambda item: (
+                            item.effective_ordering_key,
+                            item.evidence_id,
+                        ),
+                    )
+                )
+                self.core.run_batch(ordered)
+                processed = len(ordered)
+                for material in ordered:
+                    ledger.mark(
+                        evidence_id=material.evidence_id,
+                        source_fingerprint=_source_fingerprint(material),
+                        source_state=material.state,
+                        status="synced",
+                    )
+
+            rebuilt = self.core.ensure_current_projection() is not None
+            current = not ledger.pending_ids()
+            return LceProjectionReconcileReport(
+                source_count=len(materials),
+                processed_sources=processed,
+                invalidated_sources=invalidated,
+                retired_sources=retired,
+                projection_rebuilt=rebuilt,
+                current=current,
+            )
+        finally:
+            ledger.close()
+
+    def sync_committed_interaction(
+        self,
+        interaction_id: str,
+    ) -> tuple[ProcessResult, ...]:
+        """Nearline-consume one fully committed MR interaction group.
+
+        Pending receipts from an earlier post-commit failure are retried first
+        so source ordering cannot advance past an unconsumed older input.
+        """
+        if not isinstance(interaction_id, str) or not interaction_id.strip():
+            raise ValueError("interaction_id must be nonempty")
+        ledger = _LceProjectionSyncLedger(self.sync_db_path)
+        projected = self._projected_source_ids()
+        try:
+            target = {
+                item.evidence_id: item
+                for item in self._source.evidence_for_interaction_id(
+                    interaction_id
+                )
+            }
+            for evidence_id in ledger.pending_ids():
+                if evidence_id in target:
+                    continue
+                try:
+                    target[evidence_id] = self._source.get_evidence(
+                        evidence_id
+                    )
+                except KeyError:
+                    self._retire_source(
+                        evidence_id,
+                        projected_source_ids=projected,
+                    )
+                    ledger.mark(
+                        evidence_id=evidence_id,
+                        source_fingerprint="-",
+                        source_state="MISSING",
+                        status="missing",
+                    )
+
+            to_process: list[RawEvidence] = []
+            receipts = ledger.receipts()
+            for material in sorted(
+                target.values(),
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            ):
+                fingerprint = _source_fingerprint(material)
+                prior = receipts.get(material.evidence_id)
+                if (
+                    prior is not None
+                    and prior.status == "synced"
+                    and prior.source_fingerprint == fingerprint
+                    and prior.source_state == material.state
+                ):
+                    continue
+                if not material.current_valid:
+                    self._retire_source(
+                        material.evidence_id,
+                        projected_source_ids=projected,
+                    )
+                    ledger.mark(
+                        evidence_id=material.evidence_id,
+                        source_fingerprint=fingerprint,
+                        source_state=material.state,
+                        status="synced",
+                    )
+                    continue
+                if (
+                    prior is not None
+                    and prior.status == "synced"
+                    and prior.source_state == "VALID"
+                    and prior.source_fingerprint != fingerprint
+                ):
+                    raise RuntimeError(
+                        "canonical LCE source changed after committed projection"
+                    )
+                ledger.mark(
+                    evidence_id=material.evidence_id,
+                    source_fingerprint=fingerprint,
+                    source_state=material.state,
+                    status="pending",
+                )
+                to_process.append(material)
+
+            results = tuple(
+                self.core.process(material, mode="nearline")
+                for material in to_process
+            )
+            for material in to_process:
+                ledger.mark(
+                    evidence_id=material.evidence_id,
+                    source_fingerprint=_source_fingerprint(material),
+                    source_state=material.state,
+                    status="synced",
+                )
+            self.core.ensure_current_projection()
+            return cast("tuple[ProcessResult, ...]", results)
+        finally:
+            ledger.close()
+
     def bootstrap_trajectory(
         self,
         *,
