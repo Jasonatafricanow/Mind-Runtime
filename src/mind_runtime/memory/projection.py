@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from mind_runtime.contracts import Scope
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.memory.contracts import CommittedMemory
 from mind_runtime.memory.store import _decode
@@ -122,6 +123,21 @@ class ProjectionWriter(Protocol):
     """
 
     def upsert(self, memory: CommittedMemory, *, intent: ProjectionIntent) -> str: ...
+
+
+class MemoryPostCommitProjectionPort(Protocol):
+    """Derived consumer invoked only after a turn is durably committed.
+
+    The consumer may fail without changing canonical Memory/State authority.
+    Replays are allowed and must therefore be idempotent.
+    """
+
+    def project_interaction(
+        self,
+        *,
+        scope: Scope,
+        interaction_id: str,
+    ) -> int: ...
 
 
 class ProjectionWorker:
