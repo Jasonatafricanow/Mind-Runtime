@@ -34,6 +34,8 @@ _ADAPTER_PATH = None
 _RUNTIME_DIR = Path.home() / ".hermes" / "profiles" / "xiyue" / "runtime"
 _DEFAULT_READINESS_FILE = _RUNTIME_DIR / "readiness.json"
 _active_gateway_epoch: tuple[str, int, str] | None = None
+_lce_startup_current: bool | None = None
+_lce_startup_error: str | None = None
 
 
 def _env_enabled(name: str) -> bool:
@@ -401,7 +403,7 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
     GATEWAY OWNED: Only called by the real gateway process startup hook
     (or explicit test fixtures). Non-gateway processes must never call this.
     """
-    global _active_gateway_epoch
+    global _active_gateway_epoch, _lce_startup_current, _lce_startup_error
     cur_pid, cur_started = get_gateway_process_identity()
     target_pid = pid if pid is not None else cur_pid
     target_started = started_at if started_at is not None else cur_started
@@ -434,6 +436,8 @@ def begin_runtime_epoch(pid: int | None = None, started_at: str | None = None) -
     }
     save_readiness(record)
     _active_gateway_epoch = (epoch_id, target_pid, target_started)
+    _lce_startup_current = None
+    _lce_startup_error = None
     return record
 
 
@@ -493,13 +497,14 @@ def load_readiness() -> dict[str, Any]:
 
 
 def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], list[str]]:
-    """Pure, read-only evaluation of the 5 MR core components:
+    """Pure, read-only evaluation of enabled MR runtime components:
 
     1. mr_adapter_initialized
     2. runtime_db_available
     3. semantic_provider_available
     4. appraisal_provider_available
     5. slow_writer_active
+    6. lce_projection_current when LCE is enabled
 
     Zero disk side effects (never writes readiness.json).
     Zero network API requests (no LLM connectivity probes).
@@ -511,6 +516,7 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
         "semantic_provider_available": False,
         "appraisal_provider_available": False,
         "slow_writer_active": False,
+        "lce_projection_current": False,
     }
     reasons = []
 
@@ -597,6 +603,27 @@ def evaluate_mr_core_readiness(adapter=None) -> tuple[bool, dict[str, bool], lis
             reasons.append("slow_plasticity_window_size_zero")
     except Exception as comp_exc:
         reasons.append(f"composition_failed: {comp_exc}")
+
+    lce_required = (
+        _env_enabled("MR_LCE_ENABLED")
+        or _env_enabled("MR_LCE_INSPIRATION_ENABLED")
+    )
+    if not lce_required:
+        checks["lce_projection_current"] = True
+    elif adapter is not None or _lce_startup_current is True:
+        # An enabled adapter can only be constructed after build_runtime_stack
+        # completes its synchronous warm reconciliation.
+        checks["lce_projection_current"] = True
+    else:
+        checks["lce_projection_current"] = False
+        reasons.append(
+            "lce_projection_not_current"
+            + (
+                f": {_lce_startup_error}"
+                if _lce_startup_error
+                else ""
+            )
+        )
 
     all_ok = all(checks.values())
     return all_ok, checks, reasons
@@ -761,9 +788,54 @@ def stop_bundle_readiness_reconciler() -> None:
 
 
 def on_gateway_process_startup() -> dict[str, Any]:
-    """Gateway boot hook: establish epoch and keep bundle health current."""
+    """Gateway boot hook: establish epoch, reconcile LCE, then publish readiness."""
+    global _lce_startup_current, _lce_startup_error
+
     cur_pid, cur_started = get_gateway_process_identity()
     epoch_rec = begin_runtime_epoch(cur_pid, cur_started)
+
+    lce_required = (
+        _env_enabled("MR_LCE_ENABLED")
+        or _env_enabled("MR_LCE_INSPIRATION_ENABLED")
+    )
+    if lce_required:
+        try:
+            if not _ensure_mr_importable():
+                raise RuntimeError("mind_runtime_not_importable")
+            from mind_runtime.contracts import Scope, ScopeDomain
+            from mind_runtime.integrations.lce_projection import (
+                warm_reconcile_lce_projection,
+            )
+            from mind_runtime.runtime_binding import (
+                discover_production_binding,
+            )
+
+            composition = _load_production_composition()
+            persona = composition.get("persona")
+            persona_id = getattr(persona, "persona_id", "kayla_v0")
+            binding = discover_production_binding(
+                persona_id=persona_id,
+            )
+            report = warm_reconcile_lce_projection(
+                binding,
+                Scope(domain=ScopeDomain.USER, user_id="user"),
+                enabled=True,
+            )
+            _lce_startup_current = bool(
+                report is not None and report.current
+            )
+            _lce_startup_error = None
+        except Exception as exc:
+            _lce_startup_current = False
+            _lce_startup_error = type(exc).__name__
+            _logger.warning(
+                "LCE warm-start reconciliation failed: %s",
+                type(exc).__name__,
+            )
+    else:
+        _lce_startup_current = True
+        _lce_startup_error = None
+
     try:
         current = mark_runtime_ready()
     except Exception as exc:
