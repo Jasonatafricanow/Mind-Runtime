@@ -4,12 +4,26 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
+from mind_runtime.contracts import Scope
 from mind_runtime.contracts.common import require_non_empty
 from mind_runtime.memory.contracts import CommittedMemory
 from mind_runtime.memory.store import _decode
+
+
+class CommittedMemoryProjectionPort(Protocol):
+    """Derived consumer notified only after the owning turn is durably committed."""
+
+    def sync_committed_interaction(
+        self,
+        *,
+        interaction_id: str,
+        scope: Scope,
+        committed_at: datetime,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
