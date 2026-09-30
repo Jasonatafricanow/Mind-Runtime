@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from typing import Protocol
 
 from mind_runtime.contracts import Evidence, SyncFields
 from mind_runtime.contracts.common import require_non_empty
@@ -11,6 +12,15 @@ from mind_runtime.memory.contracts import CommittedMemory, MemoryCandidate
 from mind_runtime.memory.extraction import DeterministicExtractor, MemoryExtractor, memory_identity
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
 from mind_runtime.providers.clock import Clock
+
+
+class MemoryPostCommitProjection(Protocol):
+    """Derived consumer notified only after canonical Memory is durable."""
+
+    def project_committed_memories(
+        self,
+        memories: tuple[CommittedMemory, ...],
+    ) -> None: ...
 
 
 class MemoryAdmissionService:
@@ -23,6 +33,7 @@ class MemoryAdmissionService:
         origin_runtime_id: str,
         enabled: bool = False,
         extractor: MemoryExtractor | None = None,
+        post_commit_projection: MemoryPostCommitProjection | None = None,
     ) -> None:
         require_non_empty(origin_runtime_id, "origin_runtime_id")
         if type(enabled) is not bool:
@@ -30,6 +41,7 @@ class MemoryAdmissionService:
         self._store, self._facts, self._clock = store, facts, clock
         self._origin, self._enabled = origin_runtime_id, enabled
         self._extractor = extractor if extractor is not None else DeterministicExtractor()
+        self._post_commit_projection = post_commit_projection
 
     def after_admission(self, evidence: Evidence, result: FactAdmissionResult) -> None:
         if not self._enabled:
@@ -51,8 +63,15 @@ class MemoryAdmissionService:
         if result.disposition is FactAdmissionDisposition.NEW:
             self._store._register_job(key, self._clock.now())
         job = self._store._job(key)
-        if job is None or job[2]:
+        if job is None:
             return  # no historical backfill, including REPAIRED without eligibility
+        if job[2]:
+            # Canonical Memory already committed. Replays are also the durable
+            # retry seam for an optional derived consumer that failed after
+            # the original commit.
+            if self._post_commit_projection is not None and job[1]:
+                self._post_commit_projection.project_committed_memories(job[1])
+            return
         if job[1] is None:
             candidates = self._extractor.extract(evidence, observation)
             if not isinstance(candidates, tuple) or len(candidates) > 32:
@@ -87,3 +106,13 @@ class MemoryAdmissionService:
                 )
             self._store._freeze_job(key, tuple(memories))
         self._store._complete_job(key)
+        completed = self._store._job(key)
+        if (
+            completed is not None
+            and completed[2]
+            and completed[1]
+            and self._post_commit_projection is not None
+        ):
+            self._post_commit_projection.project_committed_memories(
+                completed[1]
+            )
