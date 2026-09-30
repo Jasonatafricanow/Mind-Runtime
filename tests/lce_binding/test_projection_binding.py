@@ -17,6 +17,7 @@ from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
+    LcePostCommitProjector,
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
 )
@@ -548,3 +549,149 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.reserve_next("wake-durable") is None
         assert reopened.release_for_wake("wake-durable") is None
 
+
+def test_source_identity_changes_when_interaction_memory_membership_changes(
+    projection_plane,
+) -> None:
+    _, _, paths, memories = projection_plane
+    source = _source(projection_plane)
+    before = source.list_current_valid_evidence()
+    base = memories[0]
+    old = next(
+        item for item in before
+        if base.memory_id in item.provenance["memory_ids"]
+    )
+    assert old.evidence_id.startswith("mr-source:v2:")
+
+    clone_id = "same-interaction-v2-membership"
+    clone = replace(
+        base,
+        memory_id=clone_id,
+        content="second committed Memory in the same interaction",
+        sync=replace(
+            base.sync,
+            object_id=clone_id,
+            idempotency_key=clone_id,
+        ),
+    )
+    store = CanonicalMemoryStore(paths.memory_db)
+    try:
+        store._commit((clone,))
+    finally:
+        store.close()
+
+    after = source.list_current_valid_evidence()
+    new = next(
+        item for item in after
+        if base.memory_id in item.provenance["memory_ids"]
+    )
+    assert new.evidence_id != old.evidence_id
+    assert set(new.provenance["memory_ids"]) == {
+        base.memory_id,
+        clone_id,
+    }
+
+
+def test_warm_reconcile_retires_old_source_identity_and_catches_up(
+    projection_plane,
+) -> None:
+    binding, roots, paths, memories = projection_plane
+    first = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None
+    with first:
+        first.sync_all()
+        old_sources = {
+            item.evidence_id
+            for item in first.core.memory.list_current_valid_evidence()
+        }
+
+    base = memories[0]
+    clone_id = "warm-reconcile-new-member"
+    clone = replace(
+        base,
+        memory_id=clone_id,
+        content="new member changes the grouped source identity",
+        sync=replace(
+            base.sync,
+            object_id=clone_id,
+            idempotency_key=clone_id,
+        ),
+    )
+    store = CanonicalMemoryStore(paths.memory_db)
+    try:
+        store._commit((clone,))
+    finally:
+        store.close()
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        report = reopened.reconcile_canonical(
+            cutoff=max(
+                memory.committed_at for memory in (*memories, clone)
+            ) + timedelta(days=1),
+        )
+        current_sources = {
+            item.evidence_id
+            for item in reopened.core.memory.list_current_valid_evidence()
+        }
+        current_block_sources = {
+            evidence_id
+            for block in reopened.core.memory.list_semantic_blocks(
+                current_valid_only=True
+            )
+            for evidence_id in block.raw_evidence_ids
+        }
+
+    assert report.canonical_sources == 3
+    assert report.processed_sources == 3
+    assert set(report.stale_sources) & old_sources
+    assert current_sources != old_sources
+    assert current_block_sources <= current_sources
+
+
+def test_post_commit_projector_projects_complete_interaction_group(
+    projection_plane,
+) -> None:
+    binding, roots, _, memories = projection_plane
+    projector = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    projected = projector.project_interaction(
+        scope=make_scope(),
+        interaction_id=memories[0].provenance.interaction_id,
+    )
+    assert projected == 1
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        matching = tuple(
+            item
+            for item in reopened.core.memory.list_current_valid_evidence()
+            if memories[0].memory_id in item.provenance["memory_ids"]
+        )
+        assert len(matching) == 1
+        assert (
+            reopened.core.memory.get_pipeline_stage(
+                matching[0].evidence_id
+            )
+            == "complete"
+        )
