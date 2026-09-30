@@ -12,6 +12,21 @@ from tests.support.fake_clock import FakeClock
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
 
+class RecordingMemoryProjection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Scope, datetime]] = []
+
+    def sync_committed_interaction(
+        self,
+        *,
+        interaction_id: str,
+        scope: Scope,
+        committed_at: datetime,
+    ) -> None:
+        assert committed_at.tzinfo is UTC
+        self.calls.append((interaction_id, scope, committed_at))
+
+
 class RecordingThreadUpdates:
     def __init__(self) -> None:
         self.calls: list[tuple[Scope, tuple[SemanticEventCandidate, ...]]] = []
@@ -55,3 +70,37 @@ def test_aborted_turn_does_not_publish_thread_updates() -> None:
     orchestrator.run()
     orchestrator.abort_turn()
     assert updates.calls == []
+
+
+def test_memory_projection_runs_after_commit_terminal_boundary() -> None:
+    projection = RecordingMemoryProjection()
+    orchestrator = make_orchestrator(
+        FactIngestService(clock=FakeClock(NOW)),
+        memory_projection_updates=projection,
+    )
+    orchestrator.begin_turn(make_interaction())
+    orchestrator.ingest(make_evidence(text="A durable factual input."))
+    orchestrator.run()
+    assert projection.calls == []
+
+    orchestrator.commit_turn()
+
+    assert len(projection.calls) == 1
+    assert projection.calls[0][0] == make_interaction().interaction_id
+    assert projection.calls[0][1] == make_interaction().scope
+
+
+def test_aborted_turn_still_projects_durable_factual_memory() -> None:
+    projection = RecordingMemoryProjection()
+    orchestrator = make_orchestrator(
+        FactIngestService(clock=FakeClock(NOW)),
+        memory_projection_updates=projection,
+    )
+    orchestrator.begin_turn(make_interaction())
+    orchestrator.ingest(make_evidence(text="Facts survive host abort."))
+    orchestrator.run()
+
+    orchestrator.abort_turn()
+
+    assert len(projection.calls) == 1
+    assert projection.calls[0][0] == make_interaction().interaction_id
