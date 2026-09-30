@@ -16,9 +16,11 @@ from mind_runtime.cognition import CognitiveMode
 from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
+    LceCommittedMemoryProjection,
     LceInspirationMaterial,
     MrLceCanonicalSourceAdapter,
     open_lce_projection_binding,
+    warm_reconcile_lce_projection,
 )
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
@@ -548,3 +550,156 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.reserve_next("wake-durable") is None
         assert reopened.release_for_wake("wake-durable") is None
 
+
+def test_warm_reconcile_processes_missing_sources_then_becomes_noop(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+
+    first = warm_reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None
+    assert first.current
+    assert first.source_count == 3
+    assert first.processed_sources == 3
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        second = session.reconcile_canonical()
+        assert second.current
+        assert second.source_count == 3
+        assert second.processed_sources == 0
+        assert second.invalidated_sources == 0
+        assert second.retired_sources == 0
+        assert session.sync_db_path.exists()
+
+
+def test_failed_nearline_projection_leaves_pending_receipt_for_restart_recovery(
+    projection_plane,
+    monkeypatch,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        original = session.core.process
+
+        def fail_once(*args, **kwargs):
+            raise RuntimeError("synthetic nearline failure")
+
+        monkeypatch.setattr(session.core, "process", fail_once)
+        with pytest.raises(RuntimeError, match="synthetic nearline"):
+            session.sync_committed_interaction("interaction-0")
+        monkeypatch.setattr(session.core, "process", original)
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        recovered = reopened.reconcile_canonical()
+        assert recovered.current
+        assert recovered.processed_sources == 3
+        assert all(
+            reopened.core.memory.get_pipeline_stage(item.evidence_id)
+            == "complete"
+            for item in reopened._source.list_current_valid_evidence()
+        )
+
+
+def test_warm_reconcile_retires_source_after_canonical_lifecycle_change(
+    projection_plane,
+) -> None:
+    binding, roots, paths, memories = projection_plane
+    first = warm_reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None and first.current
+
+    with sqlite3.connect(paths.memory_db) as conn:
+        row = conn.execute(
+            "SELECT payload FROM canonical_memory WHERE memory_id=?",
+            (memories[0].memory_id,),
+        ).fetchone()
+        assert row is not None
+        import json
+
+        payload = json.loads(row[0])
+        payload["lifecycle"] = "archived"
+        conn.execute(
+            "UPDATE canonical_memory SET payload=? WHERE memory_id=?",
+            (json.dumps(payload), memories[0].memory_id),
+        )
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        report = session.reconcile_canonical()
+        assert report.current
+        assert report.invalidated_sources >= 1
+        assert len(session._source.list_current_valid_evidence()) == 2
+
+
+def test_committed_projection_consumes_only_requested_interaction_group(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    projection = LceCommittedMemoryProjection(
+        binding=binding,
+        enabled=True,
+        **roots,
+    )
+    projection.sync_committed_interaction(
+        interaction_id="interaction-1",
+        scope=make_scope(),
+        committed_at=datetime.now().astimezone(),
+    )
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        materials = session._source.list_current_valid_evidence()
+        by_interaction = {
+            tuple(item.provenance["interaction_ids"]): item
+            for item in materials
+        }
+        assert session.core.memory.get_pipeline_stage(
+            by_interaction[("interaction-1",)].evidence_id
+        ) == "complete"
+        assert session.core.memory.get_pipeline_stage(
+            by_interaction[("interaction-0",)].evidence_id
+        ) is None
+        assert session.core.memory.get_pipeline_stage(
+            by_interaction[("interaction-2",)].evidence_id
+        ) is None
