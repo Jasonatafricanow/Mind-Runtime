@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+import xiyue.mr_seam as mr_seam
 from tests.golden.fixtures.common import make_state
 
 from mind_runtime.contracts import Scope, ScopeDomain
@@ -278,3 +280,39 @@ class TestNoSessionCoupling:
         assert markers.has_commit(interaction_id=h1.interaction_id, scope=scope)
         assert markers.has_commit(interaction_id=h2.interaction_id, scope=scope)
         assert markers.has_commit(interaction_id=h3.interaction_id, scope=scope)
+
+
+def test_lce_enabled_readiness_requires_completed_warm_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mr_seam, "_RUNTIME_DIR", tmp_path)
+    monkeypatch.setenv("MR_ENABLED", "true")
+    monkeypatch.setenv("MR_LCE_ENABLED", "true")
+    monkeypatch.setenv("GLM_API_KEY", "test")
+    monkeypatch.setenv("APPRAISAL_API_KEY", "test")
+    monkeypatch.setattr(
+        mr_seam,
+        "_load_production_composition",
+        lambda: {
+            "semantic_provider": object(),
+            "appraisal_producer": object(),
+            "slow_plasticity_window_size": 8,
+        },
+    )
+
+    monkeypatch.setattr(mr_seam, "_lce_startup_current", False)
+    ready, checks, reasons = mr_seam.evaluate_mr_core_readiness(
+        adapter=object(),
+    )
+    assert not ready
+    assert not checks["lce_projection_current"]
+    assert "lce_projection_not_reconciled" in reasons
+
+    monkeypatch.setattr(mr_seam, "_lce_startup_current", True)
+    ready, checks, reasons = mr_seam.evaluate_mr_core_readiness(
+        adapter=object(),
+    )
+    assert ready
+    assert checks["lce_projection_current"]
+    assert "lce_projection_not_reconciled" not in reasons
