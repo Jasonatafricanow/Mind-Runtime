@@ -105,6 +105,66 @@ def test_no_banned_primary_display_strings_in_pages():
                     )
 
 
+def test_current_backend_vocabulary_has_full_chinese_projection():
+    """Current MR backend enums/codes have explicit zh-CN display mappings."""
+    js = _display_js()
+    expected_pairs = (
+        ("agent.affect.curiosity", "好奇"),
+        ("agent.affect.sharing_urge", "分享冲动"),
+        ("agent.affect.restlessness", "躁动"),
+        ("agent.affect.diligence_pressure", "责任压力"),
+        ("agent.affect.sadness", "悲伤"),
+        ("agent.affect.anger", "愤怒"),
+        ("agent.affect.fatigue", "疲劳"),
+        ("planned", "计划"),
+        ("tentative", "暂定"),
+        ("future", "未来"),
+        ("open_interval", "开放区间"),
+        ("archived", "已归档"),
+        ("abandoned", "已放弃"),
+        ("candidate", "候选"),
+        ("deferred", "已延后"),
+        ("proactive_contact", "主动联系"),
+        ("proactive_share", "主动分享"),
+        ("inquiry", "探索提问"),
+        ("DAYDREAM", "白日梦"),
+        ("DREAM", "梦境"),
+        ("ACTION_POLICY", "行动策略"),
+        ("THREAD_UPDATE", "主题线索更新"),
+        ("MEMORY_RETRIEVAL", "记忆检索"),
+        ("CONTEXT_ASSEMBLY", "上下文装配"),
+    )
+    for raw, zh in expected_pairs:
+        assert f'"{raw}": "{zh}"' in js, raw
+    for fn in (
+        "displayCode",
+        "displayModality",
+        "displaySemanticRelation",
+        "displayMemoryLifecycle",
+        "displayThreadStatus",
+        "displayIntentStatus",
+        "displayIntentKind",
+        "displayActionDecision",
+        "displayCognitiveMode",
+        "displaySourceKind",
+    ):
+        assert fn in js
+
+
+def test_raw_codes_are_secondary_on_debug_surfaces():
+    """Known backend codes may remain in title/tooltips, not as primary copy."""
+    causal = (_STATIC_DIR / "causal.html").read_text(encoding="utf-8")
+    live = (_STATIC_DIR / "live_trace.html").read_text(encoding="utf-8")
+    ledger = (_STATIC_DIR / "ledger.html").read_text(encoding="utf-8")
+
+    assert '${esc(OWDisplay.displayCode(l.kind))}' in causal
+    assert '${esc(OWDisplay.displayReason(l.reason_code' in causal
+    assert '${esc(OWDisplay.displayStage(s.name))}' in live
+    assert '${esc(s.name)}</span>' not in live
+    assert "状态 ID：" in ledger
+    assert "证据引用：" in ledger
+    assert "转换引用：" in ledger
+
 def test_causal_renders_chinese_stage_badges(proj_test_client: TestClient):
     """Causal page carries the zh-primary pattern with raw kept as title."""
     res = proj_test_client.get("/debug/causal")
