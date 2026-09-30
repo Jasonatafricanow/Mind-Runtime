@@ -84,6 +84,7 @@ from mind_runtime.memory.pending import (
     PendingWorkingEvidence,
     PendingWorkingOverlay,
 )
+from mind_runtime.memory.projection import CommittedMemoryProjectionPort
 from mind_runtime.memory.threading import ThreadUpdatePort
 from mind_runtime.pipeline.checkpoints import (
     CheckpointStore,
@@ -307,6 +308,7 @@ class TurnOrchestrator:
         surface_projection_port: SurfaceProjectionPort | None = None,
         surface_delivery_backend: Any = None,
         thread_updates: ThreadUpdatePort | None = None,
+        memory_projection_updates: CommittedMemoryProjectionPort | None = None,
     ) -> None:
         self.surface_projection_port = surface_projection_port
         self._surface_delivery_backend = surface_delivery_backend
@@ -315,6 +317,7 @@ class TurnOrchestrator:
         self._trace = trace
         self._telemetry_sink = telemetry_sink
         self._thread_updates = thread_updates
+        self._memory_projection_updates = memory_projection_updates
         # The D3 factual plane is the only ingest path: no direct Observation
         # construction may bypass authority/ownership/idempotency/provenance.
         self.fact_ingest = fact_ingest or FactIngestService(clock=clock)
@@ -1719,6 +1722,7 @@ class TurnOrchestrator:
             if interaction_replay:
                 self._drop_checkpoint(turn.interaction.interaction_id)
                 self.state = TurnState.COMMITTED
+                self._sync_committed_memory_projection(turn)
                 return
 
             slow_scope = None
@@ -1972,6 +1976,7 @@ class TurnOrchestrator:
                 )
         self._drop_checkpoint(turn.interaction.interaction_id)
         self.state = TurnState.COMMITTED
+        self._sync_committed_memory_projection(turn)
         if self._telemetry_sink is not None:
             try:
                 self._telemetry_sink.record(
@@ -2013,6 +2018,34 @@ class TurnOrchestrator:
             "commit",
             at=self._clock.now(),
         )
+
+    def _sync_committed_memory_projection(self, turn: _Turn) -> None:
+        """Run derived Memory consumers after COMMITTED becomes irreversible."""
+        projection = self._memory_projection_updates
+        if projection is None:
+            return
+        try:
+            projection.sync_committed_interaction(
+                interaction_id=turn.interaction.interaction_id,
+                scope=turn.interaction.scope,
+                committed_at=self._clock.now(),
+            )
+            self._trace.record(
+                turn.interaction.interaction_id,
+                "memory.projection_sync",
+                outcome="current",
+                at=self._clock.now(),
+            )
+        except Exception as exc:
+            # Memory/LCE projection is derived state. Canonical facts and the
+            # turn commit remain authoritative; the durable LCE sync receipt
+            # stays pending and is retried on a later commit or warm start.
+            self._trace.record(
+                turn.interaction.interaction_id,
+                "memory.projection_sync_failed",
+                outcome=type(exc).__name__,
+                at=self._clock.now(),
+            )
 
     def abort_turn(self) -> None:
         try:
