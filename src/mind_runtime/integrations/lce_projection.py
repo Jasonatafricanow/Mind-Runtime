@@ -1243,7 +1243,15 @@ def warm_reconcile_lce_projection(
     )
     with _WARM_RECONCILE_LOCK:
         cached = _WARM_RECONCILED.get(key)
-        if isinstance(cached, LceProjectionReconcileReport):
+        if (
+            isinstance(cached, LceProjectionReconcileReport)
+            and not lce_projection_reconcile_required(
+                binding,
+                scope,
+                production_root=production_root,
+                lab_root=lab_root,
+            )
+        ):
             return cached
         session = open_lce_projection_binding(
             binding,
