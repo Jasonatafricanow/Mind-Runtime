@@ -88,6 +88,7 @@ class TestPureReadinessEvaluator:
             "semantic_provider_available",
             "appraisal_provider_available",
             "slow_writer_active",
+            "lce_projection_current",
         }
         assert set(checks.keys()) == expected_keys
 
