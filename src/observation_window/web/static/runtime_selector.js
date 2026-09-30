@@ -58,7 +58,7 @@
     if (current && !currentKnown) {
       model.push({
         value: "",
-        label: current + " (not in registry)",
+        label: current + "（未登记）",
         disabled: true,
         selected: true
       });
@@ -82,9 +82,9 @@
 
   function labelText() {
     if (global.OWDisplay && typeof global.OWDisplay.displayLabel === "function") {
-      return global.OWDisplay.displayLabel("runtimeSelector") || "Runtime / 运行时";
+      return global.OWDisplay.displayLabel("runtimeSelector") || "运行时";
     }
-    return "Runtime / 运行时";
+    return "运行时";
   }
 
   function disable(container, message) {
@@ -135,11 +135,11 @@
   async function bootstrap(selection, options) {
     var container = containerFor(options);
     if (selection && selection.mode === "INVALID") {
-      disable(container, "Runtime / 运行时 unavailable: invalid URL selection");
+      disable(container, "运行时不可用：URL 选择无效");
       return { status: "INVALID_RUNTIME_SELECTION", fetched: false };
     }
     if (typeof global.fetch !== "function") {
-      disable(container, "Runtime / 运行时 unavailable");
+      disable(container, "运行时不可用");
       return { status: "BINDING_REGISTRY_UNAVAILABLE", fetched: false };
     }
     try {
@@ -150,7 +150,7 @@
       render(container, ids, selection);
       return { status: "READY", fetched: true, bindingIds: ids };
     } catch (err) {
-      disable(container, "Runtime / 运行时 unavailable");
+      disable(container, "运行时不可用");
       return { status: "BINDING_REGISTRY_UNAVAILABLE", fetched: true };
     }
   }
