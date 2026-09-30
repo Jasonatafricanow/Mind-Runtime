@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MR 观察窗 — 交互时间线</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css">\n<script src="/static/display_zh.js"></script>
 </head>
 <body class="theme-dark">
 
@@ -12,7 +12,7 @@
   <span id="nav-title">MR OBSERVATION</span>
   <a href="/" class="nav-link">状态</a>
   <a href="/timeline" class="nav-link active">时间线</a>
-  <a href="/causal" class="nav-link">Causal</a>
+  <a href="/causal" class="nav-link">因果</a>
   <a href="/history" class="nav-link">历史</a>
   <a href="/live-trace" class="nav-link">实时链路</a>
   <span id="live-badge">在线</span>
@@ -21,11 +21,11 @@
 <div class="card">
   <div class="card-title">最近轮次（最新优先 · 在线）</div>
   <div style="margin-bottom:8px">
-    <label class="dim" style="font-size:11px">Filter:
+    <label class="dim" style="font-size:11px">筛选：
       <select id="filter-comp" style="margin-left:4px">
-        <option value="">all</option>
-        <option value="ON">ON</option>
-        <option value="OFF">OFF</option>
+        <option value="">全部</option>
+        <option value="ON">开启</option>
+        <option value="OFF">关闭</option>
       </select>
     </label>
   </div>
@@ -49,7 +49,7 @@ async function load() {
     document.getElementById('live-badge').className = '';
   } catch (e) {
     document.getElementById('live-badge').className = 'disconnected';
-    document.getElementById('live-badge').textContent = 'DISCONNECTED';
+    document.getElementById('live-badge').textContent = '已断开';
   }
 }
 
