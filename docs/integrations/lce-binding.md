@@ -139,6 +139,65 @@ Memory IDs retain lineage, so no duplicate Thread copy is needed.
 If compilation is disabled or fails, the Thread remains available. A derived
 projection failure never rolls back canonical Memory.
 
+## Nearline consumption and warm-start reconciliation
+
+MR treats LCE as a durable derived consumer of canonical Memory, not as a
+one-time import target.
+
+The steady-state path is:
+
+```text
+MR Fact / Memory admission
+    -> complete interaction group
+    -> terminal turn boundary (COMMITTED or ABORTED)
+    -> durable reconcile-required marker
+    -> LCE nearline source projection
+    -> source sync receipt = synced
+```
+
+ABORTED turns participate because MR factual admission and canonical Memory
+survive Host abort. LCE is still derived: a projection failure never rolls back
+the factual turn.
+
+Each grouped MR source has a deterministic source fingerprint and a durable
+sync receipt in:
+
+```text
+<scope LCE root>/mr_projection_sync.sqlite
+```
+
+A projection attempt marks the namespace dirty **before** opening/importing
+LCE. Therefore dependency-load, session-open and processing failures all leave
+retryable durable work instead of silently losing the source.
+
+At process warm start, `warm_reconcile_lce_projection(...)` compares current
+MR source groups with LCE's consumed/derived state:
+
+```text
+current canonical source absent from LCE
+    -> process
+
+already-complete pre-receipt source
+    -> adopt receipt without reprocessing
+
+canonical source now invalid / removed
+    -> source_changed_and_rebuild
+
+stale derivation fingerprint / crash marker
+    -> LCE ensure_current_projection()
+
+pending/dirty receipt
+    -> retry before READY
+```
+
+Normal unchanged sources are not reprocessed. The reconciliation finishes only
+when there are no pending receipts and LCE's existing recovery funnel has
+proved the Line projection current.
+
+`open_lce_read_binding()` remains intentionally read-only. A successful read
+is not treated as proof that projection catch-up has happened; startup and
+post-terminal projection own that responsibility.
+
 ## Accepted cognition readback
 
 `open_lce_read_binding` exposes current accepted Baseline HEADs without
@@ -249,16 +308,22 @@ with session:
     )
 ```
 
-The default production role is **sleep/dream latent discovery**, not
-"every new Memory -> Path B". Online explicit logical structure is already
-owned by Thread and reaches LCE through Path A.
+Path B source compilation is now part of the normal production projection
+contract. MR waits until an interaction reaches a terminal boundary so every
+Memory row extracted from that interaction is present, then synchronizes the
+complete grouped source into LCE in nearline mode. This avoids compiling a
+partial interaction group under an identity that would later acquire more
+Memory rows.
 
-`sync_memory_ids(...)` remains available for explicit repair, replay,
-laboratory work and bounded operator-driven catch-up. Its existence does not
-make per-Memory Path B processing the default MR production scheduler.
+This does **not** make higher-order inspiration an every-turn operation.
+SemanticBlock/source projection stays current nearline; expensive trajectory
+bootstrap/inspiration discovery remains a bounded DAYDREAM/DREAM operation.
+Explicit mature Thread structure still reaches the shared Baseline store
+through Path A without being rediscovered by Path B.
 
-The sleep/dream scheduler should select bounded unresolved material and avoid a
-nightly full-history recomputation.
+`sync_memory_ids(...)` remains available for repair, replay and laboratory
+work, but production catch-up authority is the shared canonical reconcile seam
+described below.
 
 ## Inspiration Material downstream seam
 
@@ -322,8 +387,8 @@ MR now has a bounded background worker around the LCE projection session:
 
 ```text
 canonical MR Memory
+    -> shared MR/LCE reconcile seam proves projection current
     -> LceInspirationBackgroundWorker
-    -> sync only canonical Memory IDs not yet checkpointed
     -> DAYDREAM / DREAM Path-B discovery
     -> LCE Inspiration queue
 ```
@@ -375,11 +440,13 @@ delivery COMMIT   -> consume Inspiration Material
 A successful external delivery is therefore the consumption boundary. Merely
 discovering, reserving, rendering, or guarding the material does not consume it.
 
-The worker is incremental. It checkpoints processed canonical Memory IDs and
-does not run a full Path-B bootstrap on every clock tick when neither canonical
-Memory nor the discovery version changed. Background derived-cognition failures
-are fail-soft relative to the existing proactive ticker; they do not roll back
-canonical Memory or create alternate factual state.
+The worker is incremental. It no longer owns a second Memory-ingestion path:
+before discovery it verifies the shared canonical reconcile seam, then uses its
+processed-Memory checkpoint only to decide whether another inspiration
+discovery pass is useful. It does not run a full Path-B bootstrap on every
+clock tick when neither canonical Memory nor the discovery version changed.
+Background derived-cognition failures are fail-soft relative to canonical
+Memory and do not create alternate factual state.
 
 The production Xiyue composition remains opt-in. Setting
 `MR_LCE_INSPIRATION_ENABLED=true` enables the Inspiration binding and also
@@ -425,6 +492,7 @@ Memory:
     baselines/lce_baselines.sqlite
     worktrees/
     projection_state/projection_state.sqlite
+    mr_projection_sync.sqlite
     inspiration/inspiration.sqlite
     background_inspiration.sqlite
     lines/
@@ -468,6 +536,9 @@ MR's integration tests cover:
 - mature Thread handoff through current LCE draft lineage and replay;
 - grouped Path B source authority (one interaction cannot multiply votes);
 - derived-only Path B persistence with no copied Raw Evidence table;
+- Path B post-terminal nearline projection over complete interaction groups;
+- durable dirty/pending receipts across projection/open failures;
+- warm-start missing/invalid/removed-source reconciliation;
 - Path B restart/replay over canonical MR Memory;
 - accepted cognition readback across Path A and Path B;
 - narrow Inspiration Material read/consume seam;
