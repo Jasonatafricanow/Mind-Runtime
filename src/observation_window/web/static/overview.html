@@ -504,8 +504,8 @@ function renderLastAppraisal(a) {
   if (!a) { el.innerHTML = '<div class="empty">—</div>'; return; }
   const pol = `polarity-${a.polarity || 'neutral'}`;
   el.innerHTML = `<div class="mono" style="font-size:11px">
-    <span class="${pol}">${esc(a.polarity || '?')}</span>
-    &nbsp; authority:<span class="dim">${esc(a.authority)}</span>
+    <span class="${pol}" title="${esc(a.polarity || '?')}">${esc(OWDisplay.displayCode(a.polarity || '?'))}</span>
+    &nbsp; 权威级别：<span class="dim" title="${esc(a.authority)}">${esc(OWDisplay.displayCode(a.authority))}</span>
     &nbsp; 因果状态：<span class="dim" title="${esc(a.causal_status)}">${esc(OWDisplay.displayCode(a.causal_status))}</span>
   </div>
   <div class="dim mt4">confidence: ${a.provider_confidence?.toFixed(3) ?? '—'}</div>
