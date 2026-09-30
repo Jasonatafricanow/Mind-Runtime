@@ -323,6 +323,7 @@ def build_runtime_stack(
             "LCE inspiration requires both memory_enabled and lce_enabled"
         )
     thread_updates = None
+    memory_projection_updates = None
     if memory_enabled:
         from mind_runtime.memory.composition import (
             build_bound_fact_service,
@@ -342,7 +343,24 @@ def build_runtime_stack(
         thread_projection_compiler = None
         if lce_enabled:
             from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+            from mind_runtime.integrations.lce_projection import (
+                LceCommittedMemoryProjection,
+                warm_reconcile_lce_projection,
+            )
 
+            lce_scope = Scope(
+                domain=ScopeDomain.USER,
+                user_id=user_id,
+            )
+            warm_reconcile_lce_projection(
+                memory_binding,
+                lce_scope,
+                enabled=True,
+            )
+            memory_projection_updates = LceCommittedMemoryProjection(
+                binding=memory_binding,
+                enabled=True,
+            )
             thread_projection_compiler = LceThreadProjectionCompiler(
                 binding=memory_binding,
                 enabled=True,
