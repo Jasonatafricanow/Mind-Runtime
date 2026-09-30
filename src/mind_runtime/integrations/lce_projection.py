@@ -143,16 +143,24 @@ class MrLceCanonicalSourceAdapter:
     def _source_id(
         self,
         authority_key: tuple[object, ...],
+        memories: tuple[CommittedMemory, ...],
     ) -> str:
+        # v2 source identity includes the exact immutable Memory membership.
+        # This prevents one interaction from reusing an evidence_id when its
+        # grouped Memory set changes before turn commit.
         payload = json.dumps(
             {
+                "schema": "mr-source-v2",
                 "scope": scope_json(self._adapter.scope),
                 "authority_key": authority_key,
+                "memory_ids": tuple(
+                    sorted(memory.memory_id for memory in memories)
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
         )
-        return _SOURCE_PREFIX + hashlib.sha256(
+        return _SOURCE_PREFIX + "v2:" + hashlib.sha256(
             payload.encode("utf-8")
         ).hexdigest()[:24]
 
@@ -170,9 +178,10 @@ class MrLceCanonicalSourceAdapter:
             ).append(memory)
         output: dict[str, tuple[CommittedMemory, ...]] = {}
         for key, memories in grouped.items():
-            output[self._source_id(key)] = tuple(
+            ordered = tuple(
                 sorted(memories, key=lambda item: item.memory_id)
             )
+            output[self._source_id(key, ordered)] = ordered
         return output
 
     def _raw_evidence(
@@ -297,6 +306,21 @@ class MrLceCanonicalSourceAdapter:
             raise KeyError(evidence_id)
         return self._raw_evidence(evidence_id, memories)
 
+    def list_all_evidence(self) -> tuple[RawEvidence, ...]:
+        """Return every canonical source group, including inactive groups."""
+        return tuple(
+            sorted(
+                (
+                    self._raw_evidence(evidence_id, memories)
+                    for evidence_id, memories in self._groups().items()
+                ),
+                key=lambda item: (
+                    item.effective_ordering_key,
+                    item.evidence_id,
+                ),
+            )
+        )
+
     def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
         materials: list[RawEvidence] = []
         for evidence_id, memories in self._groups().items():
@@ -383,6 +407,17 @@ class MrLceCanonicalSourceAdapter:
 LceInspirationMaterial = InspirationMaterial
 
 
+@dataclass(frozen=True, slots=True)
+class LceReconciliationReport:
+    canonical_sources: int
+    stale_sources: tuple[str, ...]
+    processed_sources: int
+
+    @property
+    def current(self) -> bool:
+        return not self.stale_sources
+
+
 @dataclass(frozen=True)
 class LceProjectionSession:
     """Embedded current LCE projection over MR canonical Memory."""
@@ -398,6 +433,55 @@ class LceProjectionSession:
     def canonical_memory_ids(self) -> tuple[str, ...]:
         """Current ACTIVE canonical Memory IDs visible to the LCE source."""
         return self._source.current_memory_ids()
+
+    def reconcile_canonical(
+        self,
+        *,
+        cutoff: datetime | None = None,
+    ) -> LceReconciliationReport:
+        """Reconcile durable MR source authority with LCE derived state.
+
+        Sources previously represented by SemanticBlock states but no longer
+        current are invalidated as one batch. Current canonical sources are
+        then replayed/compiled idempotently, which also drives LCE's internal
+        crash/fingerprint recovery funnel.
+        """
+        if cutoff is None:
+            cutoff = datetime.now(UTC)
+        if cutoff.tzinfo != UTC:
+            raise ValueError("cutoff must be UTC")
+
+        current = self._source.list_current_valid_evidence()
+        current_ids = {item.evidence_id for item in current}
+        projected_ids = {
+            evidence_id
+            for block in self.core.memory.list_semantic_block_states(
+                current_valid_only=False
+            )
+            for evidence_id in block.raw_evidence_ids
+        }
+        stale = tuple(sorted(projected_ids - current_ids))
+        if stale:
+            batch = getattr(
+                self.core,
+                "sources_changed_and_rebuild",
+                None,
+            )
+            if not callable(batch):
+                raise LceIntegrationUnavailable(
+                    "current LCE lacks batch source reconciliation"
+                )
+            batch(stale, cutoff=cutoff)
+
+        results = cast(
+            "tuple[ProcessResult, ...]",
+            self.core.run_batch(current),
+        )
+        return LceReconciliationReport(
+            canonical_sources=len(current),
+            stale_sources=stale,
+            processed_sources=len(results),
+        )
 
     def sync_all(self) -> tuple[ProcessResult, ...]:
         """Compile every current canonical source; replay is idempotent."""
@@ -562,6 +646,93 @@ class LceProjectionSession:
         self.close()
 
 
+@dataclass(frozen=True, slots=True)
+class LcePostCommitProjector:
+    """Project one durably committed MR interaction into LCE nearline."""
+
+    binding: RuntimeBinding
+    enabled: bool = False
+    production_root: Path | str | None = None
+    lab_root: Path | str | None = None
+
+    def project_interaction(
+        self,
+        *,
+        scope: Scope,
+        interaction_id: str,
+    ) -> int:
+        if not self.enabled:
+            return 0
+        adapter = MrMemorySubstrateAdapter(
+            self.binding,
+            scope,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        store = CanonicalMemoryStore(
+            adapter._paths.memory_db,
+            read_only=True,
+        )
+        try:
+            memory_ids = tuple(
+                sorted(
+                    memory.memory_id
+                    for memory in store.load_all()
+                    if (
+                        memory.scope == scope
+                        and memory.lifecycle is MemoryLifecycle.ACTIVE
+                        and memory.provenance.interaction_id == interaction_id
+                    )
+                )
+            )
+        finally:
+            store.close()
+        if not memory_ids:
+            return 0
+
+        session = open_lce_projection_binding(
+            self.binding,
+            scope,
+            enabled=True,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        if session is None:
+            raise LceIntegrationUnavailable(
+                "enabled LCE projection binding did not open"
+            )
+        with session:
+            return len(
+                session.sync_memory_ids(
+                    memory_ids,
+                    mode="nearline",
+                )
+            )
+
+
+def reconcile_lce_projection(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    enabled: bool = False,
+    cutoff: datetime | None = None,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> LceReconciliationReport | None:
+    """Warm-start reconciliation entrypoint owned by MR composition."""
+    session = open_lce_projection_binding(
+        binding,
+        scope,
+        enabled=enabled,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    if session is None:
+        return None
+    with session:
+        return session.reconcile_canonical(cutoff=cutoff)
+
+
 def open_lce_projection_binding(
     binding: RuntimeBinding,
     scope: Scope,
@@ -654,7 +825,10 @@ def open_lce_projection_binding(
 
 __all__ = [
     "LceInspirationMaterial",
+    "LcePostCommitProjector",
     "LceProjectionSession",
+    "LceReconciliationReport",
     "MrLceCanonicalSourceAdapter",
     "open_lce_projection_binding",
+    "reconcile_lce_projection",
 ]
