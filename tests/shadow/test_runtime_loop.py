@@ -768,7 +768,17 @@ def test_runtime_stack_wires_opt_in_lce_inspiration_worker(
         lambda **_kwargs: _ThreadCompiler(),
     )
 
-    projection_session = object()
+    class _ProjectionSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def reconcile_canonical(self):
+            return object()
+
+    projection_session = _ProjectionSession()
     import mind_runtime.integrations.lce_projection as projection_mod
 
     monkeypatch.setattr(
