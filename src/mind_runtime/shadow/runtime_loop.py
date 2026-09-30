@@ -323,6 +323,8 @@ def build_runtime_stack(
             "LCE inspiration requires both memory_enabled and lce_enabled"
         )
     thread_updates = None
+    lce_projection_consumer = None
+    lce_reconcile_report = None
     if memory_enabled:
         from mind_runtime.memory.composition import (
             build_bound_fact_service,
@@ -338,15 +340,38 @@ def build_runtime_stack(
             or origin_runtime_id != memory_binding.runtime_id
         ):
             raise ValueError("Memory binding must match the factual/state runtime namespace")
-        fact_service = build_bound_fact_service(memory_binding, clock=clock, enabled=True)
+
         thread_projection_compiler = None
         if lce_enabled:
             from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+            from mind_runtime.integrations.lce_projection import (
+                LceMemoryProjectionConsumer,
+            )
 
             thread_projection_compiler = LceThreadProjectionCompiler(
                 binding=memory_binding,
                 enabled=True,
             )
+            lce_projection_consumer = LceMemoryProjectionConsumer(
+                binding=memory_binding,
+            )
+
+        fact_service = build_bound_fact_service(
+            memory_binding,
+            clock=clock,
+            enabled=True,
+            post_commit_projection=lce_projection_consumer,
+        )
+
+        # Warm-start is a correctness gate, not a background optimization.
+        # Canonical Memory is already durable at this point. Before the stack
+        # may serve LCE history, reconcile any missed/retired sources and force
+        # LCE's own stale/crash-derived state back to current.
+        if lce_projection_consumer is not None:
+            lce_reconcile_report = lce_projection_consumer.reconcile_scope(
+                Scope(domain=ScopeDomain.USER, user_id=user_id)
+            )
+
         thread_updates = build_bound_thread_updates(
             memory_binding,
             enabled=True,
