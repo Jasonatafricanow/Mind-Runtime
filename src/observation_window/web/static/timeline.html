@@ -106,8 +106,8 @@ function showModal(turn) {
   }).join('') || '<tr><td colspan="6" class="dim">无决策</td></tr>';
   const appraisals = (turn.appraisals || []).map(a =>
     `<tr><td class="mono">${esc(a.appraisal_id)}</td>
-        <td class="polarity-${esc(a.polarity || 'neutral')}">${esc(a.polarity || '?')}</td>
-        <td class="dim">${esc(a.authority)}</td>
+        <td class="polarity-${esc(a.polarity || 'neutral')}" title="${esc(a.polarity || '?')}">${esc(OWDisplay.displayCode(a.polarity || '?'))}</td>
+        <td class="dim" title="${esc(a.authority)}">${esc(OWDisplay.displayCode(a.authority))}</td>
         <td class="dim" title="${esc(a.causal_status)}">${esc(OWDisplay.displayCode(a.causal_status))}</td>
         <td>${a.provider_confidence?.toFixed(3) ?? '—'}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="dim">无评估</td></tr>';
@@ -130,7 +130,7 @@ function showModal(turn) {
     </tr>`;
   }).filter(Boolean).join('') || '<tr><td colspan="4" class="dim">无状态变化</td></tr>';
   const abst = (turn.abstention_reasons || []).length
-    ? `<div class="dim mt8"><b>abstention_reasons:</b> ${(turn.abstention_reasons || []).map(esc).join(', ')}</div>` : '';
+    ? `<div class="dim mt8"><b>弃权原因：</b> ${(turn.abstention_reasons || []).map(r => esc(OWDisplay.displayReason(r))).join('、')}</div>` : '';
   const html = `
     <div style="position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; padding:24px; overflow:auto">
       <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:20px; max-width:1000px; margin:0 auto">
