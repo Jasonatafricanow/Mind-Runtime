@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -54,6 +55,91 @@ if TYPE_CHECKING:
 
 
 _SOURCE_PREFIX = "mr-source:"
+
+
+def _source_fingerprint(material: RawEvidence) -> str:
+    payload = {
+        "evidence_id": material.evidence_id,
+        "content": material.content,
+        "occurred_at": material.occurred_at.isoformat(),
+        "known_at": material.effective_known_at.isoformat(),
+        "ordering_key": material.ordering_key,
+        "state": material.state,
+        "superseded_by": material.superseded_by,
+        "provenance": material.provenance,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+class _ProjectionReceiptStore:
+    """MR-owned durable acknowledgement that LCE consumed one source revision."""
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(path)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_receipts (
+                source_id TEXT PRIMARY KEY,
+                fingerprint TEXT NOT NULL,
+                completed_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.commit()
+
+    def load(self) -> dict[str, str]:
+        return {
+            str(source_id): str(fingerprint)
+            for source_id, fingerprint in self._conn.execute(
+                "SELECT source_id,fingerprint FROM source_receipts"
+            )
+        }
+
+    def mark(self, source_id: str, fingerprint: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO source_receipts(source_id,fingerprint,completed_at)
+                VALUES(?,?,?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    fingerprint=excluded.fingerprint,
+                    completed_at=excluded.completed_at
+                """,
+                (source_id, fingerprint, datetime.now(UTC).isoformat()),
+            )
+
+    def remove(self, source_id: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM source_receipts WHERE source_id=?",
+                (source_id,),
+            )
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> _ProjectionReceiptStore:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+@dataclass(frozen=True, slots=True)
+class LceProjectionReconcileReport:
+    current_sources: int
+    projected_sources: int
+    invalidated_sources: int
+    unchanged_sources: int
+    recovered_line_graph: bool
 
 
 def _effective_window_payload(window: object) -> dict[str, object] | None:
@@ -297,12 +383,11 @@ class MrLceCanonicalSourceAdapter:
             raise KeyError(evidence_id)
         return self._raw_evidence(evidence_id, memories)
 
-    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
-        materials: list[RawEvidence] = []
-        for evidence_id, memories in self._groups().items():
-            material = self._raw_evidence(evidence_id, memories)
-            if material.current_valid:
-                materials.append(material)
+    def list_all_evidence(self) -> tuple[RawEvidence, ...]:
+        materials = tuple(
+            self._raw_evidence(evidence_id, memories)
+            for evidence_id, memories in self._groups().items()
+        )
         return tuple(
             sorted(
                 materials,
@@ -311,6 +396,13 @@ class MrLceCanonicalSourceAdapter:
                     item.evidence_id,
                 ),
             )
+        )
+
+    def list_current_valid_evidence(self) -> tuple[RawEvidence, ...]:
+        return tuple(
+            material
+            for material in self.list_all_evidence()
+            if material.current_valid
         )
 
     def evidence_for_memory_ids(
@@ -425,6 +517,132 @@ class LceProjectionSession:
         return tuple(
             self.core.process(material, mode="nearline")
             for material in materials
+        )
+
+    def _receipt_path(self) -> Path:
+        return _scope_lce_root(self._legacy_adapter) / "mr_projection_receipts.sqlite"
+
+    def reconcile_memory_ids(
+        self,
+        memory_ids: tuple[str, ...],
+    ) -> tuple[ProcessResult, ...]:
+        """Nearline consume newly committed Memory and durably acknowledge it."""
+        materials = self._source.evidence_for_memory_ids(memory_ids)
+        results: list[ProcessResult] = []
+        with _ProjectionReceiptStore(self._receipt_path()) as receipts:
+            known = receipts.load()
+            for material in materials:
+                fingerprint = _source_fingerprint(material)
+                if (
+                    known.get(material.evidence_id) == fingerprint
+                    and self.core.memory.get_pipeline_stage(
+                        material.evidence_id
+                    ) == "complete"
+                ):
+                    continue
+                result = self.core.process(material, mode="nearline")
+                if (
+                    self.core.memory.get_pipeline_stage(
+                        material.evidence_id
+                    )
+                    != "complete"
+                ):
+                    raise RuntimeError(
+                        "LCE nearline source did not reach complete stage"
+                    )
+                receipts.mark(material.evidence_id, fingerprint)
+                known[material.evidence_id] = fingerprint
+                results.append(result)
+        return tuple(results)
+
+    def reconcile_canonical(self) -> LceProjectionReconcileReport:
+        """Warm-start reconcile MR canonical source authority against LCE.
+
+        Only source revisions missing from the durable MR→LCE receipt ledger
+        are processed. Sources that became invalid are propagated through
+        LCE dependency invalidation. Finally stale/crash Line state is brought
+        current without forcing a full trajectory bootstrap when unnecessary.
+        """
+        materials = self._source.list_all_evidence()
+        by_id = {
+            material.evidence_id: material
+            for material in materials
+        }
+        current = tuple(
+            material for material in materials if material.current_valid
+        )
+        current_ids = {material.evidence_id for material in current}
+        projected = 0
+        invalidated = 0
+        unchanged = 0
+
+        with _ProjectionReceiptStore(self._receipt_path()) as receipts:
+            known = receipts.load()
+
+            for source_id in tuple(sorted(set(known) - current_ids)):
+                material = by_id.get(source_id)
+                if material is not None:
+                    self.core.source_changed_and_rebuild(
+                        source_id,
+                        cutoff=material.effective_known_at,
+                    )
+                receipts.remove(source_id)
+                known.pop(source_id, None)
+                invalidated += 1
+
+            pending: list[RawEvidence] = []
+            fingerprints: dict[str, str] = {}
+            for material in current:
+                fingerprint = _source_fingerprint(material)
+                fingerprints[material.evidence_id] = fingerprint
+                if (
+                    known.get(material.evidence_id) == fingerprint
+                    and self.core.memory.get_pipeline_stage(
+                        material.evidence_id
+                    ) == "complete"
+                ):
+                    unchanged += 1
+                    continue
+                pending.append(material)
+
+            if pending:
+                for result, material in zip(
+                    self.core.run_batch(pending),
+                    pending,
+                    strict=True,
+                ):
+                    del result
+                    if (
+                        self.core.memory.get_pipeline_stage(
+                            material.evidence_id
+                        )
+                        != "complete"
+                    ):
+                        raise RuntimeError(
+                            "LCE warm-start source did not reach complete stage"
+                        )
+                    receipts.mark(
+                        material.evidence_id,
+                        fingerprints[material.evidence_id],
+                    )
+                    projected += 1
+
+        ensure_current = getattr(
+            self.core,
+            "ensure_current_projection",
+            None,
+        )
+        if not callable(ensure_current):
+            raise LceIntegrationUnavailable(
+                "installed lce-core lacks warm-start recovery API"
+            )
+        recovered = ensure_current() is not None
+        return LceProjectionReconcileReport(
+            current_sources=len(current),
+            projected_sources=projected,
+            invalidated_sources=invalidated,
+            unchanged_sources=unchanged,
+            recovered_line_graph=recovered,
         )
 
     def bootstrap_trajectory(
@@ -562,6 +780,55 @@ class LceProjectionSession:
         self.close()
 
 
+@dataclass(frozen=True, slots=True)
+class LceMemoryProjectionConsumer:
+    """Post-commit MR Memory consumer plus process warm-start reconciler."""
+
+    binding: RuntimeBinding
+    production_root: Path | str | None = None
+    lab_root: Path | str | None = None
+
+    def project_committed_memories(
+        self,
+        memories: tuple[CommittedMemory, ...],
+    ) -> None:
+        if not memories:
+            return
+        by_scope: dict[Scope, list[str]] = {}
+        for memory in memories:
+            by_scope.setdefault(memory.scope, []).append(
+                memory.memory_id
+            )
+        for scope, memory_ids in by_scope.items():
+            session = open_lce_projection_binding(
+                self.binding,
+                scope,
+                enabled=True,
+                production_root=self.production_root,
+                lab_root=self.lab_root,
+            )
+            if session is None:
+                raise RuntimeError("enabled LCE projection did not open")
+            with session:
+                session.reconcile_memory_ids(tuple(memory_ids))
+
+    def reconcile_scope(
+        self,
+        scope: Scope,
+    ) -> LceProjectionReconcileReport:
+        session = open_lce_projection_binding(
+            self.binding,
+            scope,
+            enabled=True,
+            production_root=self.production_root,
+            lab_root=self.lab_root,
+        )
+        if session is None:
+            raise RuntimeError("enabled LCE projection did not open")
+        with session:
+            return session.reconcile_canonical()
+
+
 def open_lce_projection_binding(
     binding: RuntimeBinding,
     scope: Scope,
@@ -654,6 +921,8 @@ def open_lce_projection_binding(
 
 __all__ = [
     "LceInspirationMaterial",
+    "LceMemoryProjectionConsumer",
+    "LceProjectionReconcileReport",
     "LceProjectionSession",
     "MrLceCanonicalSourceAdapter",
     "open_lce_projection_binding",
