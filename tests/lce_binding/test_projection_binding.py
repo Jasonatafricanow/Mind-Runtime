@@ -549,10 +549,21 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.release_for_wake("wake-durable") is None
 
 
-def test_warm_reconcile_catches_up_only_missing_canonical_sources(
+def _memory_ids_for_materials(materials):
+    return tuple(
+        str(memory_id)
+        for material in materials
+        for memory_id in material.provenance["memory_ids"]
+    )
+
+
+def test_warm_reconcile_incrementally_catches_up_newer_tail_gap(
     projection_plane,
 ) -> None:
-    binding, roots, _, memories = projection_plane
+    binding, roots, _, _ = projection_plane
+    materials = _source(projection_plane).list_current_valid_evidence()
+    assert len(materials) == 3
+
     session = open_lce_projection_binding(
         binding,
         make_scope(),
@@ -561,7 +572,50 @@ def test_warm_reconcile_catches_up_only_missing_canonical_sources(
     )
     assert session is not None
     with session:
-        first = session.reconcile_memory_ids((memories[0].memory_id,))
+        first = session.reconcile_memory_ids(
+            _memory_ids_for_materials(materials[:2])
+        )
+        assert len(first) == 2
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        report = reopened.reconcile_canonical()
+        assert report.current_sources == 3
+        assert report.projected_sources == 1
+        assert report.invalidated_sources == 0
+        assert report.unchanged_sources == 2
+        assert len(
+            reopened.core.memory.list_current_valid_evidence()
+        ) == 3
+
+
+def test_warm_reconcile_forward_replays_historical_gap(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    materials = _source(projection_plane).list_current_valid_evidence()
+    assert len(materials) == 3
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        # Deliberately project only the newest source. The two missing sources
+        # are now behind the semantic compiler checkpoint and cannot be
+        # appended legally.
+        first = session.reconcile_memory_ids(
+            _memory_ids_for_materials(materials[-1:])
+        )
         assert len(first) == 1
 
     reopened = open_lce_projection_binding(
@@ -574,12 +628,14 @@ def test_warm_reconcile_catches_up_only_missing_canonical_sources(
     with reopened:
         report = reopened.reconcile_canonical()
         assert report.current_sources == 3
-        assert report.projected_sources == 2
+        assert report.projected_sources == 3
         assert report.invalidated_sources == 0
-        assert report.unchanged_sources == 1
-        assert len(
-            reopened.core.memory.list_current_valid_evidence()
-        ) == 3
+        assert report.unchanged_sources == 0
+        assert all(
+            reopened.core.memory.get_pipeline_stage(item.evidence_id)
+            == "complete"
+            for item in materials
+        )
 
     again = open_lce_projection_binding(
         binding,
@@ -622,4 +678,67 @@ def test_projection_consumer_makes_new_memory_immediately_visible(
                 .evidence_id
             )
             == "complete"
+        )
+
+def test_nearline_source_revision_forward_replays_instead_of_fake_receipt(
+    projection_plane,
+) -> None:
+    binding, roots, paths, memories = projection_plane
+    base = memories[0]
+
+    session = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert session is not None
+    with session:
+        session.reconcile_memory_ids((base.memory_id,))
+
+    clone_id = "same-source-later-memory"
+    clone = replace(
+        base,
+        memory_id=clone_id,
+        content="Later canonical detail in the same interaction.",
+        sync=replace(
+            base.sync,
+            object_id=clone_id,
+            idempotency_key=clone_id,
+        ),
+    )
+    canonical = CanonicalMemoryStore(paths.memory_db)
+    try:
+        canonical._commit((clone,))
+    finally:
+        canonical.close()
+
+    from mind_runtime.integrations.lce_projection import (
+        LceMemoryProjectionConsumer,
+    )
+
+    consumer = LceMemoryProjectionConsumer(binding, **roots)
+    consumer.project_committed_memories((clone,))
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        source = _source(projection_plane).evidence_for_memory_ids(
+            (clone.memory_id,)
+        )[0]
+        assert (
+            reopened.core.memory.get_pipeline_stage(source.evidence_id)
+            == "complete"
+        )
+        assert any(
+            "Later canonical detail in the same interaction."
+            in block.content
+            for block in reopened.core.memory.list_semantic_blocks(
+                current_valid_only=True
+            )
         )
