@@ -737,6 +737,8 @@ class LcePostCommitProjector:
     ) -> int:
         if not self.enabled:
             return 0
+        if not isinstance(interaction_id, str) or not interaction_id.strip():
+            raise ValueError("interaction_id must be nonempty")
         adapter = MrMemorySubstrateAdapter(
             self.binding,
             scope,
@@ -761,27 +763,86 @@ class LcePostCommitProjector:
             )
         finally:
             store.close()
-        if not memory_ids:
-            return 0
 
-        session = open_lce_projection_binding(
-            self.binding,
-            scope,
-            enabled=True,
-            production_root=self.production_root,
-            lab_root=self.lab_root,
-        )
-        if session is None:
-            raise LceIntegrationUnavailable(
-                "enabled LCE projection binding did not open"
-            )
-        with session:
-            return len(
-                session.sync_memory_ids(
-                    memory_ids,
-                    mode="nearline",
+        key = _warm_cache_key(adapter)
+        state = _LceProjectionSyncState(_sync_state_path(adapter))
+        with _PROJECTION_WRITE_LOCK:
+            prior_dirty = state.dirty()
+            if not prior_dirty and not memory_ids:
+                state.close()
+                return 0
+            state.set_dirty(True)
+            _WARM_RECONCILED.pop(key, None)
+            try:
+                session = open_lce_projection_binding(
+                    self.binding,
+                    scope,
+                    enabled=True,
+                    production_root=self.production_root,
+                    lab_root=self.lab_root,
                 )
-            )
+                if session is None:
+                    raise LceIntegrationUnavailable(
+                        "enabled LCE projection binding did not open"
+                    )
+                with session:
+                    if prior_dirty:
+                        session.reconcile_canonical()
+                    projected = (
+                        len(
+                            session.sync_memory_ids(
+                                memory_ids,
+                                mode="nearline",
+                            )
+                        )
+                        if memory_ids
+                        else 0
+                    )
+                state.set_dirty(False)
+                return projected
+            except BaseException:
+                # Leave the durable dirty bit set. The next ingress/warm start
+                # must reconcile before LCE history can be considered current.
+                _WARM_RECONCILED.pop(key, None)
+                raise
+            finally:
+                state.close()
+
+
+def lce_projection_reconcile_required(
+    binding: RuntimeBinding,
+    scope: Scope,
+    *,
+    production_root: Path | str | None = None,
+    lab_root: Path | str | None = None,
+) -> bool:
+    """Read the durable MR -> LCE dirty bit without running cognition."""
+    adapter = MrMemorySubstrateAdapter(
+        binding,
+        scope,
+        production_root=production_root,
+        lab_root=lab_root,
+    )
+    _verify_binding(binding, adapter._paths)
+    path = _sync_state_path(adapter)
+    if not path.exists():
+        return True
+    try:
+        conn = sqlite3.connect(
+            f"file:{path.resolve().as_posix()}?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
+        try:
+            row = conn.execute(
+                "SELECT value FROM sync_meta "
+                "WHERE key='reconcile_required'"
+            ).fetchone()
+            return row is None or str(row[0]) != "0"
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return True
 
 
 def reconcile_lce_projection(
@@ -793,18 +854,50 @@ def reconcile_lce_projection(
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
 ) -> LceReconciliationReport | None:
-    """Warm-start reconciliation entrypoint owned by MR composition."""
-    session = open_lce_projection_binding(
+    """Synchronously prove the canonical MR -> LCE projection is current."""
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be bool")
+    if not enabled:
+        return None
+    adapter = MrMemorySubstrateAdapter(
         binding,
         scope,
-        enabled=enabled,
         production_root=production_root,
         lab_root=lab_root,
     )
-    if session is None:
-        return None
-    with session:
-        return session.reconcile_canonical(cutoff=cutoff)
+    key = _warm_cache_key(adapter)
+    with _WARM_RECONCILE_LOCK, _PROJECTION_WRITE_LOCK:
+        state = _LceProjectionSyncState(_sync_state_path(adapter))
+        try:
+            cached = _WARM_RECONCILED.get(key)
+            if (
+                isinstance(cached, LceReconciliationReport)
+                and not state.dirty()
+            ):
+                return cached
+            state.set_dirty(True)
+            try:
+                session = open_lce_projection_binding(
+                    binding,
+                    scope,
+                    enabled=True,
+                    production_root=production_root,
+                    lab_root=lab_root,
+                )
+                if session is None:
+                    raise LceIntegrationUnavailable(
+                        "enabled LCE projection binding did not open"
+                    )
+                with session:
+                    report = session.reconcile_canonical(cutoff=cutoff)
+                state.set_dirty(False)
+                _WARM_RECONCILED[key] = report
+                return report
+            except BaseException:
+                _WARM_RECONCILED.pop(key, None)
+                raise
+        finally:
+            state.close()
 
 
 def open_lce_projection_binding(
@@ -903,6 +996,7 @@ __all__ = [
     "LceProjectionSession",
     "LceReconciliationReport",
     "MrLceCanonicalSourceAdapter",
+    "lce_projection_reconcile_required",
     "open_lce_projection_binding",
     "reconcile_lce_projection",
 ]
