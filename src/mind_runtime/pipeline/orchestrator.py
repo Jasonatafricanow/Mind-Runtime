@@ -2075,6 +2075,11 @@ class TurnOrchestrator:
             if hasattr(self._slow_writer, "discard_pending"):
                 self._slow_writer.discard_pending(slow_scope)
         self.state = TurnState.ABORTED
+        # Facts and canonical Memory admitted during this turn are already
+        # durable (G13b). ABORTED closes the interaction group just as
+        # COMMITTED does, so the derived Memory consumer may safely catch up
+        # without publishing any aborted turn-state/Thread products.
+        self._project_committed_memory(turn)
         if self._telemetry_sink is not None:
             try:
                 self._telemetry_sink.record(
