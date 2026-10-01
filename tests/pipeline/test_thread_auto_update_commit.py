@@ -110,14 +110,24 @@ def test_memory_projection_failure_cannot_rollback_committed_turn() -> None:
     ]
 
 
-def test_aborted_turn_never_projects_memory_to_lce() -> None:
+def test_aborted_turn_projects_durable_memory_but_not_thread_state() -> None:
     projector = RecordingPostCommitProjection()
+    updates = RecordingThreadUpdates()
     orchestrator = make_orchestrator(
         FactIngestService(clock=FakeClock(NOW)),
         memory_post_commit_projection=projector,
+        thread_updates=updates,
     )
-    orchestrator.begin_turn(make_interaction())
-    orchestrator.ingest(make_evidence(text="No projection on abort."))
+    interaction = make_interaction()
+    orchestrator.begin_turn(interaction)
+    orchestrator.ingest(
+        make_evidence(text="Durable factual input survives response abort.")
+    )
     orchestrator.run()
     orchestrator.abort_turn()
-    assert projector.calls == []
+
+    assert orchestrator.state.value == "aborted"
+    assert projector.calls == [
+        (interaction.scope, interaction.interaction_id)
+    ]
+    assert updates.calls == []
