@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 
@@ -29,26 +30,33 @@ class Clock:
 
 
 def record(mid=1, role="user", text=r"Tests completed; always preserve C:\new\test logs."):
-    return NativeRecord(
-        SourceRef("hermes", "s1", str(mid), NOW, "1"), role, text, (1.0, mid)
-    )
+    return NativeRecord(SourceRef("hermes", "s1", str(mid), NOW, "1"), role, text, (1.0, mid))
 
 
 def proposal(fragments, decisions=("DROP", "KEEP")):
     return {
         "schema_version": SCHEMA_VERSION,
-        "fragments": [{
-            "fragment_id": fragment.fragment_id,
-            "disposition": disposition,
-            "reason": "transient progress" if disposition == "DROP" else "durable constraint",
-            "content": (
-                r"User requires preserving C:\new\test logs." if disposition == "KEEP" else ""
-            ),
-            "attributes": {
-                "subject": "user", "holder": "user", "polarity": "positive",
-                "modality": "asserted", "temporal_scope": "ongoing", "kind": "constraint",
-            } if disposition == "KEEP" else {},
-        } for fragment, disposition in zip(fragments, decisions, strict=True)],
+        "fragments": [
+            {
+                "fragment_id": fragment.fragment_id,
+                "disposition": disposition,
+                "reason": "transient progress" if disposition == "DROP" else "durable constraint",
+                "content": (
+                    r"User requires preserving C:\new\test logs." if disposition == "KEEP" else ""
+                ),
+                "attributes": {
+                    "subject": "user",
+                    "holder": "user",
+                    "polarity": "positive",
+                    "modality": "asserted",
+                    "temporal_scope": "ongoing",
+                    "kind": "constraint",
+                }
+                if disposition == "KEEP"
+                else {},
+            }
+            for fragment, disposition in zip(fragments, decisions, strict=True)
+        ],
     }
 
 
@@ -75,12 +83,18 @@ class Consumer:
 def pipeline(tmp_path, core, cleaner, consumers=None):
     host = Host(tuple(record(mid) for mid in range(1, 82)))
     return HistoricalSemanticPipeline(
-        path=tmp_path / "receipts.sqlite", core=core,
+        path=tmp_path / "receipts.sqlite",
+        core=core,
         admission=SemanticAdmissionService(
-            store=core.canonical, sources=host, clock=Clock(),
+            store=core.canonical,
+            sources=host,
+            clock=Clock(),
             origin_runtime_id="host",
         ),
-        scope=SCOPE, cleaner=cleaner, compiler_version="host-v1", consumers=consumers,
+        scope=SCOPE,
+        cleaner=cleaner,
+        compiler_version="host-v1",
+        consumers=consumers,
         sources=host,
     )
 
@@ -106,8 +120,13 @@ def test_mixed_turn_is_reduced_once_and_restart_retries_only_failed_projection(t
         assert len(core.load_all()) == 1
         assert memories[0].content == r"User requires preserving C:\new\test logs."
         assert flow.funnel() == {
-            "raw_records": 1, "structural_drop": 0, "DROP": 1, "KEEP": 1, "DEFER": 0,
-            "semantic_memories": 1, "proposal_attempts": 1,
+            "raw_records": 1,
+            "structural_drop": 0,
+            "DROP": 1,
+            "KEEP": 1,
+            "DEFER": 0,
+            "semantic_memories": 1,
+            "proposal_attempts": 1,
         }
         flow.close()
     assert b"Tests completed" not in (tmp_path / "semantic.sqlite").read_bytes()
@@ -124,6 +143,35 @@ def test_tools_are_hard_dropped_without_semantic_or_downstream_calls(tmp_path):
         assert consumer.calls == []
         assert core.load_all() == ()
         assert flow.funnel()["structural_drop"] == 80
+        flow.close()
+
+
+def test_receipt_recovery_fetches_exact_pointer_and_only_missing_consumer(tmp_path):
+    cleaner, first, failing = Cleaner(), Consumer(), Consumer(fail=True)
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
+        with pytest.raises(RuntimeError):
+            flow.process(record())
+        flow.close()
+        failing.fail = False
+        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
+        fetched = []
+
+        def fetch(ref):
+            fetched.append(ref)
+            return record(int(ref.record_id))
+
+        assert flow.recover(fetch) == 1
+        assert fetched == [record().ref]
+        assert cleaner.calls == 1
+        assert len(first.calls) == 1
+        assert len(failing.calls) == 2
+        assert flow.recover(fetch) == 0
+        assert flow.source_cursor("native") is None
+        flow.advance_source_cursor("native", (1.0, 1))
+        assert flow.source_cursor("native") == (1.0, 1)
+        with pytest.raises(ValueError, match="regress"):
+            flow.advance_source_cursor("native", (0.0, 0))
         flow.close()
 
 
@@ -218,4 +266,23 @@ def test_semantic_drop_and_defer_do_not_enter_consumers(tmp_path):
         assert consumer.calls == []
         assert core.load_all() == ()
         assert flow.funnel()["DEFER"] == 1
+        flow.close()
+
+
+def test_corrupt_receipt_pointer_cannot_borrow_another_current_native_record(tmp_path):
+    cleaner, failing = Cleaner(), Consumer(fail=True)
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner, {"lce": failing})
+        with pytest.raises(RuntimeError):
+            flow.process(record())
+        pointer = json.loads(
+            flow._db.execute("SELECT source_pointer FROM source_receipts").fetchone()[0]
+        )
+        pointer["record_id"] = "2"
+        with flow._db:
+            flow._db.execute("UPDATE source_receipts SET source_pointer=?", (json.dumps(pointer),))
+        with pytest.raises(ValueError, match="receipt identity"):
+            flow.recover(lambda ref: record(2))
+        assert cleaner.calls == 1
+        assert len(core.load_all()) == 1
         flow.close()

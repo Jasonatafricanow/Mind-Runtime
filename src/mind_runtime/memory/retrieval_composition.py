@@ -347,6 +347,7 @@ def build_memory_history(
     production_root: Path | str | None = None,
     lab_root: Path | str | None = None,
     decision: DecisionCapability | None = None,
+    native_history: HistoricalContextPort | None = None,
 ) -> HistoricalContextPort:
     """Expose the Memory subsystem's single outward historical-context boundary.
 
@@ -359,6 +360,12 @@ def build_memory_history(
         raise TypeError("thread_enabled must be bool")
     if decision is not None and not isinstance(decision, DecisionCapability):
         raise TypeError("decision must be DecisionCapability when supplied")
+    if native_history is not None:
+        if not isinstance(native_history, HistoricalContextPort):
+            raise TypeError("native_history must implement HistoricalContextPort")
+        if provider is not None or lce_enabled or thread_enabled or decision is not None:
+            raise ValueError("native history composition cannot also enable legacy memory readers")
+        return native_history
     if (
         (provider is None or isinstance(provider, NullRetrievalProvider))
         and not lce_enabled

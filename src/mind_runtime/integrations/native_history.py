@@ -9,8 +9,9 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
-from mr_mem import Scope, SourceRef
+from mr_mem import Scope, SourceRef, SourceRefReader
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,25 @@ class NativeRecord:
     text: str
     ordering_key: tuple[float, int]
     tool_only: bool = False
+
+
+class NativeSourceStore(SourceRefReader, Protocol):
+    """Hermes and future AML adapters share this read-only source surface."""
+
+    @property
+    def scope(self) -> Scope: ...
+
+    @property
+    def namespace(self) -> str: ...
+
+    def read(
+        self,
+        *,
+        limit: int = 100,
+        after: tuple[float, int] | None = None,
+    ) -> tuple[NativeRecord, ...]: ...
+
+    def get_record(self, scope: Scope, ref: SourceRef) -> NativeRecord | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +69,9 @@ def structural_drop(record: NativeRecord) -> str | None:
 
 
 def source_fragments(
-    record: NativeRecord, *, max_characters: int = 1200,
+    record: NativeRecord,
+    *,
+    max_characters: int = 1200,
 ) -> tuple[SourceFragment, ...]:
     """Host binds sentence/line slices; models select IDs, never compute offsets."""
     if type(max_characters) is not int or not 100 <= max_characters <= 4096:
@@ -64,10 +86,16 @@ def source_fragments(
             text = record.text[start:end]
             if text.strip():
                 key = f"{record.ref.version_key}:{start}:{end}"
-                fragments.append(SourceFragment(
-                    hashlib.sha256(key.encode()).hexdigest(), record.ref, record.role,
-                    text, start, end,
-                ))
+                fragments.append(
+                    SourceFragment(
+                        hashlib.sha256(key.encode()).hexdigest(),
+                        record.ref,
+                        record.role,
+                        text,
+                        start,
+                        end,
+                    )
+                )
             start = end
     return tuple(fragments)
 
@@ -76,7 +104,12 @@ class HermesSourceStore:
     """A configured native user/session boundary, not a second history store."""
 
     def __init__(
-        self, path: Path, *, scope: Scope, source_namespace: str, user_id: str | None,
+        self,
+        path: Path,
+        *,
+        scope: Scope,
+        source_namespace: str,
+        user_id: str | None,
         session_ids: tuple[str, ...] = (),
     ) -> None:
         if not source_namespace.strip() or (user_id is None and not session_ids):
@@ -93,18 +126,32 @@ class HermesSourceStore:
     def close(self) -> None:
         self._db.close()
 
+    @property
+    def scope(self) -> Scope:
+        return self._scope
+
+    @property
+    def namespace(self) -> str:
+        return self._namespace
+
     def _record(self, row: tuple[int, str, str, str | None, float, str | None]) -> NativeRecord:
         mid, session, role, content, timestamp, tools = row
         text = content if isinstance(content, str) else ""
-        fingerprint = hashlib.sha256(json.dumps(
-            [role, text, timestamp, tools], ensure_ascii=False
-        ).encode()).hexdigest()
+        fingerprint = hashlib.sha256(
+            json.dumps([role, text, timestamp, tools], ensure_ascii=False).encode()
+        ).hexdigest()
         return NativeRecord(
             SourceRef(
-                self._namespace, str(session), str(mid),
-                datetime.fromtimestamp(float(timestamp), UTC), fingerprint=fingerprint,
+                self._namespace,
+                str(session),
+                str(mid),
+                datetime.fromtimestamp(float(timestamp), UTC),
+                fingerprint=fingerprint,
             ),
-            str(role), text, (float(timestamp), int(mid)), bool(tools),
+            str(role),
+            text,
+            (float(timestamp), int(mid)),
+            bool(tools),
         )
 
     def _ownership(self) -> tuple[str, tuple[str, ...]]:
@@ -117,7 +164,10 @@ class HermesSourceStore:
         return condition, parameters
 
     def read(
-        self, *, limit: int = 100, after: tuple[float, int] | None = None,
+        self,
+        *,
+        limit: int = 100,
+        after: tuple[float, int] | None = None,
     ) -> tuple[NativeRecord, ...]:
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("bounded native read requires 1..1000 records")
@@ -134,6 +184,11 @@ class HermesSourceStore:
         return tuple(self._record(row) for row in rows)
 
     def current_ref(self, scope: Scope, ref: SourceRef) -> SourceRef | None:
+        record = self.get_record(scope, ref)
+        return None if record is None else record.ref
+
+    def get_record(self, scope: Scope, ref: SourceRef) -> NativeRecord | None:
+        """Fetch one scoped receipt pointer; never rescan the complete history."""
         if scope != self._scope or ref.source_namespace != self._namespace:
             return None
         owner_sql, owner_params = self._ownership()
@@ -144,4 +199,4 @@ class HermesSourceStore:
             "AND (m.active=1 OR m.compacted=1)",
             (ref.record_id, ref.session_id, *owner_params),
         ).fetchone()
-        return None if row is None else self._record(row).ref
+        return None if row is None else self._record(row)
