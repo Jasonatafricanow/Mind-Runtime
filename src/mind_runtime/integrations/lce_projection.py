@@ -556,12 +556,13 @@ class LceProjectionSession:
 
     def sync_all(self) -> tuple[ProcessResult, ...]:
         """Compile every current canonical source; replay is idempotent."""
-        return cast(
-            "tuple[ProcessResult, ...]",
-            self.core.run_batch(
-                self._source.list_current_valid_evidence()
-            ),
-        )
+        with _PROJECTION_WRITE_LOCK:
+            return cast(
+                "tuple[ProcessResult, ...]",
+                self.core.run_batch(
+                    self._source.list_current_valid_evidence()
+                ),
+            )
 
     def sync_memory_ids(
         self,
@@ -571,16 +572,17 @@ class LceProjectionSession:
     ) -> tuple[ProcessResult, ...]:
         if mode not in {"nearline", "batch"}:
             raise ValueError("mode must be nearline or batch")
-        materials = self._source.evidence_for_memory_ids(memory_ids)
-        if mode == "batch":
-            return cast(
-                "tuple[ProcessResult, ...]",
-                self.core.run_batch(materials),
+        with _PROJECTION_WRITE_LOCK:
+            materials = self._source.evidence_for_memory_ids(memory_ids)
+            if mode == "batch":
+                return cast(
+                    "tuple[ProcessResult, ...]",
+                    self.core.run_batch(materials),
+                )
+            return tuple(
+                self.core.process(material, mode="nearline")
+                for material in materials
             )
-        return tuple(
-            self.core.process(material, mode="nearline")
-            for material in materials
-        )
 
     def bootstrap_trajectory(
         self,
@@ -589,9 +591,10 @@ class LceProjectionSession:
     ) -> TrajectoryRuntimeResult:
         if knowledge_cutoff.tzinfo != UTC:
             raise ValueError("knowledge_cutoff must be UTC")
-        return self.core.bootstrap_trajectory(
-            knowledge_cutoff=knowledge_cutoff
-        )
+        with _PROJECTION_WRITE_LOCK:
+            return self.core.bootstrap_trajectory(
+                knowledge_cutoff=knowledge_cutoff
+            )
 
     def discover_inspiration(
         self,
