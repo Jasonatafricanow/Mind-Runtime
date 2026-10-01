@@ -126,10 +126,12 @@ class ProjectionWriter(Protocol):
 
 
 class MemoryPostCommitProjectionPort(Protocol):
-    """Derived consumer invoked only after a turn is durably committed.
+    """Derived consumer invoked at a terminal boundary after Memory is durable.
 
-    The consumer may fail without changing canonical Memory/State authority.
-    Replays are allowed and must therefore be idempotent.
+    COMMITTED and ABORTED turns may both contain already-admitted canonical
+    Facts/Memory. The consumer never publishes aborted turn-state products and
+    may fail without changing canonical Memory/State authority. Replays are
+    allowed and must therefore be idempotent.
     """
 
     def project_interaction(
