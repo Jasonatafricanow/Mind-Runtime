@@ -19,7 +19,9 @@ from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
     LcePostCommitProjector,
     MrLceCanonicalSourceAdapter,
+    lce_projection_reconcile_required,
     open_lce_projection_binding,
+    reconcile_lce_projection,
 )
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
@@ -695,3 +697,135 @@ def test_post_commit_projector_projects_complete_interaction_group(
             )
             == "complete"
         )
+
+
+def test_warm_reconcile_wrapper_persists_clean_consumer_state(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    assert lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    first = reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None
+    assert first.current
+    assert not lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    # Process-local warm-start cache is safe only while the durable dirty bit
+    # remains clear.
+    second = reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert second == first
+
+
+def test_post_commit_failure_stays_dirty_until_retry_reconciles(
+    projection_plane,
+    monkeypatch,
+) -> None:
+    import mind_runtime.integrations.lce_projection as integration
+
+    binding, roots, _, memories = projection_plane
+    projector = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    original_open = integration.open_lce_projection_binding
+
+    def fail_open(*args, **kwargs):
+        raise RuntimeError("synthetic LCE outage")
+
+    monkeypatch.setattr(
+        integration,
+        "open_lce_projection_binding",
+        fail_open,
+    )
+    with pytest.raises(RuntimeError, match="synthetic LCE outage"):
+        projector.project_interaction(
+            scope=make_scope(),
+            interaction_id=memories[0].provenance.interaction_id,
+        )
+    assert lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    monkeypatch.setattr(
+        integration,
+        "open_lce_projection_binding",
+        original_open,
+    )
+    assert projector.project_interaction(
+        scope=make_scope(),
+        interaction_id=memories[0].provenance.interaction_id,
+    ) >= 0
+    assert not lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+
+def test_post_commit_projector_noop_and_identity_validation(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    disabled = LcePostCommitProjector(
+        binding,
+        enabled=False,
+        **roots,
+    )
+    assert disabled.project_interaction(
+        scope=make_scope(),
+        interaction_id="anything",
+    ) == 0
+
+    enabled = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    with pytest.raises(ValueError, match="interaction_id"):
+        enabled.project_interaction(
+            scope=make_scope(),
+            interaction_id="",
+        )
+
+    # A terminal turn with no canonical Memory is harmless, but if a previous
+    # projection is dirty this same seam is also allowed to perform recovery.
+    assert enabled.project_interaction(
+        scope=make_scope(),
+        interaction_id="missing-interaction",
+    ) == 0
+
+
+def test_disabled_warm_reconcile_has_no_sync_state_side_effect(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    assert (
+        reconcile_lce_projection(
+            binding,
+            make_scope(),
+            enabled=False,
+            **roots,
+        )
+        is None
+    )
