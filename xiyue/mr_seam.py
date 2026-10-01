@@ -683,6 +683,81 @@ def mark_runtime_ready(
 evaluate_and_update_readiness = mark_runtime_ready
 
 
+def _lce_runtime_required() -> bool:
+    return _env_enabled("MR_LCE_ENABLED") or _env_enabled(
+        "MR_LCE_INSPIRATION_ENABLED"
+    )
+
+
+def _lce_binding_scope(*, create_storage: bool) -> tuple[Any, Any]:
+    if not _ensure_mr_importable():
+        raise RuntimeError("mind_runtime not importable for LCE reconciliation")
+    from mind_runtime.contracts import Scope, ScopeDomain
+    from mind_runtime.runtime_binding import (
+        bind_storage,
+        discover_production_binding,
+    )
+
+    composition = _load_production_composition()
+    persona = composition.get("persona")
+    persona_id = getattr(persona, "persona_id", "kayla_v0")
+    binding = discover_production_binding(persona_id=persona_id)
+    if create_storage:
+        from mind_runtime.memory.store import CanonicalMemoryStore
+
+        paths = bind_storage(binding)
+        CanonicalMemoryStore(paths.memory_db).close()
+    return binding, Scope(domain=ScopeDomain.USER, user_id="user")
+
+
+def _lce_projection_dirty() -> bool:
+    """Read-only producer/consumer dirty probe used by ingress."""
+    if not _lce_runtime_required():
+        return False
+    try:
+        from mind_runtime.integrations.lce_projection import (
+            lce_projection_reconcile_required,
+        )
+
+        binding, scope = _lce_binding_scope(create_storage=False)
+        return lce_projection_reconcile_required(binding, scope)
+    except Exception:
+        return True
+
+
+def _refresh_lce_projection_current() -> bool:
+    """Repair an enabled dirty LCE projection and update process readiness."""
+    global _lce_startup_current
+    if not _lce_runtime_required():
+        _lce_startup_current = True
+        return True
+    try:
+        from mind_runtime.integrations.lce_projection import (
+            lce_projection_reconcile_required,
+            reconcile_lce_projection,
+        )
+
+        binding, scope = _lce_binding_scope(create_storage=True)
+        if lce_projection_reconcile_required(binding, scope):
+            report = reconcile_lce_projection(
+                binding,
+                scope,
+                enabled=True,
+            )
+            _lce_startup_current = bool(
+                report is not None and report.current
+            )
+        else:
+            _lce_startup_current = True
+    except Exception as exc:  # noqa: BLE001
+        _lce_startup_current = False
+        _logger.warning(
+            "LCE projection reconciliation failed: %s",
+            type(exc).__name__,
+        )
+    return _lce_startup_current is True
+
+
 def reconcile_bundle_readiness(
     *,
     adapter: Any = None,
@@ -692,10 +767,9 @@ def reconcile_bundle_readiness(
 ) -> dict[str, Any]:
     """Refresh the Gateway-owned bundle projection for the current epoch.
 
-    This is deliberately a thin operational seam over ``mark_runtime_ready``:
-    it performs no cognition work and grants no write authority to OW. The
-    caller must be the Gateway that owns the epoch (or an explicit test
-    fixture using the existing test-only escape hatch).
+    LCE recovery is owned by the Gateway runtime, never by OW. A separate
+    reconciliation loop repairs a dirty derived projection before this
+    read-only readiness projection is refreshed.
     """
     return mark_runtime_ready(
         adapter=adapter,
@@ -717,6 +791,7 @@ def _bundle_reconciliation_loop(
         if current.get("gateway_pid") != os.getpid() or not _owns_readiness_epoch(current):
             return
         try:
+            _refresh_lce_projection_current()
             reconcile_bundle_readiness(adapter=adapter, ow_port=ow_port)
         except Exception as exc:  # noqa: BLE001
             _logger.warning("Bundle readiness reconciliation failed: %s", exc)
@@ -774,44 +849,9 @@ def stop_bundle_readiness_reconciler() -> None:
 
 def on_gateway_process_startup() -> dict[str, Any]:
     """Gateway boot hook: establish epoch and reconcile enabled LCE first."""
-    global _lce_startup_current
     cur_pid, cur_started = get_gateway_process_identity()
     epoch_rec = begin_runtime_epoch(cur_pid, cur_started)
-
-    lce_enabled = _env_enabled("MR_LCE_ENABLED") or _env_enabled(
-        "MR_LCE_INSPIRATION_ENABLED"
-    )
-    if lce_enabled:
-        try:
-            if not _ensure_mr_importable():
-                raise RuntimeError("mind_runtime not importable for LCE startup")
-            from mind_runtime.contracts import Scope, ScopeDomain
-            from mind_runtime.integrations.lce_projection import (
-                reconcile_lce_projection,
-            )
-            from mind_runtime.memory.store import CanonicalMemoryStore
-            from mind_runtime.runtime_binding import (
-                bind_storage,
-                discover_production_binding,
-            )
-
-            binding = discover_production_binding(persona_id="kayla_v0")
-            paths = bind_storage(binding)
-            CanonicalMemoryStore(paths.memory_db).close()
-            report = reconcile_lce_projection(
-                binding,
-                Scope(domain=ScopeDomain.USER, user_id="user"),
-                enabled=True,
-            )
-            _lce_startup_current = report is not None
-        except Exception as exc:  # noqa: BLE001
-            _lce_startup_current = False
-            _logger.warning(
-                "Gateway LCE startup reconciliation failed: %s",
-                type(exc).__name__,
-            )
-    else:
-        _lce_startup_current = True
+    _refresh_lce_projection_current()
 
     try:
         current = mark_runtime_ready()
@@ -835,6 +875,13 @@ def check_ingress_admission(
         return IngressVerdict(admitted=True, status="READY", reason="non_xiyue_profile")
     if not _env_enabled("MR_ENABLED"):
         return IngressVerdict(admitted=True, status="DISABLED", reason="mr_disabled")
+    if _lce_runtime_required() and _lce_projection_dirty():
+        return IngressVerdict(
+            admitted=False,
+            status="NOT_READY",
+            reason="lce_projection_pending_reconcile",
+            error_message="Mind Runtime is temporarily unavailable. (MR_NOT_READY)",
+        )
 
     ready_data = load_readiness()
     if not _owns_readiness_epoch(ready_data):
