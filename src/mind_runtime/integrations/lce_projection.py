@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -54,6 +56,57 @@ if TYPE_CHECKING:
 
 
 _SOURCE_PREFIX = "mr-source:"
+_SYNC_STATE_FILENAME = "mr_projection_sync.sqlite"
+_PROJECTION_WRITE_LOCK = threading.RLock()
+_WARM_RECONCILE_LOCK = threading.Lock()
+_WARM_RECONCILED: dict[str, object] = {}
+
+
+class _LceProjectionSyncState:
+    """Durable MR-owned dirty bit for the canonical -> LCE consumer boundary."""
+
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        self._conn = sqlite3.connect(str(path), timeout=30.0)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS sync_meta ("
+            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def dirty(self) -> bool:
+        row = self._conn.execute(
+            "SELECT value FROM sync_meta WHERE key='reconcile_required'"
+        ).fetchone()
+        return row is not None and str(row[0]) == "1"
+
+    def set_dirty(self, value: bool) -> None:
+        if type(value) is not bool:
+            raise TypeError("value must be bool")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO sync_meta(key,value) VALUES('reconcile_required',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("1" if value else "0",),
+            )
+
+
+def _sync_state_path(adapter: MrMemorySubstrateAdapter) -> Path:
+    return _scope_lce_root(adapter) / _SYNC_STATE_FILENAME
+
+
+def _warm_cache_key(adapter: MrMemorySubstrateAdapter) -> str:
+    return json.dumps(
+        [
+            str(adapter._paths.root.resolve()),
+            scope_json(adapter.scope),
+        ],
+        ensure_ascii=False,
+    )
 
 
 def _effective_window_payload(window: object) -> dict[str, object] | None:
