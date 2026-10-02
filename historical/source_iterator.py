@@ -75,7 +75,13 @@ class HistoricalSourceIterator:
         fingerprint = hashlib.sha256(
             json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()
-        kind = data.get("record_type") or ("tool_call" if data.get("tool_calls") else data["role"])
+        calls = data.get("tool_calls")
+        if isinstance(calls, str):
+            try:
+                calls = json.loads(calls)
+            except ValueError:
+                calls = True  # Unreadable execution marker cannot gain cognition eligibility.
+        kind = "tool_call" if calls else (data.get("record_type") or data["role"])
         if not data.get("active", 1) and not data.get("compacted", 0):
             kind = "agent_execution"  # Inactive/rewound rows have no semantic eligibility.
         ref = SourceRef(

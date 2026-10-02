@@ -52,3 +52,16 @@ def test_exact_read_only_native_binding_and_order(native):
     with sqlite3.connect(path) as db:
         db.execute("UPDATE messages SET content='changed' WHERE id=2")
     assert reader.current_user_source(scope, iid) != short.source_ref
+
+
+def test_native_tool_marker_precedes_generic_role_and_empty_array_is_context(native):
+    path, _, reader = native
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE messages SET tool_calls='[]' WHERE id=1")
+        db.execute("UPDATE messages SET tool_calls='[{\"name\":\"shell\"}]' WHERE id=2")
+    records = tuple(reader.iterate())
+    curator = HistoricalSourceCurator()
+    assert curator.classify(records[0]) == SourceDisposition.CONTEXT_ONLY
+    assert curator.classify(records[1]) == SourceDisposition.IGNORE
+    with pytest.raises(ValueError, match="eligible USER"):
+        reader.bind(records[1])
