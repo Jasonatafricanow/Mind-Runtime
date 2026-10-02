@@ -13,6 +13,8 @@ def render(source, repo_root):
     if MARKER in source:
         if source.count(MARKER) != 1 or "result = _delta_run_gateway_turn(" not in source:
             raise ValueError("incomplete Semantic Delta patch")
+        if repr(str(repo_root.resolve())) not in source:
+            raise ValueError("installed delta patch belongs to a different repository checkout")
         return source
     if source.count(ANCHOR) != 1 or "# --- end Xiyue MR begin seam ---" not in source:
         raise ValueError("Hermes 0.19.0/MR Body anchor drift; refusing to patch")

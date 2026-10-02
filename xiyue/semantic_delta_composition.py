@@ -3,7 +3,11 @@
 import json
 import logging
 
-from mr_mem.memory.semantic_contracts import COMPILER_VERSION, SemanticDeltaErrorCode
+from mr_mem.memory.semantic_contracts import (
+    COMPILER_VERSION,
+    SemanticDeltaError,
+    SemanticDeltaErrorCode,
+)
 from mr_mem.memory.semantic_store import SemanticSourceBinding
 
 from xiyue.semantic_delta_protocol import PROMPT, parse_body_turn_result
@@ -23,6 +27,7 @@ def run_one_pass(
     activated_memories=(),
     guard=None,
     telemetry=None,
+    sidecar_token_counter=None,
     **conversation_kwargs,
 ):
     """One normal Body invocation; canonical writes belong exclusively to admission."""
@@ -32,7 +37,7 @@ def run_one_pass(
     native_db = agent._session_db
     old_append = native_db.append_message
     old_stream = getattr(agent, "stream_delta_callback", None)
-    captured = {"native_id": None, "prose": None, "submitted": False}
+    captured = {"native_id": None, "source_ref": None, "prose": None, "submitted": False}
     processed = []
     metrics = dict(
         status="missing",
@@ -52,6 +57,13 @@ def run_one_pass(
             # Metadata on the host's own current-row append, never an inferred row/text match.
             kwargs["platform_message_id"] = message_id
             captured["native_id"] = old_append(*args, **kwargs)
+            try:
+                # Freeze the source version at the current USER persistence boundary,
+                # before Hermes' first model request. Never relabel an old proposal
+                # with a source version edited while the model was running.
+                captured["source_ref"] = sources.current_user_source(scope, interaction_id)
+            except Exception:
+                captured["source_ref"] = None
             return captured["native_id"]
         return old_append(*args, **kwargs)
 
@@ -69,9 +81,18 @@ def run_one_pass(
             if envelope.semantic_delta is not None and not captured["submitted"]:
                 captured["submitted"] = True
                 try:
-                    ref = sources.current_user_source(scope, interaction_id)
+                    ref = captured["source_ref"]
                     if ref is None or str(captured["native_id"]) != ref.record_id:
-                        raise ValueError("exact current native row receipt is unavailable")
+                        raise SemanticDeltaError(
+                            SemanticDeltaErrorCode.SCOPE_MISMATCH,
+                            "exact current native row receipt is unavailable",
+                        )
+                    if sidecar_token_counter is not None:
+                        try:
+                            text = json.dumps(envelope.semantic_delta, ensure_ascii=False)
+                            metrics["sidecar_tokens"] = sidecar_token_counter(text)
+                        except Exception:
+                            pass
                     binding = SemanticSourceBinding(scope, interaction_id, ref)
                     receipt = admission.resume_semantic_delta(binding)
                     if receipt is not None:
@@ -98,7 +119,7 @@ def run_one_pass(
                     metrics["commit_failed"] = code == SemanticDeltaErrorCode.COMMIT_FAILED
                     metrics["validation_failed"] = not metrics["commit_failed"]
                     _log.warning("Semantic Delta degraded: %s", code)
-            elif envelope.semantic_delta is None:
+            elif envelope.semantic_delta is None and not captured["submitted"]:
                 metrics["status"] = SemanticDeltaErrorCode.INVALID_SCHEMA.value
                 metrics["validation_failed"] = True
         return old_persist(messages, *args, **kwargs)
