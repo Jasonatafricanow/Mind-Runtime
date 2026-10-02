@@ -6,12 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from mind_runtime.contracts import (
+from mind_runtime.contracts.longitudinal_affect import (
     LongitudinalAffectQuery,
     LongitudinalAffectRecord,
-    Scope,
-    ScopeDomain,
 )
+from mind_runtime.contracts.scope import Scope, ScopeDomain
 from mind_runtime.emotional_transition import (
     derive_longitudinal_affect_view,
     resolve_affect_occurrence_id,
