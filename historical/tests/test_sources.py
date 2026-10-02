@@ -26,6 +26,7 @@ def test_curation_provenance_short_commitments_and_context(native):
         curator.classify(replace(records[1], record_type="agent_execution"))
         == SourceDisposition.IGNORE
     )
+    assert curator.classify(replace(records[0], role="agent")) == SourceDisposition.IGNORE
 
 
 def test_exact_read_only_native_binding_and_order(native):

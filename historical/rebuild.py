@@ -64,6 +64,19 @@ class HistoricalRebuild:
                 self.state = self.checkpoint.load()
                 if self.state["authority"] != authority or not self.db_path.is_file():
                     raise ValueError("rebuild authority, Raw, schema or prompt changed")
+                # Verify ownership read-only before reopening any canonical writer.
+                with MemoryCore(self.db_path, read_only=True) as canonical:
+                    if any(
+                        item.origin_runtime_id != self.state["origin"]
+                        or item.scope != sources.scope
+                        or not item.provenance.source_refs
+                        or any(
+                            ref.source_namespace != sources.namespace
+                            for ref in item.provenance.source_refs
+                        )
+                        for item in canonical.load_all()
+                    ):
+                        raise ValueError("DB is not owned by this fresh historical rebuild")
             else:
                 if self.db_path.exists():
                     raise ValueError("fresh empty rebuild DB required")
