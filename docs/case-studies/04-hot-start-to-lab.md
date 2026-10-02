@@ -75,3 +75,9 @@ quantitative Hot Start benchmark.
 The production/research boundary is accepted. Hot Start, compiled cognition,
 and longitudinal compilation remain experiment/research concerns rather than
 current MR runtime features.
+
+Current historical source eligibility is governed by the
+[frozen Hot-Start Source Curation invariant](../architecture/MR_HOT_START_SOURCE_CURATION_FROZEN_INVARIANT.md).
+Any historical compilation or rebuild must apply that curation stage before AGY;
+this historical case study does not authorize raw-transcript import or runtime
+affect replay.
