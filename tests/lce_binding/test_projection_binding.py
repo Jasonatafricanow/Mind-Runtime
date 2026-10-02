@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import fields, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 pytest.importorskip("lce", reason="optional current lce-core package is not installed")
 
 from lce.cognition.inspiration import InspirationKind, InspirationPackage
+from lce.contracts.baseline import Baseline, compute_content_hash
+from lce.reference_memory.contracts import AuthorizedSelectedSupport
 
 from mind_runtime.cognition import CognitiveMode
-from mind_runtime.integrations.lce import open_lce_thread_handoff
+from mind_runtime.integrations.lce import open_lce_read_binding, open_lce_thread_handoff
 from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
@@ -272,6 +275,56 @@ def test_path_a_and_path_b_share_one_scope_baseline_store(
         assert handoff.db_path == path_b_db
         result = handoff.handoff_thread(thread)
         assert result.baseline.region_id == "mr-thread:shared-lineage"
+
+def test_accepted_path_b_readback_resolves_current_sources_after_restart(
+    projection_plane,
+) -> None:
+    """Read contract only: an accepted fixture does not certify Path-B maturity."""
+    binding, roots, paths, memories = projection_plane
+    session = open_lce_projection_binding(binding, make_scope(), enabled=True, **roots)
+    assert session is not None
+    with session:
+        session.sync_all()
+        block = session.core.memory.list_semantic_blocks(current_valid_only=True)[0]
+        assert block.state_id is not None
+        accepted = Baseline(
+            baseline_id="accepted-read-fixture", region_id="path-b-read-fixture",
+            revision_number=1, content="Canonical path B understanding",
+            content_hash=compute_content_hash("Canonical path B understanding"),
+            supporting_memory_ids=(block.block_id,), created_at=datetime.now(UTC),
+            selected_support=(AuthorizedSelectedSupport(block.block_id, block.state_id),),
+        )
+        session.core.baselines.save_revision(accepted)
+        expected = session.accepted_understandings("canonical")
+        assert len(expected) == 1
+        assert set(expected[0].supporting_memory_ids).issubset(
+            {m.memory_id for m in memories}
+        )
+        assert expected[0].source_refs
+        assert expected[0].relevance == 1.0
+        assert session.accepted_understandings(None)[0].baseline_id == accepted.baseline_id
+        assert session.accepted_understandings("unrelated") == ()
+
+    reader = open_lce_read_binding(binding, make_scope(), enabled=True, **roots)
+    assert reader is not None
+    with reader:
+        assert reader.accepted_understandings("canonical") == expected
+        assert reader.accepted_understandings(None)[0].baseline_id == accepted.baseline_id
+        assert reader.accepted_understandings("unrelated") == ()
+        assert reader.accepted_understandings(None, limit=0) == ()
+        history = reader._store.get_history(accepted.region_id)
+        # A historical lifecycle transition must take effect without a reader restart.
+        with sqlite3.connect(paths.memory_db) as conn:
+            for memory_id, payload in conn.execute(
+                "SELECT memory_id,payload FROM canonical_memory"
+            ):
+                data = json.loads(payload)
+                data["lifecycle"] = "archived"
+                conn.execute("UPDATE canonical_memory SET payload=? WHERE memory_id=?",
+                             (json.dumps(data), memory_id))
+        assert reader.accepted_understandings(None) == ()
+        assert reader._store.get_history(accepted.region_id) == history
+
 
 def test_inspiration_material_binding_keeps_downstream_surface_narrow(
     projection_plane,

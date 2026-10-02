@@ -30,33 +30,26 @@ class Clock:
 
 
 def record(mid=1, role="user", text=r"Tests completed; always preserve C:\new\test logs."):
-    return NativeRecord(SourceRef("hermes", "s1", str(mid), NOW, "1"), role, text, (1.0, mid))
+    return NativeRecord(
+        SourceRef("hermes", "s1", str(mid), NOW, "1"), role, text, (1.0, mid)
+    )
 
 
 def proposal(fragments, decisions=("DROP", "KEEP")):
     return {
         "schema_version": SCHEMA_VERSION,
-        "fragments": [
-            {
-                "fragment_id": fragment.fragment_id,
-                "disposition": disposition,
-                "reason": "transient progress" if disposition == "DROP" else "durable constraint",
-                "content": (
-                    r"User requires preserving C:\new\test logs." if disposition == "KEEP" else ""
-                ),
-                "attributes": {
-                    "subject": "user",
-                    "holder": "user",
-                    "polarity": "positive",
-                    "modality": "asserted",
-                    "temporal_scope": "ongoing",
-                    "kind": "constraint",
-                }
-                if disposition == "KEEP"
-                else {},
-            }
-            for fragment, disposition in zip(fragments, decisions, strict=True)
-        ],
+        "fragments": [{
+            "fragment_id": fragment.fragment_id,
+            "disposition": disposition,
+            "reason": "transient progress" if disposition == "DROP" else "durable constraint",
+            "content": (
+                r"User requires preserving C:\new\test logs." if disposition == "KEEP" else ""
+            ),
+            "attributes": {
+                "subject": "user", "holder": "user", "polarity": "positive",
+                "modality": "asserted", "temporal_scope": "ongoing", "kind": "constraint",
+            } if disposition == "KEEP" else {},
+        } for fragment, disposition in zip(fragments, decisions, strict=True)],
     }
 
 
@@ -83,18 +76,12 @@ class Consumer:
 def pipeline(tmp_path, core, cleaner, consumers=None):
     host = Host(tuple(record(mid) for mid in range(1, 82)))
     return HistoricalSemanticPipeline(
-        path=tmp_path / "receipts.sqlite",
-        core=core,
+        path=tmp_path / "receipts.sqlite", core=core,
         admission=SemanticAdmissionService(
-            store=core.canonical,
-            sources=host,
-            clock=Clock(),
+            store=core.canonical, sources=host, clock=Clock(),
             origin_runtime_id="host",
         ),
-        scope=SCOPE,
-        cleaner=cleaner,
-        compiler_version="host-v1",
-        consumers=consumers,
+        scope=SCOPE, cleaner=cleaner, compiler_version="host-v1", consumers=consumers,
         sources=host,
     )
 
@@ -146,36 +133,20 @@ def test_tools_are_hard_dropped_without_semantic_or_downstream_calls(tmp_path):
         flow.close()
 
 
-def test_receipt_recovery_fetches_exact_pointer_and_only_missing_consumer(tmp_path):
-    cleaner, first, failing = Cleaner(), Consumer(), Consumer(fail=True)
-    with MemoryCore(tmp_path / "semantic.sqlite") as core:
-        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
-        with pytest.raises(RuntimeError):
-            flow.process(record())
-        flow.close()
-        failing.fail = False
-        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
-        fetched = []
-
-        def fetch(ref):
-            fetched.append(ref)
-            return record(int(ref.record_id))
-
-        assert flow.recover(fetch) == 1
-        assert fetched == [record().ref]
-        assert cleaner.calls == 1
-        assert len(first.calls) == 1
-        assert len(failing.calls) == 2
-        assert flow.recover(fetch) == 0
-        assert flow.source_cursor("native") is None
-        flow.advance_source_cursor("native", (1.0, 1))
-        assert flow.source_cursor("native") == (1.0, 1)
-        with pytest.raises(ValueError, match="regress"):
-            flow.advance_source_cursor("native", (0.0, 0))
-        flow.close()
-
-
-@pytest.mark.parametrize("mutation", ["id", "offset", "quote", "duplicate", "coverage", "holder"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "id",
+        "offset",
+        "quote",
+        "duplicate",
+        "coverage",
+        "holder",
+        "schema",
+        "assistant",
+        "drop_semantics",
+    ],
+)
 def test_invalid_or_ambiguous_references_are_rejected_without_repair(mutation):
     fragments = source_fragments(record())
     raw = proposal(fragments)
@@ -189,8 +160,15 @@ def test_invalid_or_ambiguous_references_are_rejected_without_repair(mutation):
         raw["fragments"][1]["fragment_id"] = fragments[0].fragment_id
     elif mutation == "coverage":
         raw["fragments"].pop()
-    else:
+    elif mutation == "holder":
         raw["fragments"][1]["attributes"]["holder"] = "assistant"
+    elif mutation == "schema":
+        raw["schema_version"] = "wrong-provider-contract"
+    elif mutation == "assistant":
+        fragments = source_fragments(record(role="assistant"))
+        raw = proposal(fragments)
+    else:
+        raw["fragments"][0]["content"] = "DROP cannot carry admitted semantics."
     with pytest.raises(ValueError):
         validate_proposal(raw, fragments)
 
@@ -251,6 +229,8 @@ def test_deferred_retry_reuses_kept_semantics_and_compiles_only_missing_fragment
         assert flow.funnel()["DEFER"] == 0
         assert len(core.load_all()) == 1
         assert len(consumer.calls) == 1
+        third = flow.process(record(), context=source_fragments(record(3, text="later context")))
+        assert third == first and len(cleaner.inputs) == 2 and len(consumer.calls) == 1
         flow.close()
 
 
@@ -266,6 +246,91 @@ def test_semantic_drop_and_defer_do_not_enter_consumers(tmp_path):
         assert consumer.calls == []
         assert core.load_all() == ()
         assert flow.funnel()["DEFER"] == 1
+        flow.close()
+
+
+def test_provider_exception_and_invalid_output_preserve_retry_and_inference_accounting(tmp_path):
+    class UnavailableCleaner(Cleaner):
+        def compile(self, fragments, *, context):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConnectionError("private provider response must not be logged")
+            if self.calls == 2:
+                return {"schema_version": SCHEMA_VERSION, "fragments": []}
+            return proposal(fragments)
+
+    cleaner, downstream = UnavailableCleaner(), Consumer()
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner, {"thread": downstream})
+        with pytest.raises(ConnectionError):
+            flow.process(record())
+        assert core.load_all() == () and downstream.calls == []
+        flow.close()
+        flow = pipeline(tmp_path, core, cleaner, {"thread": downstream})
+        with pytest.raises(ValueError, match="coverage"):
+            flow.process(record())
+        assert core.load_all() == () and downstream.calls == []
+        accepted = flow.process(record())
+        assert flow.process(record()) == accepted
+        assert cleaner.calls == 3 and len(downstream.calls) == 1
+        attempts = flow._db.execute(
+            "SELECT payload,validation_error FROM proposal_history ORDER BY proposal_id"
+        ).fetchall()
+        assert attempts[0] == ("null", "producer failed: ConnectionError")
+        assert attempts[1][1] and attempts[2][1] is None
+        assert "private provider response" not in repr(attempts)
+        flow.close()
+
+
+@pytest.mark.parametrize(
+    "fault", ["source_revision", "missing_context", "context_items", "context_chars"]
+)
+def test_invalid_native_source_or_context_cannot_invoke_provider(tmp_path, fault):
+    cleaner = Cleaner()
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner)
+        context = ()
+        if fault == "source_revision":
+            flow._sources.refs[record().ref.source_key] = SourceRef("hermes", "s1", "1", NOW, "2")
+        elif fault == "missing_context":
+            context = source_fragments(record(99, text="unavailable context"))
+        elif fault == "context_items":
+            context = source_fragments(record(2, text="clarification")) * 9
+        else:
+            context = source_fragments(record(2, text="x" * 4097))
+        with pytest.raises(ValueError):
+            flow.process(record(), context=context)
+        assert cleaner.calls == 0 and core.load_all() == ()
+        assert flow.funnel()["proposal_attempts"] == 0
+        flow.close()
+
+
+def test_receipt_recovery_fetches_exact_pointer_and_only_missing_consumer(tmp_path):
+    cleaner, first, failing = Cleaner(), Consumer(), Consumer(fail=True)
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
+        with pytest.raises(RuntimeError):
+            flow.process(record())
+        flow.close()
+        failing.fail = False
+        flow = pipeline(tmp_path, core, cleaner, {"thread": first, "lce": failing})
+        fetched = []
+
+        def fetch(ref):
+            fetched.append(ref)
+            return record(int(ref.record_id))
+
+        assert flow.recover(fetch) == 1
+        assert fetched == [record().ref]
+        assert cleaner.calls == 1
+        assert len(first.calls) == 1
+        assert len(failing.calls) == 2
+        assert flow.recover(fetch) == 0
+        assert flow.source_cursor("native") is None
+        flow.advance_source_cursor("native", (1.0, 1))
+        assert flow.source_cursor("native") == (1.0, 1)
+        with pytest.raises(ValueError, match="regress"):
+            flow.advance_source_cursor("native", (0.0, 0))
         flow.close()
 
 
