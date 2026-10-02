@@ -108,6 +108,20 @@ detail. Raw Evidence/source text is retained primarily for provenance,
 falsification, rebuild, and retrieval fallback. See
 `docs/architecture/MEMORY_ARCHITECTURE_V1.md`, ADR-0028, and ADR-0033.
 
+### Hot Start / historical rebuild
+
+The [frozen Hot-Start Source Curation invariant](docs/architecture/MR_HOT_START_SOURCE_CURATION_FROZEN_INVARIANT.md)
+governs historical semantic rebuild and recovery. Immutable native raw records
+must first receive COMPILE, CONTEXT_ONLY, or IGNORE eligibility before context
+assembly and per-source SemanticDelta compilation. Operational logs do not gain
+cognition eligibility merely by appearing in a transcript; assistant/tool context
+does not establish a user commitment. Short user replies retain their semantic
+eligibility. Rebuild targets a fresh MR-Mem canonical database and preserves the
+original event time without replaying Affect, Homeostasis, Decision, or Expression.
+
+This is a frozen input/admission specification; it does not claim that the full
+historical rebuild path is implemented or production-enabled.
+
 ### Turn admission and commit
 
 `runtime_admission.py` and the orchestrator implement process-local admission plus commit/abort behavior for a turn.
