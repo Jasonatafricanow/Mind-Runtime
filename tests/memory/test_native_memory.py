@@ -92,7 +92,7 @@ def runtime(tmp_path, core, source, cleaner, **kwargs):
 
 def context_inputs():
     query = inputs()
-    query["clock"] = NOW + timedelta(seconds=1)
+    query["clock"] = max(NOW, datetime.now(UTC)) + timedelta(seconds=1)
     query["observations"] = (replace(query["observations"][0], value={"text": "loan financing"}),)
     return query
 
@@ -114,7 +114,8 @@ def test_native_hot_start_normal_turn_and_next_context_share_one_semantic_chain(
     assert port is session
     with pytest.raises(ValueError, match="legacy"):
         build_memory_history(binding, native_history=session, thread_enabled=True)
-    bundle = port.read(**context_inputs())
+    query = context_inputs()  # derived Baselines use the actual persistence clock
+    bundle = port.read(**query)
     assert any(item.kind == "lce.accepted_understanding" for item in bundle.episodes)
     assert all("RAW-" not in item.proposition for item in bundle.episodes)
     assert bundle.source_refs
@@ -128,7 +129,7 @@ def test_native_hot_start_normal_turn_and_next_context_share_one_semantic_chain(
     assert len(core.load_all()) == 2
     assert core.products.list_threads(SCOPE) == ()
     assert len(session.projection.query(None)) == 1
-    assert session.read(**context_inputs()) == bundle
+    assert session.read(**query) == bundle
     assert native_path.read_bytes() == native_bytes
     assert b"RAW-PRIVATE" not in (tmp_path / "semantic.sqlite").read_bytes()
     assert b"RAW-PRIVATE" not in (tmp_path / "bound-runtime" / "receipts.sqlite").read_bytes()
@@ -137,7 +138,10 @@ def test_native_hot_start_normal_turn_and_next_context_share_one_semantic_chain(
     source.close()
 
 
-def test_receipt_catchup_resumes_failed_lce_without_semantic_reinference(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failed_stage", ["point", "thread", "handoff"])
+def test_receipt_catchup_resumes_failed_stage_without_semantic_reinference(
+    tmp_path, monkeypatch, failed_stage,
+):
     _, source, cleaner = setup(tmp_path)
     core = MemoryCore(tmp_path / "semantic.sqlite")
     session = runtime(tmp_path, core, source, cleaner)
@@ -145,17 +149,33 @@ def test_receipt_catchup_resumes_failed_lce_without_semantic_reinference(tmp_pat
     def fail(*args, **kwargs):
         raise RuntimeError("projection failed")
 
-    monkeypatch.setattr(session.projection, "process_semantic", fail)
+    thread_consumer = session.pipeline._consumers["thread:accepted-v1"]
+    target, method = {
+        "point": (session.projection, "process_semantic"),
+        "thread": (thread_consumer.updates, "apply"),
+        "handoff": (thread_consumer.intake, "stage_and_promote"),
+    }[failed_stage]
+    monkeypatch.setattr(target, method, fail)
     with pytest.raises(RuntimeError, match="projection failed"):
         session.warm_start(source)
-    assert cleaner.calls == 1
-    assert len(core.load_all()) == 1
+    admitted = 2 if failed_stage == "handoff" else 1
+    assert cleaner.calls == admitted
+    assert len(core.load_all()) == admitted
     session.close()
     core.close()
     core = MemoryCore(tmp_path / "semantic.sqlite")
     session = runtime(tmp_path, core, source, cleaner)
-    assert session.warm_start(source) == 2
+    projected = []
+    project = session.projection.process_semantic
+
+    def counted(memory_id):
+        projected.append(memory_id)
+        return project(memory_id)
+
+    monkeypatch.setattr(session.projection, "process_semantic", counted)
+    assert session.warm_start(source) == (1 if failed_stage == "handoff" else 2)
     assert cleaner.calls == 2
+    assert len(projected) == {"point": 2, "thread": 1, "handoff": 0}[failed_stage]
     assert len(core.load_all()) == 2
     assert len(session.projection.query(None)) == 1
     session.close()
@@ -195,6 +215,7 @@ def test_root_binding_and_whole_item_budget_fail_closed(tmp_path):
     _, source, cleaner = setup(tmp_path)
     core = MemoryCore(tmp_path / "semantic.sqlite")
     session = runtime(tmp_path, core, source, cleaner, budget=MemorySurfaceBudget(5, 1))
+    assert session.read(**context_inputs()) is None  # empty historical store is normal
     session.warm_start(source)
     assert session.read(**context_inputs()) is None
     session.close()
