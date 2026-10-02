@@ -91,16 +91,6 @@ from mind_runtime.contracts.intent import (
     WakeSignal,
 )
 from mind_runtime.contracts.interaction import Interaction, InteractionStatus
-from mind_runtime.contracts.longitudinal_affect import (
-    AffectRepairEvidence,
-    AffectRevisionTrajectory,
-    EarlierAffectPattern,
-    LongitudinalAffectCondition,
-    LongitudinalAffectQuery,
-    LongitudinalAffectRecord,
-    LongitudinalAffectView,
-    RecentAffectSegment,
-)
 from mind_runtime.contracts.observation import Observation
 from mind_runtime.contracts.pattern import PatternMatchSummary, PatternQuery
 from mind_runtime.contracts.projection import ProjectedMindState, TurnProjection
