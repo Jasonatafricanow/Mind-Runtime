@@ -5,6 +5,8 @@ not import it. MR-Mem is a tool dependency, not a new online provider dependency
 
 The normative boundary is
 [Hot-Start Source Curation](../docs/architecture/MR_HOT_START_SOURCE_CURATION_FROZEN_INVARIANT.md).
+The [Semantic Executor Boundary](../docs/architecture/MR_SEMANTIC_EXECUTOR_BOUNDARY_V1.md)
+freezes the separate online and offline executors and shared canonical protocol.
 
 `HistoricalSourceIterator` reads Hermes `sessions/messages` through a read-only
 SQLite connection, scoped to an explicit native owner and namespace. Native

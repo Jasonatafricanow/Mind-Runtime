@@ -182,3 +182,30 @@ def test_partial_update_shared_validator_closure_and_canonical_lifecycle(
         assert rebuild.memory.semantic_relations(new.memory_id)
         assert new.provenance.source_refs[0].record_id == "9"
         assert calls == {"validator": 3, "closure": 3}
+
+
+def test_resume_rejects_foreign_canonical_db_before_writer(native, tmp_path):
+    from historical.rebuild import RebuildClock
+    from mr_mem.memory.core import MemoryCore
+    from mr_mem.memory.semantic_store import SemanticSourceBinding
+
+    _, scope, sources = native
+    root = tmp_path / "owned"
+    with HistoricalRebuild(root, sources=sources, worker=Worker()) as rebuild:
+        target = rebuild.db_path
+    source = tuple(sources.iterate())[1]
+    sources.bind(source)
+    foreign_path = tmp_path / "foreign-canonical.sqlite"
+    with MemoryCore(foreign_path) as foreign:
+        foreign.semantic_admission(
+            sources=sources, clock=RebuildClock(), origin_runtime_id="production-fixture"
+        ).admit_semantic_delta(
+            delta(),
+            binding=SemanticSourceBinding(scope, source.interaction_id, source.source_ref),
+            activated_memory_ids=(),
+        )
+    target.write_bytes(foreign_path.read_bytes())
+    before = hashlib.sha256(target.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="not owned"):
+        HistoricalRebuild(root, sources=sources, worker=Worker(), resume=True)
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == before
