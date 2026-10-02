@@ -22,3 +22,32 @@ Run from the repository root with MR-Mem installed:
 python -m pytest historical/tests -q
 python -m ruff check historical
 ```
+
+## External worker and rebuild
+
+`ExternalAGYAdapter` launches a replaceable one-shot command with the historical
+prompt on stdin. Its argv must include exactly one `{output}` placeholder for
+the final JSON file. stdout/stderr are audit only. The wire guide is derived
+from installed MR-Mem types, and only MR-Mem parses/validates/adopts the proposal.
+An example command is `codex -a never exec --ephemeral --sandbox read-only
+--skip-git-repo-check --output-last-message {output} -`.
+
+Run `python -m historical --help` from a tool workspace. Required arguments are
+`--raw-db`, `--owner`, `--namespace`, `--rebuild-root`, and
+`--worker-command-json` (a JSON argv array). `--selection-file` is a JSON mapping
+from native record ID to `context_record_ids` and `activated_memory_ids`.
+Only earlier context records in the same session and active canonical Blocks
+in the same scope are eligible. An empty selection supplies no extra history.
+
+The rebuild root must be a fresh directory. It contains an independent
+`historical-rebuild-v1.sqlite`, an OS process lock, and atomic `checkpoint.json`.
+Existing roots require `--resume`; a production DB path, symlink, changed Raw,
+scope, namespace, schema or prompt is rejected. Raw is read-only. No affect
+runtime, online Body lifecycle, legacy factual admission or cutover is run.
+
+`--limit` checkpoints a batch. On restart the iterator resumes after the native
+ordering key. A saved proposal is reused; an accepted MR-Mem transaction/receipt
+is recovered before any external worker call. Counts are per source disposition;
+`defer_count` counts fully deferred sources. Failure keeps the pending source and
+cursor, blocking later sources. Replace the workspace to intentionally restart
+after a rejected immutable proposal; do not overwrite checkpoint authority.

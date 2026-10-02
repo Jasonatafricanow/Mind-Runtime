@@ -91,8 +91,13 @@ class HistoricalSourceIterator:
         )
 
     def iterate(self, *, after=None):
-        for row in self._query(after=after):
-            yield self._source(row)
+        # Release every SELECT before invoking the worker. A live cursor would
+        # pin an old SQLite snapshot and hide source drift from exact validation.
+        cursor = after
+        while rows := self._query(after=cursor, limit=1).fetchall():
+            source = self._source(rows[0])
+            cursor = source.ordering_key
+            yield source
 
     def get(self, ref):
         if ref.source_namespace != self.namespace:
