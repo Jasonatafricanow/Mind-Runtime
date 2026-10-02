@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  LCE_BASELINE_SHA: f6a4bc8164a65e69845444a7b697f8a1af0cd626
+  LCE_BASELINE_SHA: f72c495c7ec66019db88e2309d4a13aac0c196cd
 
 jobs:
   python:
@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev,history-sidecar]"
+      - run: python -m pip install -e ".[dev,native-memory]"
       - run: python scripts/check_ruff_baseline.py
       - name: Enforce mypy no-regression baseline
         run: python scripts/check_mypy_baseline.py
@@ -47,7 +47,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev,history-sidecar]"
+      - run: python -m pip install -e ".[dev,native-memory]"
       - name: Install optional current LCE for covered integration tests
         run: >-
           python -m pip install
@@ -63,7 +63,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev,history-sidecar]"
+      - run: python -m pip install -e ".[dev,native-memory]"
       - name: Install verified current LCE baseline
         run: >-
           python -m pip install

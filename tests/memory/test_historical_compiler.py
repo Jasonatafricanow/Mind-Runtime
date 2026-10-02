@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 
@@ -99,6 +100,15 @@ def test_mixed_turn_is_reduced_once_and_restart_retries_only_failed_projection(t
     lce.fail = False
     with MemoryCore(tmp_path / "semantic.sqlite") as core:
         flow = pipeline(tmp_path, core, cleaner, {"thread": thread, "lce": lce})
+        fetched = []
+
+        def fetch(ref):
+            fetched.append(ref)
+            return record(int(ref.record_id))
+
+        assert flow.recover(fetch) == 1
+        assert fetched == [record().ref]
+        assert flow.recover(fetch) == 0
         memories = flow.process(record())
         assert cleaner.calls == 1
         assert len(thread.calls) == 1
@@ -114,6 +124,11 @@ def test_mixed_turn_is_reduced_once_and_restart_retries_only_failed_projection(t
             "semantic_memories": 1,
             "proposal_attempts": 1,
         }
+        assert flow.source_cursor("native") is None
+        flow.advance_source_cursor("native", (1.0, 1))
+        assert flow.source_cursor("native") == (1.0, 1)
+        with pytest.raises(ValueError, match="regress"):
+            flow.advance_source_cursor("native", (0.0, 0))
         flow.close()
     assert b"Tests completed" not in (tmp_path / "semantic.sqlite").read_bytes()
     assert b"Tests completed" not in (tmp_path / "receipts.sqlite").read_bytes()
@@ -287,4 +302,23 @@ def test_invalid_native_source_or_context_cannot_invoke_provider(tmp_path, fault
             flow.process(record(), context=context)
         assert cleaner.calls == 0 and core.load_all() == ()
         assert flow.funnel()["proposal_attempts"] == 0
+        flow.close()
+
+
+def test_corrupt_receipt_pointer_cannot_borrow_another_current_native_record(tmp_path):
+    cleaner, failing = Cleaner(), Consumer(fail=True)
+    with MemoryCore(tmp_path / "semantic.sqlite") as core:
+        flow = pipeline(tmp_path, core, cleaner, {"lce": failing})
+        with pytest.raises(RuntimeError):
+            flow.process(record())
+        pointer = json.loads(
+            flow._db.execute("SELECT source_pointer FROM source_receipts").fetchone()[0]
+        )
+        pointer["record_id"] = "2"
+        with flow._db:
+            flow._db.execute("UPDATE source_receipts SET source_pointer=?", (json.dumps(pointer),))
+        with pytest.raises(ValueError, match="receipt identity"):
+            flow.recover(lambda ref: record(2))
+        assert cleaner.calls == 1
+        assert len(core.load_all()) == 1
         flow.close()

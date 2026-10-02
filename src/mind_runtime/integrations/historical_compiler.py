@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -16,6 +17,7 @@ from mr_mem import (
     Scope,
     SemanticAdmissionService,
     SemanticMemoryCandidate,
+    SourceRef,
     SourceRefReader,
 )
 from mr_mem.contracts.common import require_non_empty
@@ -31,12 +33,39 @@ from mind_runtime.integrations.native_history import (
 SCHEMA_VERSION = "native-cleaner-v1"
 REQUIRED_ATTRIBUTES = {"subject", "holder", "polarity", "modality", "temporal_scope", "kind"}
 ALLOWED_ATTRIBUTES = REQUIRED_ATTRIBUTES | {
-    "thread_action", "thread_question", "thread_summary", "thread_mature",
+    "thread_action",
+    "thread_question",
+    "thread_summary",
+    "thread_mature",
 }
 
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _ref_payload(ref: SourceRef) -> dict[str, object]:
+    return {
+        "source_namespace": ref.source_namespace,
+        "session_id": ref.session_id,
+        "record_id": ref.record_id,
+        "occurred_at": ref.occurred_at.isoformat(),
+        "revision": ref.revision,
+        "fingerprint": ref.fingerprint,
+    }
+
+
+def _read_ref(payload: object) -> SourceRef:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid receipt source pointer")
+    return SourceRef(
+        source_namespace=str(payload["source_namespace"]),
+        session_id=str(payload["session_id"]),
+        record_id=str(payload["record_id"]),
+        occurred_at=datetime.fromisoformat(payload["occurred_at"]),
+        revision=payload["revision"],
+        fingerprint=payload["fingerprint"],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +78,11 @@ class FragmentDecision:
 
     def payload(self) -> dict[str, object]:
         return {
-            "fragment_id": self.fragment_id, "disposition": self.disposition,
-            "reason": self.reason, "content": self.content, "attributes": dict(self.attributes),
+            "fragment_id": self.fragment_id,
+            "disposition": self.disposition,
+            "reason": self.reason,
+            "content": self.content,
+            "attributes": dict(self.attributes),
         }
 
 
@@ -58,7 +90,10 @@ class SemanticCleaner(Protocol):
     """Host semantic authority; no model is constructed inside the pipeline."""
 
     def compile(
-        self, fragments: tuple[SourceFragment, ...], *, context: tuple[SourceFragment, ...],
+        self,
+        fragments: tuple[SourceFragment, ...],
+        *,
+        context: tuple[SourceFragment, ...],
     ) -> object: ...
 
 
@@ -69,7 +104,8 @@ class SemanticConsumer(Protocol):
 
 
 def validate_proposal(
-    raw: object, fragments: tuple[SourceFragment, ...],
+    raw: object,
+    fragments: tuple[SourceFragment, ...],
 ) -> tuple[FragmentDecision, ...]:
     if not isinstance(raw, dict) or set(raw) != {"schema_version", "fragments"}:
         raise ValueError("unknown proposal fields; quotes/offsets are not accepted")
@@ -82,7 +118,11 @@ def validate_proposal(
     decisions: dict[str, FragmentDecision] = {}
     for item in items:
         if not isinstance(item, dict) or set(item) != {
-            "fragment_id", "disposition", "reason", "content", "attributes",
+            "fragment_id",
+            "disposition",
+            "reason",
+            "content",
+            "attributes",
         }:
             raise ValueError("invalid fragment fields; no quote/range repair is permitted")
         fid = item["fragment_id"]
@@ -123,8 +163,14 @@ class HistoricalSemanticPipeline:
     """Freeze understanding once, then resume only missing downstream stages."""
 
     def __init__(
-        self, *, path: Path, core: MemoryCore, admission: SemanticAdmissionService,
-        scope: Scope, cleaner: SemanticCleaner, compiler_version: str,
+        self,
+        *,
+        path: Path,
+        core: MemoryCore,
+        admission: SemanticAdmissionService,
+        scope: Scope,
+        cleaner: SemanticCleaner,
+        compiler_version: str,
         sources: SourceRefReader,
         consumers: Mapping[str, SemanticConsumer] | None = None,
     ) -> None:
@@ -155,12 +201,20 @@ class HistoricalSemanticPipeline:
                 BEFORE DELETE ON proposal_history BEGIN
                     SELECT RAISE(ABORT,'proposal history is append-only'); END;
         """)
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(source_receipts)")}
+        for column in ("source_pointer", "context_pointers"):
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE source_receipts ADD COLUMN {column} TEXT")
+        self._db.commit()
 
     def close(self) -> None:
         self._db.close()
 
     def process(
-        self, record: NativeRecord, *, context: tuple[SourceFragment, ...] = (),
+        self,
+        record: NativeRecord,
+        *,
+        context: tuple[SourceFragment, ...] = (),
     ) -> tuple[CommittedMemory, ...]:
         if len(context) > 8 or sum(len(f.text) for f in context) > 4096:
             raise ValueError("DEFER context exceeds bounded window")
@@ -168,7 +222,10 @@ class HistoricalSemanticPipeline:
             if self._sources.current_ref(self._scope, ref) != ref:
                 raise ValueError("native source/context is missing, stale, or out of scope")
         identity = [
-            SCHEMA_VERSION, scope_json(self._scope), record.ref.version_key, self._version,
+            SCHEMA_VERSION,
+            scope_json(self._scope),
+            record.ref.version_key,
+            self._version,
             [f.fragment_id for f in context],
         ]
         job_id = hashlib.sha256(_json(identity).encode()).hexdigest()
@@ -176,10 +233,33 @@ class HistoricalSemanticPipeline:
         with self._db:
             self._db.execute(
                 "INSERT OR IGNORE INTO source_receipts "
-                "(job_id,source_key,version_key,compiler_version,cursor,hard_drop) "
-                "VALUES(?,?,?,?,?,?)",
-                (job_id, record.ref.source_key, record.ref.version_key, self._version,
-                 _json(record.ordering_key), hard_drop),
+                "(job_id,source_key,version_key,compiler_version,cursor) VALUES(?,?,?,?,?)",
+                (
+                    job_id,
+                    record.ref.source_key,
+                    record.ref.version_key,
+                    self._version,
+                    _json(record.ordering_key),
+                ),
+            )
+            self._db.execute(
+                "UPDATE source_receipts SET source_pointer=coalesce(source_pointer,?),"
+                "context_pointers=coalesce(context_pointers,?) WHERE job_id=?",
+                (
+                    _json(_ref_payload(record.ref)),
+                    _json(
+                        [
+                            {"fragment_id": f.fragment_id, "ref": _ref_payload(f.ref)}
+                            for f in context
+                        ]
+                    ),
+                    job_id,
+                ),
+            )
+        with self._db:
+            self._db.execute(
+                "UPDATE source_receipts SET hard_drop=? WHERE job_id=?",
+                (hard_drop, job_id),
             )
         if hard_drop is not None:
             return ()
@@ -200,18 +280,25 @@ class HistoricalSemanticPipeline:
                     "AND s.job_id!=? ORDER BY s.rowid DESC LIMIT 1",
                     (record.ref.source_key, record.ref.version_key, self._version, job_id),
                 ).fetchone()
-                reusable = () if previous is None else validate_proposal(
-                    json.loads(previous[0]), fragments
+                reusable = (
+                    ()
+                    if previous is None
+                    else validate_proposal(json.loads(previous[0]), fragments)
                 )
                 deferred_ids = {d.fragment_id for d in reusable if d.disposition == "DEFER"}
                 pending = tuple(f for f in fragments if f.fragment_id in deferred_ids)
                 if reusable:
-                    resolved = () if not pending else validate_proposal(
-                        self._cleaner.compile(pending, context=context), pending
+                    resolved = (
+                        ()
+                        if not pending
+                        else validate_proposal(
+                            self._cleaner.compile(pending, context=context), pending
+                        )
                     )
                     replacements = {d.fragment_id: d for d in resolved}
                     raw = {
-                        "schema_version": SCHEMA_VERSION, "fragments": [
+                        "schema_version": SCHEMA_VERSION,
+                        "fragments": [
                             replacements.get(d.fragment_id, d).payload() for d in reusable
                         ],
                     }
@@ -234,11 +321,18 @@ class HistoricalSemanticPipeline:
         memories = []
         for decision in decisions:
             if decision.disposition == "KEEP":
-                memories.append(self._admission.admit(SemanticMemoryCandidate(
-                    semantic_id=decision.fragment_id,
-                    scope=self._scope, content=decision.content, source_refs=(record.ref,),
-                    compiler_version=self._version, attributes=decision.attributes,
-                )))
+                memories.append(
+                    self._admission.admit(
+                        SemanticMemoryCandidate(
+                            semantic_id=decision.fragment_id,
+                            scope=self._scope,
+                            content=decision.content,
+                            source_refs=(record.ref,),
+                            compiler_version=self._version,
+                            attributes=decision.attributes,
+                        )
+                    )
+                )
         ids = tuple(m.memory_id for m in memories)
         accepted = self._core.select(ids, scope=self._scope, active_only=True) if ids else ()
         with self._db:
@@ -249,10 +343,13 @@ class HistoricalSemanticPipeline:
         stages = json.loads(row[2])
         for name, consumer in self._consumers.items():
             pending_memories = tuple(
-                m for m in accepted if self._db.execute(
+                m
+                for m in accepted
+                if self._db.execute(
                     "SELECT 1 FROM consumption_receipts WHERE stage=? AND memory_id=?",
                     (name, m.memory_id),
-                ).fetchone() is None
+                ).fetchone()
+                is None
             )
             if pending_memories:
                 consumer.consume(pending_memories)
@@ -267,8 +364,90 @@ class HistoricalSemanticPipeline:
                 )
         return accepted
 
+    def recover(
+        self,
+        fetch: Callable[[SourceRef], NativeRecord | None],
+        *,
+        limit: int = 100,
+    ) -> int:
+        """Retry only receipt gaps, fetching their exact scoped native pointers."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("bounded recovery requires 1..1000 receipts")
+        missing = " OR ".join("json_extract(stages,?) IS NULL" for _ in self._consumers)
+        stages_clause = (
+            "" if not missing else f" OR (json_array_length(memory_ids)>0 AND ({missing}))"
+        )
+        rows = self._db.execute(
+            "SELECT job_id,version_key,source_pointer,context_pointers FROM source_receipts "
+            "WHERE hard_drop IS NULL AND compiler_version=? "
+            "AND rowid IN (SELECT max(rowid) FROM source_receipts "
+            "GROUP BY source_key,compiler_version) "
+            f"AND (accepted_proposal IS NULL OR memory_ids IS NULL{stages_clause}) "
+            "ORDER BY rowid LIMIT ?",
+            (self._version, *(f'$."{stage}"' for stage in self._consumers), limit),
+        ).fetchall()
+        for job_id, version_key, pointer, context_raw in rows:
+            if pointer is None or context_raw is None:
+                raise ValueError(
+                    "legacy receipt lacks native pointers; explicitly replay that source"
+                )
+            ref = _read_ref(json.loads(pointer))
+            if ref.version_key != version_key:
+                raise ValueError("recovery pointer differs from its receipt identity")
+            record = fetch(ref)
+            if record is None or record.ref != ref:
+                raise ValueError("recovery source pointer is missing or stale")
+            context = []
+            for item in json.loads(context_raw):
+                context_ref = _read_ref(item["ref"])
+                context_record = fetch(context_ref)
+                if context_record is None or context_record.ref != context_ref:
+                    raise ValueError("recovery context pointer is missing or stale")
+                fragments = {f.fragment_id: f for f in source_fragments(context_record)}
+                if item["fragment_id"] not in fragments:
+                    raise ValueError("recovery context fragment is unavailable")
+                context.append(fragments[item["fragment_id"]])
+            identity = [
+                SCHEMA_VERSION,
+                scope_json(self._scope),
+                ref.version_key,
+                self._version,
+                [f.fragment_id for f in context],
+            ]
+            if hashlib.sha256(_json(identity).encode()).hexdigest() != job_id:
+                raise ValueError("recovery context differs from its receipt identity")
+            self.process(record, context=tuple(context))
+        return len(rows)
+
+    def source_cursor(self, key: str) -> tuple[float, int] | None:
+        self._db.execute(
+            "CREATE TABLE IF NOT EXISTS native_cursors (cursor_key TEXT PRIMARY KEY,payload TEXT)"
+        )
+        row = self._db.execute(
+            "SELECT payload FROM native_cursors WHERE cursor_key=?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        values = json.loads(row[0])
+        return float(values[0]), int(values[1])
+
+    def advance_source_cursor(self, key: str, cursor: tuple[float, int]) -> None:
+        previous = self.source_cursor(key)
+        if previous is not None and cursor < previous:
+            raise ValueError("native cursor cannot regress")
+        with self._db:
+            self._db.execute(
+                "INSERT INTO native_cursors VALUES(?,?) ON CONFLICT(cursor_key) "
+                "DO UPDATE SET payload=excluded.payload",
+                (key, _json(cursor)),
+            )
+
     def accept_proposal(
-        self, job_id: str, raw: object, fragments: tuple[SourceFragment, ...],
+        self,
+        job_id: str,
+        raw: object,
+        fragments: tuple[SourceFragment, ...],
     ) -> tuple[FragmentDecision, ...]:
         """Every attempt appends; rejected proposals never replace earlier attempts."""
         payload = _json(raw)
@@ -278,9 +457,12 @@ class HistoricalSemanticPipeline:
             if len(payload.encode()) > 131072:
                 raise ValueError("proposal exceeds bounded output")
             decisions = validate_proposal(raw, fragments)
-            normalized = _json({
-                "schema_version": SCHEMA_VERSION, "fragments": [d.payload() for d in decisions],
-            })
+            normalized = _json(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "fragments": [d.payload() for d in decisions],
+                }
+            )
             payload = normalized
         except ValueError as exc:
             error = str(exc)
@@ -305,7 +487,8 @@ class HistoricalSemanticPipeline:
             if error is None:
                 self._db.execute(
                     "UPDATE source_receipts SET accepted_proposal=coalesce(accepted_proposal,?) "
-                    "WHERE job_id=?", (cursor.lastrowid, job_id),
+                    "WHERE job_id=?",
+                    (cursor.lastrowid, job_id),
                 )
         if error is not None:
             raise ValueError(error)
@@ -313,8 +496,13 @@ class HistoricalSemanticPipeline:
 
     def funnel(self) -> dict[str, int]:
         result = {
-            "raw_records": 0, "structural_drop": 0, "DROP": 0, "KEEP": 0, "DEFER": 0,
-            "semantic_memories": 0, "proposal_attempts": 0,
+            "raw_records": 0,
+            "structural_drop": 0,
+            "DROP": 0,
+            "KEEP": 0,
+            "DEFER": 0,
+            "semantic_memories": 0,
+            "proposal_attempts": 0,
         }
         for hard, accepted, memory_ids in self._db.execute(
             "SELECT hard_drop,accepted_proposal,memory_ids FROM source_receipts "
@@ -324,9 +512,11 @@ class HistoricalSemanticPipeline:
             if hard is not None:
                 result["structural_drop"] += 1
             elif accepted is not None:
-                payload = json.loads(self._db.execute(
-                    "SELECT payload FROM proposal_history WHERE proposal_id=?", (accepted,)
-                ).fetchone()[0])
+                payload = json.loads(
+                    self._db.execute(
+                        "SELECT payload FROM proposal_history WHERE proposal_id=?", (accepted,)
+                    ).fetchone()[0]
+                )
                 for fragment in payload["fragments"]:
                     result[fragment["disposition"]] += 1
                 result["semantic_memories"] += len(json.loads(memory_ids or "[]"))
