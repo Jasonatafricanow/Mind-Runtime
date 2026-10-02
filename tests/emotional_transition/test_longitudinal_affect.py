@@ -256,7 +256,9 @@ def test_recent_streak_can_surface_deviation_when_recent_mode_is_neutral() -> No
         for i in range(4)
     ]
     recent = [
-        record("recent-neutral", days_ago=3, valence="neutral"),
+        record("recent-neutral-1", days_ago=5, valence="neutral"),
+        record("recent-neutral-2", days_ago=4, valence="neutral"),
+        record("recent-neutral-3", days_ago=3, valence="neutral"),
         record("recent-neg-1", days_ago=2, valence="negative"),
         record("recent-neg-2", days_ago=1, valence="negative"),
     ]
