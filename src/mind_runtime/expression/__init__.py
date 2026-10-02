@@ -18,6 +18,9 @@ from mind_runtime.expression.guards import (
     normalize_for_prefix,
 )
 from mind_runtime.expression.history import FixedPreviousExpressionPort, NullPreviousExpressionPort
+from mind_runtime.expression.longitudinal_affect import (
+    compile_longitudinal_affect_condition,
+)
 from mind_runtime.expression.renderer import DeterministicContextRenderer
 
 __all__ = [
@@ -34,5 +37,6 @@ __all__ = [
     "FixedPreviousExpressionPort",
     "NullPreviousExpressionPort",
     "TemporalConflictRule",
+    "compile_longitudinal_affect_condition",
     "normalize_for_prefix",
 ]
