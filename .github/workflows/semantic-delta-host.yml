@@ -1,0 +1,17 @@
+name: semantic-delta-host
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  host-composition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[test]' ruff
+      - name: Install exact MR-Mem prerequisite and PR-1 through PR-4
+        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@3f7356cdcc8a4b15ca81c59160e1b15a848015e8'
+      - run: python -m ruff check xiyue/semantic_delta_*.py xiyue/apply_semantic_delta_patch.py xiyue/tests
+      - run: python -m pytest -q xiyue/tests -p no:cacheprovider
