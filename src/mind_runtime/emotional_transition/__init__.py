@@ -8,6 +8,10 @@ from mind_runtime.emotional_transition.history import (
     HistoryProviderUnavailable,
     NullHistoricalContext,
 )
+from mind_runtime.emotional_transition.longitudinal import (
+    derive_longitudinal_affect_view,
+    resolve_affect_occurrence_id,
+)
 from mind_runtime.emotional_transition.semantic import (
     SemanticCandidateProvider,
     SemanticRouter,
@@ -20,6 +24,8 @@ __all__ = [
     "HistoricalContextProvider",
     "HistoryProviderUnavailable",
     "NullHistoricalContext",
+    "derive_longitudinal_affect_view",
+    "resolve_affect_occurrence_id",
     "SemanticCandidateProvider",
     "SemanticRouter",
     "create_semantic_provider",
