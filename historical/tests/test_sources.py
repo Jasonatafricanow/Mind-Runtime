@@ -15,11 +15,13 @@ def native(tmp_path):
         db.executescript(
             "CREATE TABLE sessions(id TEXT PRIMARY KEY,user_id TEXT); "
             "CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,"
-            "content TEXT,timestamp REAL,record_type TEXT,tool_calls TEXT,active INTEGER DEFAULT 1);"
+            "content TEXT,timestamp REAL,record_type TEXT,tool_calls TEXT,"
+            "active INTEGER DEFAULT 1);"
         )
         db.executemany("INSERT INTO sessions VALUES(?,?)", [("s", "owner"), ("foreign", "other")])
         db.executemany(
-            "INSERT INTO messages(id,session_id,role,content,timestamp,record_type) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO messages(id,session_id,role,content,timestamp,record_type) "
+            "VALUES(?,?,?,?,?,?)",
             [
                 (1, "s", "assistant", "采用 A 还是 B？", 10, "assistant"),
                 (2, "s", "user", "A", 11, "user"),
