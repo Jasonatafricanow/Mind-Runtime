@@ -35,6 +35,7 @@ def run_gateway_turn(
         from mr_mem import MemoryCore, Scope, ScopeDomain
         from mr_mem.memory.providers.bm25 import BM25RetrievalProvider
         from mr_mem.memory.retrieval import MemoryRetrievalQuery, MemoryRetrievalService
+        from mr_mem.memory.semantic_store import SemanticSourceBinding
 
         from xiyue.semantic_delta_composition import run_one_pass
         from xiyue.semantic_delta_source import HermesDeltaSources
@@ -46,6 +47,8 @@ def run_gateway_turn(
         canonical_path = Path(os.environ["MR_MEM_CANONICAL_DB"])
         if not canonical_path.is_absolute():
             raise ValueError("MR_MEM_CANONICAL_DB must be an absolute path")
+        if canonical_path.resolve() == Path(agent._session_db.db_path).resolve():
+            raise ValueError("MR-Mem canonical path must be separate from native raw database")
         scope_fields = asdict(adapter._scope)
         scope_fields["domain"] = ScopeDomain(scope_fields["domain"].value)
         scope = Scope(**scope_fields)
@@ -74,6 +77,16 @@ def run_gateway_turn(
         admission = core.semantic_admission(
             sources=sources, clock=_Clock(), origin_runtime_id=adapter._runtime_id
         )
+        current_ref = sources.current_user_source(scope, handle.interaction_id)
+        if current_ref is not None:
+            # A restart can finish accepted compilation before any Body request.
+            admission.resume_semantic_delta(
+                SemanticSourceBinding(scope, handle.interaction_id, current_ref)
+            )
+        try:
+            from agent.model_metadata import estimate_tokens_rough
+        except ImportError:
+            estimate_tokens_rough = None
     except Exception:
         if core is not None:
             core.close()
@@ -94,6 +107,7 @@ def run_gateway_turn(
             message_id=message_id,
             activated_memories=activated,
             guard=lambda prose: adapter.guard_turn_prose(handle, prose),
+            sidecar_token_counter=estimate_tokens_rough,
             **conversation_kwargs,
         )
     finally:

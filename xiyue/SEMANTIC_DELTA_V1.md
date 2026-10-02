@@ -26,8 +26,28 @@ This integration adds no model invocation and no retry/compiler model; its
 sibling outputs come from one terminal inference. It does not change Hermes
 tool execution, retry policy, or provider selection.
 
+The accepted invocation-count clarification allows ordinary agent tool/retry
+calls. One current USER turn has one semantic interpretation/admission attempt;
+tool results and repeated tool calls do not become new USER meaning. The Host
+latches the first sidecar attempt and never invokes semantic closure again for
+later assistant outputs. Recovery reuses accepted compilation. Tool-loop model
+requests and semantic compilation are measured separately in the native probe.
+
 The standalone composition test suite is `python -m pytest -q xiyue/tests`.
 It has its own required CI job with an exact MR-Mem test dependency, so MR Core
 installation and its public dependency/Host contracts remain unchanged.
 Local fake-provider tests and external patch checks do not prove a live
 provider will comply with the versioned semantic prompt.
+
+With the Delta flag enabled, the seam disconnects the legacy online Raw
+memory admission/extractor path, including when MR_MEMORY_ENABLED or
+MR_LCE_ENABLED is set. Existing LCE algorithms and historical reads are unchanged.
+MR_LCE_INSPIRATION_ENABLED still requires the legacy memory pipeline in current
+MR bootstrap; that incompatible configuration fails its existing startup check.
+It is not silently rebound to a native-memory reader.
+
+Sidecar token telemetry uses Hermes' existing rough token estimator when available;
+it is an estimate, not provider-attributed token usage. Other environments report
+null when that counter is unavailable. Canonical receipts and accepted frozen
+compilation can be recovered with SemanticAdmissionService without invoking Body.
+The gateway also attempts recovery for its exact current native source before Body.

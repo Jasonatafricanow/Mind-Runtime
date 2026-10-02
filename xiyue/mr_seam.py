@@ -271,6 +271,10 @@ def get_mr_adapter():
                 inspiration_enabled = _env_enabled("MR_LCE_INSPIRATION_ENABLED")
                 lce_enabled = inspiration_enabled or _env_enabled("MR_LCE_ENABLED")
                 memory_enabled = lce_enabled or _env_enabled("MR_MEMORY_ENABLED")
+                if _env_enabled("SEMANTIC_DELTA_V1_ENABLED"):
+                    # Native Delta admission owns the online memory path in composition.
+                    # Keep the legacy Raw -> extractor -> pair-adapter pipeline disconnected.
+                    memory_enabled = False
                 adapter = default_adapter(
                     persona=composition["persona"],
                     situation=composition["situation"],
