@@ -1,0 +1,17 @@
+name: historical-tools
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  offline-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest ruff
+      - name: Install canonical MR-Mem boundary
+        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@7fdffe6112ab03bba006b3e76b1001240db37a7e'
+      - run: python -m ruff check historical
+      - run: python -m pytest historical/tests -q
