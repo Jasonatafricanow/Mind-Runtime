@@ -1,5 +1,7 @@
 """Forward-port tests for read-only longitudinal affect structure."""
 
+# ruff: noqa: I001
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
