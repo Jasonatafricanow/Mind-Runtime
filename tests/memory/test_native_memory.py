@@ -138,7 +138,7 @@ def test_native_hot_start_normal_turn_and_next_context_share_one_semantic_chain(
     source.close()
 
 
-@pytest.mark.parametrize("failed_stage", ["point", "thread", "handoff"])
+@pytest.mark.parametrize("failed_stage", ["point", "thread", "handoff", "handoff_committed"])
 def test_receipt_catchup_resumes_failed_stage_without_semantic_reinference(
     tmp_path, monkeypatch, failed_stage,
 ):
@@ -146,21 +146,30 @@ def test_receipt_catchup_resumes_failed_stage_without_semantic_reinference(
     core = MemoryCore(tmp_path / "semantic.sqlite")
     session = runtime(tmp_path, core, source, cleaner)
 
-    def fail(*args, **kwargs):
-        raise RuntimeError("projection failed")
-
     thread_consumer = session.pipeline._consumers["thread:accepted-v1"]
     target, method = {
         "point": (session.projection, "process_semantic"),
         "thread": (thread_consumer.updates, "apply"),
         "handoff": (thread_consumer.intake, "stage_and_promote"),
+        "handoff_committed": (thread_consumer.intake, "stage_and_promote"),
     }[failed_stage]
+    operation = getattr(target, method)
+
+    def fail(*args, **kwargs):
+        if failed_stage == "handoff_committed":
+            operation(*args, **kwargs)  # Baseline committed, Thread retirement still missing.
+        raise RuntimeError("projection failed")
+
     monkeypatch.setattr(target, method, fail)
     with pytest.raises(RuntimeError, match="projection failed"):
         session.warm_start(source)
-    admitted = 2 if failed_stage == "handoff" else 1
+    handoff_failed = failed_stage in {"handoff", "handoff_committed"}
+    admitted = 2 if handoff_failed else 1
     assert cleaner.calls == admitted
     assert len(core.load_all()) == admitted
+    baseline_ids = tuple(view.baseline_id for view in session.projection.query(None))
+    if failed_stage == "handoff_committed":
+        assert len(baseline_ids) == 1
     session.close()
     core.close()
     core = MemoryCore(tmp_path / "semantic.sqlite")
@@ -173,31 +182,44 @@ def test_receipt_catchup_resumes_failed_stage_without_semantic_reinference(
         return project(memory_id)
 
     monkeypatch.setattr(session.projection, "process_semantic", counted)
-    assert session.warm_start(source) == (1 if failed_stage == "handoff" else 2)
+    assert session.warm_start(source) == (1 if handoff_failed else 2)
     assert cleaner.calls == 2
-    assert len(projected) == {"point": 2, "thread": 1, "handoff": 0}[failed_stage]
+    assert len(projected) == {"point": 2, "thread": 1}.get(failed_stage, 0)
     assert len(core.load_all()) == 2
     assert len(session.projection.query(None)) == 1
+    if baseline_ids:
+        assert tuple(view.baseline_id for view in session.projection.query(None)) == baseline_ids
+        region = session.projection.query(None)[0].region_id
+        assert len(session.projection.baselines.get_history(region).revisions) == 1
+        assert core.products.list_threads(SCOPE) == ()
     session.close()
     core.close()
     source.close()
 
 
-def test_edit_invalidates_retrieval_and_projection_without_native_raw_write(tmp_path):
+@pytest.mark.parametrize("change", ["edit", "delete"])
+def test_source_change_invalidates_context_but_preserves_derived_history(tmp_path, change):
     native_path, source, cleaner = setup(tmp_path)
     core = MemoryCore(tmp_path / "semantic.sqlite")
     session = runtime(tmp_path, core, source, cleaner)
     session.warm_start(source)
+    region = session.projection.query(None)[0].region_id
+    history = session.projection.baselines.get_history(region)
     block = session.substrate.list_semantic_blocks()[0]
     with pytest.raises(KeyError, match="canonical"):
         session.substrate.put_semantic_block(replace(block, content="invented interpretation"))
     with sqlite3.connect(native_path) as db:
-        db.execute("UPDATE messages SET content='revised native event' WHERE id=2")
+        if change == "edit":
+            db.execute("UPDATE messages SET content='revised native event' WHERE id=2")
+        else:
+            db.execute("UPDATE messages SET active=0,compacted=0 WHERE id=2")
     assert (
         session.projection.query(None) == ()
     )  # immediate fresh-source check, before reconciliation
     assert len(session.reconcile_sources()) == 1
     assert session.reconcile_sources() == ()
+    assert session.projection.baselines.get_history(region) == history
+    assert len(core.load_all()) == 2 and cleaner.calls == 2
     assert len(session.substrate.list_semantic_blocks(current_valid_only=False)) == 2
     assert len(session.substrate.list_semantic_blocks()) == 1
     assert len(session.read(**context_inputs()).episodes) == 1
@@ -223,27 +245,6 @@ def test_root_binding_and_whole_item_budget_fail_closed(tmp_path):
     with pytest.raises(ValueError, match="binding mismatch"):
         runtime(tmp_path, other, source, cleaner)
     other.close()
-    core.close()
-    source.close()
-
-
-def test_native_deletion_keeps_history_but_removes_current_derived_context(tmp_path):
-    native_path, source, cleaner = setup(tmp_path)
-    core = MemoryCore(tmp_path / "semantic.sqlite")
-    session = runtime(tmp_path, core, source, cleaner)
-    session.warm_start(source)
-    region = session.projection.query(None)[0].region_id
-    history = session.projection.baselines.get_history(region)
-    with sqlite3.connect(native_path) as db:
-        db.execute("UPDATE messages SET active=0,compacted=0 WHERE id=2")
-    assert session.projection.query(None) == ()
-    assert len(session.reconcile_sources()) == 1
-    assert session.projection.baselines.get_history(region) == history
-    assert len(core.load_all()) == 2
-    assert len(session.substrate.list_semantic_blocks()) == 1
-    assert len(session.substrate.list_semantic_blocks(current_valid_only=False)) == 2
-    assert cleaner.calls == 2
-    session.close()
     core.close()
     source.close()
 
