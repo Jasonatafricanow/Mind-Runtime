@@ -39,9 +39,12 @@ def record(
     relationship_id: str = "alice",
     verbal_repair: bool = False,
     behavioral_repair: bool = False,
+    unresolved: bool = False,
 ) -> LongitudinalAffectRecord:
     resolved_occurrence_id = (
-        occurrence_id if occurrence_id is not None else f"occ-{record_id}"
+        None
+        if unresolved
+        else occurrence_id if occurrence_id is not None else f"occ-{record_id}"
     )
     refs = source_refs if source_refs is not None else (f"ev-{record_id}",)
     assessed_delta = days_ago if assessed_days_ago is None else assessed_days_ago
@@ -134,19 +137,17 @@ def test_occurrence_identity_is_explicit_and_fail_closed() -> None:
     fallback = record(
         "r3",
         days_ago=2,
-        occurrence_id="",
         source_refs=("ev-only",),
+        unresolved=True,
     )
-    object.__setattr__(fallback, "source_occurrence_id", None)
     assert resolve_affect_occurrence_id(fallback) == "ev-only"
 
     unresolved = record(
         "r4",
         days_ago=2,
-        occurrence_id="",
         source_refs=("ev-a", "ev-b"),
+        unresolved=True,
     )
-    object.__setattr__(unresolved, "source_occurrence_id", None)
     assert resolve_affect_occurrence_id(unresolved) is None
 
 
@@ -154,10 +155,9 @@ def test_empty_and_unresolved_records_do_not_create_occurrences() -> None:
     unresolved = record(
         "u1",
         days_ago=1,
-        occurrence_id="",
         source_refs=("ev-a", "ev-b"),
+        unresolved=True,
     )
-    object.__setattr__(unresolved, "source_occurrence_id", None)
 
     view = derive_longitudinal_affect_view([unresolved], query=query())
     assert view.is_empty is True
