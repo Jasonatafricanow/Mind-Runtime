@@ -37,7 +37,7 @@ OPERATIONAL_TYPES = frozenset(
 
 class HistoricalSourceCurator:
     def classify(self, source, *, necessary_context=False):
-        if source.record_type in OPERATIONAL_TYPES:
+        if source.role == "agent" or source.record_type in OPERATIONAL_TYPES:
             return SourceDisposition.IGNORE
         if source.role == "user" and isinstance(source.content, str) and source.content.strip():
             # A, 对, 继续, 不是 may all establish a commitment. No length threshold.

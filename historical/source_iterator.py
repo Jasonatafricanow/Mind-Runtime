@@ -75,7 +75,13 @@ class HistoricalSourceIterator:
         fingerprint = hashlib.sha256(
             json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()
-        kind = data.get("record_type") or ("tool_call" if data.get("tool_calls") else data["role"])
+        calls = data.get("tool_calls")
+        if isinstance(calls, str):
+            try:
+                calls = json.loads(calls)
+            except ValueError:
+                calls = True  # Unreadable execution marker cannot gain cognition eligibility.
+        kind = "tool_call" if calls else (data.get("record_type") or data["role"])
         if not data.get("active", 1) and not data.get("compacted", 0):
             kind = "agent_execution"  # Inactive/rewound rows have no semantic eligibility.
         ref = SourceRef(
@@ -91,8 +97,13 @@ class HistoricalSourceIterator:
         )
 
     def iterate(self, *, after=None):
-        for row in self._query(after=after):
-            yield self._source(row)
+        # Release every SELECT before invoking the worker. A live cursor would
+        # pin an old SQLite snapshot and hide source drift from exact validation.
+        cursor = after
+        while rows := self._query(after=cursor, limit=1).fetchall():
+            source = self._source(rows[0])
+            cursor = source.ordering_key
+            yield source
 
     def get(self, ref):
         if ref.source_namespace != self.namespace:
