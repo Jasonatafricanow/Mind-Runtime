@@ -55,3 +55,79 @@ def test_aborted_turn_does_not_publish_thread_updates() -> None:
     orchestrator.run()
     orchestrator.abort_turn()
     assert updates.calls == []
+
+
+class RecordingPostCommitProjection:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[Scope, str]] = []
+
+    def project_interaction(
+        self,
+        *,
+        scope: Scope,
+        interaction_id: str,
+    ) -> int:
+        self.calls.append((scope, interaction_id))
+        if self.fail:
+            raise RuntimeError("derived projection unavailable")
+        return 1
+
+
+def test_memory_projection_runs_only_after_durable_turn_commit() -> None:
+    projector = RecordingPostCommitProjection()
+    orchestrator = make_orchestrator(
+        FactIngestService(clock=FakeClock(NOW)),
+        memory_post_commit_projection=projector,
+    )
+    interaction = make_interaction()
+    orchestrator.begin_turn(interaction)
+    orchestrator.ingest(make_evidence(text="A durable memory source."))
+    orchestrator.run()
+    assert projector.calls == []
+
+    orchestrator.commit_turn()
+    assert projector.calls == [
+        (interaction.scope, interaction.interaction_id)
+    ]
+
+
+def test_memory_projection_failure_cannot_rollback_committed_turn() -> None:
+    projector = RecordingPostCommitProjection(fail=True)
+    orchestrator = make_orchestrator(
+        FactIngestService(clock=FakeClock(NOW)),
+        memory_post_commit_projection=projector,
+    )
+    interaction = make_interaction()
+    orchestrator.begin_turn(interaction)
+    orchestrator.ingest(make_evidence(text="Commit remains authoritative."))
+    orchestrator.run()
+    orchestrator.commit_turn()
+
+    assert orchestrator.state.value == "committed"
+    assert projector.calls == [
+        (interaction.scope, interaction.interaction_id)
+    ]
+
+
+def test_aborted_turn_projects_durable_memory_but_not_thread_state() -> None:
+    projector = RecordingPostCommitProjection()
+    updates = RecordingThreadUpdates()
+    orchestrator = make_orchestrator(
+        FactIngestService(clock=FakeClock(NOW)),
+        memory_post_commit_projection=projector,
+        thread_updates=updates,
+    )
+    interaction = make_interaction()
+    orchestrator.begin_turn(interaction)
+    orchestrator.ingest(
+        make_evidence(text="Durable factual input survives response abort.")
+    )
+    orchestrator.run()
+    orchestrator.abort_turn()
+
+    assert orchestrator.state.value == "aborted"
+    assert projector.calls == [
+        (interaction.scope, interaction.interaction_id)
+    ]
+    assert updates.calls == []
