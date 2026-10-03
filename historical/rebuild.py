@@ -4,7 +4,6 @@ import hashlib
 import os
 import uuid
 from dataclasses import asdict
-from datetime import UTC, datetime
 from pathlib import Path
 
 from mr_mem.memory.core import MemoryCore
@@ -30,8 +29,15 @@ def native_digest(path):
 
 
 class RebuildClock:
+    """Historical admission uses the native source time, never rebuild wall time."""
+
+    def __init__(self, source_time=None):
+        self.source_time = source_time
+
     def now(self):
-        return datetime.now(UTC)
+        if self.source_time is None:
+            raise ValueError("historical source timestamp must be bound")
+        return self.source_time
 
 
 class HistoricalRebuild:
@@ -96,9 +102,10 @@ class HistoricalRebuild:
                 }
                 self.checkpoint.save(self.state)
             self.memory = MemoryCore(self.db_path)
+            self.clock = RebuildClock()
             self.admission = self.memory.semantic_admission(
                 sources=sources,
-                clock=RebuildClock(),
+                clock=self.clock,
                 origin_runtime_id=self.state["origin"],
             )
             self.context = HistoricalContextAssembler(sources, self.memory)
@@ -149,6 +156,7 @@ class HistoricalRebuild:
 
     def _compile(self, source, selection):
         self.sources.bind(source)
+        self.clock.source_time = source.source_ref.occurred_at
         binding = SemanticSourceBinding(
             self.sources.scope, source.interaction_id, source.source_ref
         )

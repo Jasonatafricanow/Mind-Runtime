@@ -30,7 +30,7 @@ def test_fresh_rebuild_resume_counts_raw_and_bitemporal_authority(native, tmp_pa
         state = rebuild.run(limit=2)
         memory = rebuild.memory.load_all()[0]
         assert memory.occurred_at.timestamp() == 11
-        assert memory.known_at > memory.occurred_at
+        assert memory.known_at == memory.occurred_at
         assert memory.provenance.source_refs == (tuple(sources.iterate())[1].source_ref,)
         assert state["compile_count"] == 1
         with pytest.raises(RuntimeError, match="another historical worker"):
@@ -181,6 +181,8 @@ def test_partial_update_shared_validator_closure_and_canonical_lifecycle(
         )
         assert rebuild.memory.semantic_relations(new.memory_id)
         assert new.provenance.source_refs[0].record_id == "9"
+        assert new.known_at.timestamp() == 17
+        assert all(m.known_at.timestamp() == 11 for m in memories if m != new)
         assert calls == {"validator": 3, "closure": 3}
 
 
@@ -198,7 +200,9 @@ def test_resume_rejects_foreign_canonical_db_before_writer(native, tmp_path):
     foreign_path = tmp_path / "foreign-canonical.sqlite"
     with MemoryCore(foreign_path) as foreign:
         foreign.semantic_admission(
-            sources=sources, clock=RebuildClock(), origin_runtime_id="production-fixture"
+            sources=sources,
+            clock=RebuildClock(source.source_ref.occurred_at),
+            origin_runtime_id="production-fixture",
         ).admit_semantic_delta(
             delta(),
             binding=SemanticSourceBinding(scope, source.interaction_id, source.source_ref),

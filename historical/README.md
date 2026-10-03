@@ -47,6 +47,11 @@ Existing roots require `--resume`; a production DB path, symlink, changed Raw,
 scope, namespace, schema or prompt is rejected. Raw is read-only. No affect
 runtime, online Body lifecycle, legacy factual admission or cutover is run.
 
+Historical admission binds `known_at` to the current source's original native
+message timestamp (`SourceRef.occurred_at`), not the rebuild wall clock. Each
+source has its own binding; receipt recovery preserves the frozen historical
+timestamp and identity. Online admission clock behavior is unchanged.
+
 `--limit` checkpoints a batch. On restart the iterator resumes after the native
 ordering key. A saved proposal is reused; an accepted MR-Mem transaction/receipt
 is recovered before any external worker call. Counts are per source disposition;
