@@ -981,3 +981,124 @@ def test_observation_fact_reader_filters_and_ranks_admitted_facts(
         type("_Orchestrator", (), {"fact_ingest": service})()
     )
     assert reader.facts(scope) == (("counter.x", "2"),)
+
+
+# ── focused durable-state edge contracts migrated from coverage suite ──────
+
+def test_tick_rejects_future_canonical_affect(tmp_path: Path) -> None:
+    stack = make_stack(tmp_path)
+    seed_affect(
+        stack,
+        dimension="agent.affect.missing",
+        value=0.75,
+        at=BASE + timedelta(minutes=1),
+    )
+
+    with pytest.raises(ValueError, match="must not be in the future"):
+        stack["ticker"].tick(scope=stack["scope"], now=BASE)
+
+
+def test_tick_filters_foreign_nonnumeric_and_stale_affect_rows(
+    tmp_path: Path,
+) -> None:
+    from mind_runtime.contracts import RuntimeState
+
+    stack = make_stack(tmp_path)
+    backend = stack["state_backend"]
+    persona = stack["persona"]
+    affect_scope = Scope(
+        domain=ScopeDomain.AGENT,
+        agent_id=persona.persona_id,
+        persona_id=persona.persona_id,
+    )
+    foreign_scope = Scope(
+        domain=ScopeDomain.AGENT,
+        agent_id="other-agent",
+        persona_id="other-agent",
+    )
+
+    def state(
+        *,
+        state_id: str,
+        scope: Scope,
+        value: object,
+        version: int,
+    ) -> RuntimeState:
+        return RuntimeState(
+            state_id=state_id,
+            scope=scope,
+            dimension="agent.affect.missing",
+            value=value,
+            status="active",
+            valid_from=BASE,
+            valid_until=None,
+            relevant_until=None,
+            last_observed_at=BASE,
+            evidence_refs=(),
+            transition_refs=(),
+            updated_at=BASE,
+            origin_runtime_id=stack["runtime_id"],
+            version=version,
+            sync=SyncFields(
+                scope,
+                stack["runtime_id"],
+                state_id,
+                version,
+                f"idem-{state_id}",
+            ),
+        )
+
+    backend.save_state(
+        state(state_id="missing:v1", scope=affect_scope, value=0.5, version=1)
+    )
+    backend.save_state(
+        state(state_id="missing:v3", scope=affect_scope, value=0.75, version=3)
+    )
+    backend.save_state(
+        state(state_id="missing:text", scope=affect_scope, value="bad", version=4)
+    )
+    backend.save_state(
+        state(state_id="missing:foreign", scope=foreign_scope, value=0.99, version=5)
+    )
+
+    current = stack["ticker"]._current_affect(scope=affect_scope)
+
+    assert len(current) == 1
+    assert current[0].state_id == "missing:v3"
+    assert current[0].value == 0.75
+
+
+def test_tick_without_state_backend_remains_non_persistent(tmp_path: Path) -> None:
+    persona = make_persona()
+    clock = FakeClock(BASE)
+    fact_service = FactIngestService(
+        clock=clock,
+        backend=SqliteFactBackend(tmp_path / "no-state-facts.sqlite"),
+    )
+    orchestrator = TurnOrchestrator(
+        clock=clock,
+        trace=TraceRecorder(),
+        runtime_id="runtime-1",
+        fact_ingest=fact_service,
+        persona=persona,
+        state_backend=None,
+    )
+    ticker = build_cognitive_ticker(
+        orchestrator=orchestrator,
+        persona=persona,
+        intent_engine=DeterministicIntentEngine(make_rules(), "runtime-1"),
+        action_policy=DeterministicActionPolicy(make_policy_config(), "runtime-1"),
+        policy_resources=PolicyResources(("proactive_message", "respond")),
+        intent_lifecycle=IntentLifecycleService(
+            SqliteIntentBackend(tmp_path / "no-state-intents.sqlite")
+        ),
+        runtime_id="runtime-1",
+        fact_reader=observation_fact_reader(orchestrator),
+    )
+
+    report = ticker.tick(
+        scope=Scope(domain=ScopeDomain.USER, user_id="user-a"),
+        now=BASE + timedelta(hours=1),
+    )
+
+    assert report.state_rows_persisted == 0
