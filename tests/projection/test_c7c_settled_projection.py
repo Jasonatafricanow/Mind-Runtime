@@ -13,8 +13,7 @@ counter.proactive_prompts_since_photo). Hard contract:
     receipt replayed never increments twice.
   * Cadence semantics follow the legacy rule map (proactive_text
     increments; SEND_PHOTO resets).
-  * Timestamp authority: provider delivered_at primary; explicit
-    fallback to request created_at.
+  * Timestamp authority: provider delivered_at is required; no request-time fallback.
   * Crash windows: durable reopen proves exactly-once projection.
 
 The tests use the existing FactIngestService as the durable fact
@@ -23,10 +22,12 @@ authority; no direct UPDATE of any counter table.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from tests.support.fake_clock import FakeClock
 
 from mind_runtime.contracts import (
@@ -565,4 +566,44 @@ def test_cp12_end_to_end_settled_to_read_through_cognitive_ticker(
     facts = _facts_by_key(fact_service)
     assert facts["counter.last_proactive_at"] == cooldown_facts[-1]
 
+    store.close()
+
+
+# ---- focused persisted-edge contracts --------------------------------------
+
+def test_projection_store_corruption_fails_closed_on_reopen(tmp_path: Path) -> None:
+    _, projector, store = _build_stack(tmp_path)
+    request = _build_request(idempotency_key="corrupt-store")
+    receipt = _accepted_receipt(request)
+    projector.project(receipt=receipt, request=request)
+    store.close()
+
+    projection_db = tmp_path / "projections.sqlite"
+    with sqlite3.connect(projection_db) as conn:
+        conn.execute(
+            "UPDATE settled_action_projections SET receipt_id = ''"
+            " WHERE receipt_id = ?",
+            (receipt.receipt_id,),
+        )
+
+    with pytest.raises(ValueError, match="empty or non-string field"):
+        SqliteProjectionStore(projection_db)
+
+
+def test_projection_treats_non_numeric_counter_as_zero(tmp_path: Path) -> None:
+    fact_service, projector, store = _build_stack(tmp_path)
+    seed_request = _build_request(idempotency_key="seed-malformed")
+    seed_receipt = _accepted_receipt(seed_request)
+    fact_service.admit_operational_fact(
+        key="counter.proactive_prompts_since_photo",
+        value="not-a-number",
+        request=seed_request,
+        receipt=seed_receipt,
+    )
+
+    request = _build_request(idempotency_key="after-malformed")
+    receipt = _accepted_receipt(request)
+    outcome = projector.project(receipt=receipt, request=request)
+
+    assert outcome.derived_counter_value == "1"
     store.close()
