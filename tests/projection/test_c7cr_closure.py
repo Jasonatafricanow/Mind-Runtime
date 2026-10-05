@@ -1070,8 +1070,6 @@ def test_opf_rejects_missing_scope_and_forged_source_id() -> None:
 def test_operational_fact_requires_settled_timestamp_and_persists_idempotently(
     tmp_path: Path,
 ) -> None:
-    from mind_runtime.facts.service import OperationalFactAdmission
-
     request = _build_request(idempotency_key="opf-persist")
     receipt = _accepted_receipt(request)
     missing_timestamp = replace(receipt, delivered_at=None)
