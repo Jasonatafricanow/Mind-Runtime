@@ -1088,6 +1088,19 @@ def test_operational_fact_requires_settled_timestamp_and_persists_idempotently(
             receipt=missing_timestamp,
         )
 
+    store = SqliteProjectionStore(tmp_path / "missing-settled-at.sqlite")
+    projector = SettledActionProjector(
+        fact_service=service,
+        projection_store=store,
+        clock=FakeClock(NOW),
+        runtime_id=RUNTIME,
+    )
+    try:
+        with pytest.raises(ValueError, match="receipt.delivered_at"):
+            projector.project(receipt=missing_timestamp, request=request)
+    finally:
+        store.close()
+
     first = service.admit_operational_fact(
         key="counter.last_proactive_at",
         value="1",
