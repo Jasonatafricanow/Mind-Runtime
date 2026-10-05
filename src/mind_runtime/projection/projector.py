@@ -297,11 +297,12 @@ class SettledActionProjector:
         # when the provider supplied delivered_at. C7C-R forbids silently
         # substituting request.created_at because the receipt is the
         # authority for when the external action actually settled.
-        settled_at = receipt.delivered_at
-        if settled_at is None:
+        receipt_settled_at = receipt.delivered_at
+        if receipt_settled_at is None:
             raise ValueError(
                 "settled-action projection requires receipt.delivered_at"
             )
+        settled_at = receipt_settled_at
         require_aware_utc(settled_at, "settled_at")
 
         # C7C-R: legacy unknown action_type (the row load returns ""
