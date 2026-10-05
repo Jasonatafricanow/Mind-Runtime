@@ -18,6 +18,7 @@ Invariants:
 from __future__ import annotations
 
 import gc
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -311,3 +312,54 @@ def test_kill_switch_rejects_empty_inputs(
     finally:
         backend.close()
 
+
+
+# ----------------------------------------------------------- durable corruption boundary
+
+@pytest.mark.parametrize(
+    ("column", "raw_value", "accessor", "message"),
+    (
+        ("channel_blocks", "{not-valid", "channel_blocks", "valid JSON object"),
+        ("target_blocks", "[1, 2, 3]", "target_blocks", "must be a JSON object"),
+        ("channel_blocks", '{"x": 1}', "channel_blocks", "must be strings"),
+        ("target_blocks", '{"": "value"}', "target_blocks", "non-empty strings"),
+        ("state", "not-a-level", "state", "must be one of"),
+    ),
+)
+def test_corrupt_persisted_kill_switch_fails_closed(
+    db_path: Path,
+    column: str,
+    raw_value: str,
+    accessor: str,
+    message: str,
+) -> None:
+    backend = SqliteDeliveryBackend(db_path)
+    backend.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE delivery_kill_switch SET {column} = ? WHERE row_id = 1",
+            (raw_value,),
+        )
+
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        with pytest.raises(ValueError, match=message):
+            getattr(backend.kill_switch(), accessor)()
+    finally:
+        backend.close()
+
+
+def test_global_off_keeps_precedence_over_channel_block(db_path: Path) -> None:
+    backend = SqliteDeliveryBackend(db_path)
+    try:
+        switch = backend.kill_switch()
+        switch.set_global(on=False, updated_at=NOW)
+        switch.block_channel("weixin", reason="maintenance", updated_at=NOW)
+
+        assert switch.state() == KillSwitchLevel.OFF
+        decision = switch.decide(channel="weixin", target="user-1")
+        assert decision.allowed is False
+        assert decision.reason_code == "global_off"
+    finally:
+        backend.close()
