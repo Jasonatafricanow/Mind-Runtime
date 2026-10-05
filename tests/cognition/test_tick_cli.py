@@ -192,3 +192,57 @@ def test_cli_config_loaders_roundtrip(tmp_path: Path) -> None:
 
     resources = runtime_loop.tick_config_resources(args)
     assert resources == ("proactive_message", "respond")
+
+
+# ── migrated behavioral coverage: gate-on CLI path ─────────────────────────
+
+def test_cli_tick_gate_on_full_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mind_runtime.shadow.redaction import init_store
+
+    shadow_db = tmp_path / "shadow.db"
+    init_store(shadow_db)
+    monkeypatch.setenv("MIND_RUNTIME_PRODUCTION_INGEST", "1")
+    monkeypatch.setenv(runtime_loop.PROACTIVE_TICK_ENV, "1")
+    monkeypatch.setattr(runtime_loop, "DEFAULT_RUNTIME_DIR", tmp_path / "rt")
+
+    runtime_loop.main(
+        [
+            "--shadow-db",
+            str(shadow_db),
+            "--facts-db",
+            str(tmp_path / "facts.sqlite"),
+            "--cognition-db",
+            str(tmp_path / "cog.sqlite"),
+            "--blocked-db",
+            str(tmp_path / "blocked.sqlite3"),
+            "--proactive-tick",
+            "--intent-rules-json",
+            _write_config(tmp_path),
+            "--persona-json",
+            _seed_persona(tmp_path),
+            "--intent-db",
+            str(tmp_path / "intents.sqlite"),
+            "--user-id",
+            "user-a",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert str(payload["proactive_tick"]["tick_ref"]).startswith("cognitive-tick-")
+    assert (tmp_path / "intents.sqlite").exists()
+
+
+def test_cli_config_loaders_require_config() -> None:
+    import argparse
+
+    args = argparse.Namespace(intent_rules_json=None)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_rules(args)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_policy(args)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_resources(args)
