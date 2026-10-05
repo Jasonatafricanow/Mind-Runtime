@@ -293,17 +293,15 @@ class SettledActionProjector:
                 f" and decide whether to insert the missing marker."
             )
 
-        # Authoritative timestamp: provider accepted_at first.
-        _settled_at: datetime | None = receipt.delivered_at
-        if _settled_at is None:
-            # Defensive: a SENT receipt with delivered_at=None is an
-            # upstream contract bug; we fall back to request.created_at
-            # so the counter still moves (the C7B contract guarantees
-            # delivered_at is set on SENT, but fail-soft is safer than
-            # dropping a real-world settled action).
-            _settled_at = request.created_at
-        assert _settled_at is not None
-        settled_at = _settled_at
+        # Authoritative timestamp: a settled projection is only valid
+        # when the provider supplied delivered_at. C7C-R forbids silently
+        # substituting request.created_at because the receipt is the
+        # authority for when the external action actually settled.
+        settled_at = receipt.delivered_at
+        if settled_at is None:
+            raise ValueError(
+                "settled-action projection requires receipt.delivered_at"
+            )
         require_aware_utc(settled_at, "settled_at")
 
         # C7C-R: legacy unknown action_type (the row load returns ""
