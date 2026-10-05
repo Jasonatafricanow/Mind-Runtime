@@ -23,6 +23,7 @@ def test_failed_retryable_under_budget_can_retry() -> None:
         DeliveryLifecycleState.FAILED_RETRYABLE, 1, 3,
     )
     assert decision.kind is RetryDecisionKind.CAN_RETRY
+    assert decision.can_retry is True
     assert decision.reason_code == "transient_failure"
 
 
@@ -33,6 +34,7 @@ def test_failed_retryable_at_budget_does_not_retry() -> None:
         DeliveryLifecycleState.FAILED_RETRYABLE, 3, 3,
     )
     assert decision.kind is RetryDecisionKind.DO_NOT_RETRY
+    assert decision.do_not_retry is True
     assert decision.reason_code == "budget_exhausted"
 
 
@@ -45,6 +47,7 @@ def test_unknown_always_reconciles_first() -> None:
         DeliveryLifecycleState.UNKNOWN, 0, 3,
     )
     assert decision.kind is RetryDecisionKind.RECONCILE_FIRST
+    assert decision.reconcile_first is True
     assert decision.reason_code == "outcome_unknown"
 
     # And even with attempts.
