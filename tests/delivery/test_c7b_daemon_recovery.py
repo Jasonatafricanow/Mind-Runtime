@@ -27,6 +27,7 @@ from mind_runtime.delivery import (
     DeliveryLifecycleState,
     DeliveryRequest,
     ResolvedAccept,
+    RetryDecisionKind,
     SqliteDeliveryBackend,
     make_message_id,
     make_request_id,
@@ -277,4 +278,67 @@ def test_daemon_log_does_not_carry_payload(
         daemon.run()
     for record in caplog.records:
         assert "今天下午想和你分享一首诗" not in record.getMessage()
+    backend.close()
+
+
+# ----------------------------------------------------------- focused edge contracts
+
+def test_daemon_budget_exhaustion_skips_carrier(db_path: Path) -> None:
+    request = _request(request_id=make_request_id(SCOPE, "intent-budget", "k1"))
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(request, lifecycle_state=DeliveryLifecycleState.PENDING)
+    for _ in range(3):
+        backend.increment_attempt(request.request_id, at=NOW)
+
+    port = _CountingPort()
+    outcomes = DaemonPass(backend=backend, port=port, retry_budget=3).run()
+
+    assert port.calls == []
+    assert len(outcomes) == 1
+    assert outcomes[0].decision_kind is RetryDecisionKind.DO_NOT_RETRY
+    assert outcomes[0].final_state is DeliveryLifecycleState.PENDING
+    backend.close()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_state"),
+    (
+        (DeliveryStatus.UNSENT, DeliveryLifecycleState.REJECTED),
+        (DeliveryStatus.UNKNOWN, DeliveryLifecycleState.UNKNOWN),
+    ),
+)
+def test_daemon_maps_non_sent_receipts(
+    db_path: Path,
+    status: DeliveryStatus,
+    expected_state: DeliveryLifecycleState,
+) -> None:
+    request = _request(request_id=make_request_id(SCOPE, f"intent-{status.value}", "k1"))
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(request, lifecycle_state=DeliveryLifecycleState.PENDING)
+
+    class _StaticPort:
+        def deliver(self, request: DeliveryRequest) -> DeliveryReceipt:
+            return DeliveryReceipt(
+                receipt_id=f"recpt-{request.request_id}",
+                scope=request.scope,
+                origin_runtime_id=request.origin_runtime_id,
+                message_id=request.message_id,
+                delivery_status=status,
+                delivered_at=None,
+                sync=SyncFields(
+                    request.scope,
+                    request.origin_runtime_id,
+                    f"recpt-{request.request_id}",
+                    1,
+                    f"idem-recpt-{request.request_id}",
+                ),
+            )
+
+    outcomes = DaemonPass(backend=backend, port=_StaticPort(), retry_budget=3).run()
+
+    assert len(outcomes) == 1
+    assert outcomes[0].final_state is expected_state
+    row = backend.get_durable_request(request.request_id)
+    assert row is not None
+    assert row.lifecycle_state is expected_state
     backend.close()
