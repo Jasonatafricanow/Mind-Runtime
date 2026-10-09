@@ -868,3 +868,237 @@ def test_runtime_tick_background_failure_is_fail_soft(
             background_mode=CognitiveMode.ACTIVE,
         )
 
+
+
+# ── migrated behavioral coverage: decision + fact reader contracts ──────────
+
+def test_policy_deny_blocks_candidate(tmp_path: Path) -> None:
+    """A generated candidate with no policy rule is blocked fail-closed."""
+    policy = ActionPolicyConfig(rules=(), proactive_cooldown=timedelta(minutes=30))
+    stack = make_stack(tmp_path, policy_config=policy)
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = stack["ticker"].tick(
+        scope=stack["scope"], now=BASE + timedelta(hours=2)
+    )
+
+    assert report.policy_denied == 1
+    current = stack["intent_backend"].current(stack["scope"])
+    assert len(current) == 1
+    assert current[0].status is IntentStatus.BLOCKED
+
+
+def test_higher_candidate_supersedes_lower(tmp_path: Path) -> None:
+    """Once the strongest candidate is allowed, lower candidates are superseded."""
+    persona = PersonaProfile(
+        persona_id="synthetic-tick",
+        dimensions=(
+            _dimension("agent.affect.missing", baseline=0.9, recovery=0.02),
+            AffectiveDimensionProfile(
+                dimension="agent.affect.quiet",
+                baseline=0.2,
+                initial_value=0.05,
+                sensitivity=1.0,
+                recovery_rate=0.02,
+                ceiling=1.0,
+                floor=0.0,
+                growth_profile=(),
+                coupling_profile=(),
+            ),
+        ),
+    )
+    whisper = IntentRule(
+        rule_id="whisper",
+        kind="whisper",
+        base_strength=0.05,
+        dimension_weights=(("agent.affect.quiet", 1.0),),
+        event_kind=None,
+        event_bonus=0.0,
+        minimum_strength=0.1,
+        due_at_attribute=None,
+        expires_after=None,
+        reconsideration_policy=ReconsiderationPolicy.NEVER,
+    )
+    stack = make_stack(tmp_path, persona=persona, rules=make_rules() + (whisper,))
+    seed_affect(stack, dimension="agent.affect.missing", value=0.75, at=BASE)
+
+    report = stack["ticker"].tick(
+        scope=stack["scope"], now=BASE + timedelta(hours=2)
+    )
+
+    assert report.policy_allowed == 1
+    assert report.superseded == 1
+    statuses = {
+        intent.kind: intent.status
+        for intent in stack["intent_backend"].current(stack["scope"])
+    }
+    assert statuses["reach_out"] is IntentStatus.ALLOWED
+    assert statuses["whisper"] is IntentStatus.SUPERSEDED
+
+
+def test_observation_fact_reader_filters_and_ranks_admitted_facts(
+    tmp_path: Path,
+) -> None:
+    """Only same-scope string counter/conversation facts enter policy context."""
+    scope = Scope(domain=ScopeDomain.USER, user_id="user-a")
+    other = Scope(domain=ScopeDomain.USER, user_id="other")
+    service = FactIngestService(
+        clock=FakeClock(BASE), backend=SqliteFactBackend(tmp_path / "facts-reader.sqlite")
+    )
+
+    def admit(evidence_id: str, payload: object, fact_scope: Scope = scope) -> None:
+        service.admit(
+            Evidence(
+                id=evidence_id,
+                scope=fact_scope,
+                origin_runtime_id="runtime-1",
+                source_type="typed_event",
+                source_id=f"source-{evidence_id}",
+                authority_level=AuthorityLevel.ASSERTED,
+                authority=Authority(
+                    fact_scope, AuthorityLevel.ASSERTED, f"source-{evidence_id}"
+                ),
+                occurred_at=BASE,
+                received_at=BASE,
+                payload=payload,
+                sync=SyncFields(
+                    fact_scope, "runtime-1", evidence_id, 1, f"idem-{evidence_id}"
+                ),
+            ),
+            interaction_id=f"reader-{evidence_id}",
+            writing_runtime="runtime-1",
+            writing_persona_id=None,
+        )
+
+    admit("plain", "not-a-mapping")
+    admit("bad-value", {"key": "counter.x", "value": 5})
+    admit("bad-key", {"key": "mood.x", "value": "1"})
+    admit("foreign", {"key": "counter.x", "value": "9"}, other)
+    admit("ev-aaa", {"key": "counter.x", "value": "1"})
+    admit("ev-zzz", {"key": "counter.x", "value": "2"})
+
+    reader = observation_fact_reader(
+        type("_Orchestrator", (), {"fact_ingest": service})()
+    )
+    assert reader.facts(scope) == (("counter.x", "2"),)
+
+
+# ── focused durable-state edge contracts migrated from coverage suite ──────
+
+def test_tick_rejects_future_canonical_affect(tmp_path: Path) -> None:
+    stack = make_stack(tmp_path)
+    seed_affect(
+        stack,
+        dimension="agent.affect.missing",
+        value=0.75,
+        at=BASE + timedelta(minutes=1),
+    )
+
+    with pytest.raises(ValueError, match="must not be in the future"):
+        stack["ticker"].tick(scope=stack["scope"], now=BASE)
+
+
+def test_tick_filters_foreign_nonnumeric_and_stale_affect_rows(
+    tmp_path: Path,
+) -> None:
+    from mind_runtime.contracts import RuntimeState
+
+    stack = make_stack(tmp_path)
+    backend = stack["state_backend"]
+    persona = stack["persona"]
+    affect_scope = Scope(
+        domain=ScopeDomain.AGENT,
+        agent_id=persona.persona_id,
+        persona_id=persona.persona_id,
+    )
+    foreign_scope = Scope(
+        domain=ScopeDomain.AGENT,
+        agent_id="other-agent",
+        persona_id="other-agent",
+    )
+
+    def state(
+        *,
+        state_id: str,
+        scope: Scope,
+        value: object,
+        version: int,
+    ) -> RuntimeState:
+        return RuntimeState(
+            state_id=state_id,
+            scope=scope,
+            dimension="agent.affect.missing",
+            value=value,
+            status="active",
+            valid_from=BASE,
+            valid_until=None,
+            relevant_until=None,
+            last_observed_at=BASE,
+            evidence_refs=(),
+            transition_refs=(),
+            updated_at=BASE,
+            origin_runtime_id=stack["runtime_id"],
+            version=version,
+            sync=SyncFields(
+                scope,
+                stack["runtime_id"],
+                state_id,
+                version,
+                f"idem-{state_id}",
+            ),
+        )
+
+    backend.save_state(
+        state(state_id="missing:v1", scope=affect_scope, value=0.5, version=1)
+    )
+    backend.save_state(
+        state(state_id="missing:v3", scope=affect_scope, value=0.75, version=3)
+    )
+    backend.save_state(
+        state(state_id="missing:text", scope=affect_scope, value="bad", version=4)
+    )
+    backend.save_state(
+        state(state_id="missing:foreign", scope=foreign_scope, value=0.99, version=5)
+    )
+
+    current = stack["ticker"]._current_affect(scope=affect_scope)
+
+    assert len(current) == 1
+    assert current[0].state_id == "missing:v3"
+    assert current[0].value == 0.75
+
+
+def test_tick_without_state_backend_remains_non_persistent(tmp_path: Path) -> None:
+    persona = make_persona()
+    clock = FakeClock(BASE)
+    fact_service = FactIngestService(
+        clock=clock,
+        backend=SqliteFactBackend(tmp_path / "no-state-facts.sqlite"),
+    )
+    orchestrator = TurnOrchestrator(
+        clock=clock,
+        trace=TraceRecorder(),
+        runtime_id="runtime-1",
+        fact_ingest=fact_service,
+        persona=persona,
+        state_backend=None,
+    )
+    ticker = build_cognitive_ticker(
+        orchestrator=orchestrator,
+        persona=persona,
+        intent_engine=DeterministicIntentEngine(make_rules(), "runtime-1"),
+        action_policy=DeterministicActionPolicy(make_policy_config(), "runtime-1"),
+        policy_resources=PolicyResources(("proactive_message", "respond")),
+        intent_lifecycle=IntentLifecycleService(
+            SqliteIntentBackend(tmp_path / "no-state-intents.sqlite")
+        ),
+        runtime_id="runtime-1",
+        fact_reader=observation_fact_reader(orchestrator),
+    )
+
+    report = ticker.tick(
+        scope=Scope(domain=ScopeDomain.USER, user_id="user-a"),
+        now=BASE + timedelta(hours=1),
+    )
+
+    assert report.state_rows_persisted == 0

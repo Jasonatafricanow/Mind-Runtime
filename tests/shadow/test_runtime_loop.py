@@ -837,3 +837,59 @@ def test_runtime_stack_rejects_inspiration_without_memory_and_lce(
             lce_inspiration_enabled=True,
         )
 
+
+
+# ── migrated behavioral coverage: proactive daemon gate ────────────────────
+
+def test_daemon_proactive_tick_gate_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
+    for raw, expected in [
+        ("1", True),
+        ("true", True),
+        ("ON", True),
+        ("0", False),
+        ("junk", False),
+    ]:
+        monkeypatch.setenv(daemon_mod.PROACTIVE_TICK_ENV, raw)
+        assert daemon_mod._proactive_tick_enabled() is expected
+    monkeypatch.delenv(daemon_mod.PROACTIVE_TICK_ENV, raising=False)
+    assert daemon_mod._proactive_tick_enabled() is False
+
+
+def test_daemon_pass_runs_proactive_tick_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tick_calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: object) -> sp.CompletedProcess[str]:
+        if any("--proactive-tick" in part for part in cmd):
+            tick_calls.append(list(cmd))
+            return sp.CompletedProcess(cmd, 0, stdout='{"proactive_tick": {}}', stderr="")
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setenv(daemon_mod.PRODUCTION_INGEST_ENV, "1")
+    monkeypatch.setenv(daemon_mod.PROACTIVE_TICK_ENV, "1")
+
+    ok, msg = daemon_mod.one_pass()
+
+    assert ok and "tick=" in msg
+    assert len(tick_calls) == 1
+
+
+def test_daemon_proactive_tick_failure_short_circuits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(cmd: list[str], **kwargs: object) -> sp.CompletedProcess[str]:
+        if any("--proactive-tick" in part for part in cmd):
+            return sp.CompletedProcess(cmd, 3, stdout="", stderr="tick exploded")
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setenv(daemon_mod.PRODUCTION_INGEST_ENV, "1")
+    monkeypatch.setenv(daemon_mod.PROACTIVE_TICK_ENV, "1")
+
+    ok, msg = daemon_mod.one_pass()
+
+    assert not ok
+    assert "proactive tick error" in msg
+    assert "rc=3" in msg

@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from tests.support.fake_clock import FakeClock
 
 from mind_runtime.contracts import (
     Scope,
@@ -192,3 +193,144 @@ def test_cli_config_loaders_roundtrip(tmp_path: Path) -> None:
 
     resources = runtime_loop.tick_config_resources(args)
     assert resources == ("proactive_message", "respond")
+
+
+# ── migrated behavioral coverage: gate-on CLI path ─────────────────────────
+
+def test_cli_tick_gate_on_full_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from mind_runtime.shadow.redaction import init_store
+
+    shadow_db = tmp_path / "shadow.db"
+    init_store(shadow_db)
+    monkeypatch.setenv("MIND_RUNTIME_PRODUCTION_INGEST", "1")
+    monkeypatch.setenv(runtime_loop.PROACTIVE_TICK_ENV, "1")
+    monkeypatch.setattr(runtime_loop, "DEFAULT_RUNTIME_DIR", tmp_path / "rt")
+
+    runtime_loop.main(
+        [
+            "--shadow-db",
+            str(shadow_db),
+            "--facts-db",
+            str(tmp_path / "facts.sqlite"),
+            "--cognition-db",
+            str(tmp_path / "cog.sqlite"),
+            "--blocked-db",
+            str(tmp_path / "blocked.sqlite3"),
+            "--proactive-tick",
+            "--intent-rules-json",
+            _write_config(tmp_path),
+            "--persona-json",
+            _seed_persona(tmp_path),
+            "--intent-db",
+            str(tmp_path / "intents.sqlite"),
+            "--user-id",
+            "user-a",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert str(payload["proactive_tick"]["tick_ref"]).startswith("cognitive-tick-")
+    assert (tmp_path / "intents.sqlite").exists()
+
+
+def test_cli_config_loaders_require_config() -> None:
+    import argparse
+
+    args = argparse.Namespace(intent_rules_json=None)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_rules(args)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_policy(args)
+    with pytest.raises(ValueError, match="--intent-rules-json"):
+        runtime_loop.tick_config_resources(args)
+
+
+# ── focused production wiring fail-closed contracts ────────────────────────
+
+def _bare_tick_orchestrator(tmp_path: Path, *, with_persona: bool = True):
+    from mind_runtime.persona_config import load_persona_profile
+
+    persona = load_persona_profile(_seed_persona(tmp_path)).profile if with_persona else None
+    orchestrator, _ = runtime_loop.build_runtime_stack(
+        clock=FakeClock(BASE),
+        facts_db=tmp_path / "wiring-facts.sqlite",
+        state_db=tmp_path / "wiring-state.sqlite",
+        origin_runtime_id="runtime-1",
+        user_id="user-a",
+        persona=persona,
+    )
+    return orchestrator
+
+
+def test_cognitive_component_wiring_requires_durable_authorities(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _bare_tick_orchestrator(tmp_path)
+    rules = runtime_loop.tick_config_rules(
+        type("_Args", (), {"intent_rules_json": _write_config(tmp_path)})()
+    )
+    policy = runtime_loop.tick_config_policy(
+        type("_Args", (), {"intent_rules_json": _write_config(tmp_path)})()
+    )
+
+    with pytest.raises(ValueError, match="durable intent_db"):
+        runtime_loop.build_cognitive_components(
+            orchestrator=orchestrator,
+            origin_runtime_id="runtime-1",
+            intent_rules=rules,
+            action_policy_config=policy,
+            policy_resources=("proactive_message",),
+            intent_db=None,
+        )
+    with pytest.raises(ValueError, match="action policy config"):
+        runtime_loop.build_cognitive_components(
+            orchestrator=orchestrator,
+            origin_runtime_id="runtime-1",
+            intent_rules=rules,
+            action_policy_config=None,
+            policy_resources=("proactive_message",),
+            intent_db=tmp_path / "wiring-intents.sqlite",
+        )
+    with pytest.raises(ValueError, match="policy resources"):
+        runtime_loop.build_cognitive_components(
+            orchestrator=orchestrator,
+            origin_runtime_id="runtime-1",
+            intent_rules=rules,
+            action_policy_config=policy,
+            policy_resources=None,
+            intent_db=tmp_path / "wiring-intents.sqlite",
+        )
+
+
+def test_cognitive_component_wiring_requires_persona(tmp_path: Path) -> None:
+    orchestrator = _bare_tick_orchestrator(tmp_path, with_persona=False)
+    config = _write_config(tmp_path)
+    args = type("_Args", (), {"intent_rules_json": config})()
+
+    with pytest.raises(ValueError, match="Persona-backed"):
+        runtime_loop.build_cognitive_components(
+            orchestrator=orchestrator,
+            origin_runtime_id="runtime-1",
+            intent_rules=runtime_loop.tick_config_rules(args),
+            action_policy_config=runtime_loop.tick_config_policy(args),
+            policy_resources=runtime_loop.tick_config_resources(args),
+            intent_db=tmp_path / "persona-intents.sqlite",
+        )
+
+
+def test_run_cognitive_tick_rejects_unwired_or_wrong_ticker(tmp_path: Path) -> None:
+    from mind_runtime.contracts import Scope, ScopeDomain
+
+    orchestrator = _bare_tick_orchestrator(tmp_path)
+    scope = Scope(domain=ScopeDomain.USER, user_id="user-a")
+
+    with pytest.raises(ValueError, match="not wired"):
+        runtime_loop.run_cognitive_tick(orchestrator, scope=scope, now=BASE)
+
+    orchestrator.cognitive_tick_components = {"ticker": object()}  # type: ignore[attr-defined]
+    with pytest.raises(TypeError, match="CognitiveTicker"):
+        runtime_loop.run_cognitive_tick(orchestrator, scope=scope, now=BASE)

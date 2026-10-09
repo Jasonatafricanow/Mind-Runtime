@@ -323,3 +323,101 @@ def test_persistence_unknown_table_in_loader_refused() -> None:
             _load_all_required_columns(conn, "drop_this_table_now")
     finally:
         conn.close()
+
+
+# ----------------------------------------------------------- durable edge contracts
+
+def test_receipt_reopen_rejects_unknown_status(db_path: Path) -> None:
+    request = _request(request_id=make_request_id(SCOPE, "intent-status", "k1"))
+    receipt = _build_receipt(request)
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(request, lifecycle_state=DeliveryLifecycleState.PENDING)
+    backend.record_receipt(
+        receipt,
+        request_id=request.request_id,
+        provider_receipt_ref=None,
+        provider_message_ref=None,
+        attempt=1,
+    )
+    backend.close()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE delivery_receipts SET delivery_status = ? WHERE receipt_id = ?",
+            ("not-a-status", receipt.receipt_id),
+        )
+
+    with pytest.raises(ValueError, match=receipt.receipt_id):
+        SqliteDeliveryBackend(db_path)
+
+
+@pytest.mark.parametrize(
+    ("column", "raw_value", "message"),
+    (
+        ("outcome", "not-an-outcome", "att-bad"),
+        ("reason_codes", "{not-valid-json", "att-bad"),
+        ("reason_codes", '{"a": 1}', "JSON array"),
+    ),
+)
+def test_attempt_reopen_rejects_corrupt_fields(
+    tmp_path: Path,
+    column: str,
+    raw_value: str,
+    message: str,
+) -> None:
+    path = tmp_path / f"attempt-corrupt-{column}.sqlite"
+    request = _request(request_id=make_request_id(SCOPE, "intent-attempt", column))
+    backend = SqliteDeliveryBackend(path)
+    backend.record_request(request, lifecycle_state=DeliveryLifecycleState.PENDING)
+    backend.record_attempt(
+        attempt_id="att-bad",
+        request_id=request.request_id,
+        attempt=1,
+        started_at=NOW,
+        ended_at=NOW,
+        outcome=DeliveryLifecycleState.FAILED_RETRYABLE,
+        provider_receipt_ref=None,
+        reason_codes=("x",),
+    )
+    backend.close()
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            f"UPDATE delivery_attempts SET {column} = ? WHERE attempt_id = ?",
+            (raw_value, "att-bad"),
+        )
+
+    with pytest.raises(ValueError, match=message):
+        SqliteDeliveryBackend(path)
+
+
+def test_record_receipt_replay_is_idempotent_and_collision_safe(db_path: Path) -> None:
+    request = _request(request_id=make_request_id(SCOPE, "intent-receipt", "k1"))
+    receipt = _build_receipt(request)
+    backend = SqliteDeliveryBackend(db_path)
+    backend.record_request(request, lifecycle_state=DeliveryLifecycleState.PENDING)
+
+    assert backend.record_receipt(
+        receipt,
+        request_id=request.request_id,
+        provider_receipt_ref="provider-1",
+        provider_message_ref="message-1",
+        attempt=1,
+    ) is True
+    assert backend.record_receipt(
+        receipt,
+        request_id=request.request_id,
+        provider_receipt_ref="provider-1",
+        provider_message_ref="message-1",
+        attempt=1,
+    ) is False
+
+    with pytest.raises(ValueError, match="collision"):
+        backend.record_receipt(
+            receipt,
+            request_id=request.request_id,
+            provider_receipt_ref="provider-1",
+            provider_message_ref="message-1",
+            attempt=2,
+        )
+    backend.close()
