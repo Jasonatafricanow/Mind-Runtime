@@ -370,7 +370,9 @@ class MindRuntimeHostAdapter:
     abort_turn / recover API.
 
     Host-level replay/idempotency is implemented via an in-memory
-    terminal record store. When `begin_turn` is called with an
+    terminal record store (full result and payload check, current process
+    only) backed by the durable commit marker (survives restart; committed
+    turns only, payload not verifiable). When `begin_turn` is called with an
     `interaction_id` that is already terminal, the adapter returns
     ALREADY_PROCESSED without re-entering the cognition pipeline.
     """
@@ -396,6 +398,10 @@ class MindRuntimeHostAdapter:
         # interaction_id across namespaces fails closed rather than exposing
         # another scope's bounded context.
         self._terminal: dict[tuple[str, Scope, str], _TerminalRecord] = {}
+        # Interactions whose COMMITTED outcome is known only from the durable
+        # commit marker (e.g. after a process restart emptied ``_terminal``).
+        # Maps (scope, interaction_id) -> turn_id handed back to the Host.
+        self._durable_commits: dict[tuple[Scope, str], str] = {}
         # One orchestrator owns one active turn, so pending Host requests may
         # be indexed by interaction_id while the turn is non-terminal.
         self._pending_requests: dict[str, HostTurnRequest] = {}
@@ -415,6 +421,8 @@ class MindRuntimeHostAdapter:
         terminal = self._terminal.get(_replay_key(request))
         if terminal is not None:
             return self._handle_replay(request, terminal)
+        if self._has_durable_commit(request.scope, request.interaction_id):
+            return self._handle_durable_replay(request)
         if any(
             record.interaction_id == request.interaction_id
             for record in self._terminal.values()
@@ -481,6 +489,42 @@ class MindRuntimeHostAdapter:
                 debug_ref=f"debug-{request.interaction_id}",
                 reason_codes=("begin_failed", type(exc).__name__),
             )
+
+    def _has_durable_commit(self, scope: Scope, interaction_id: str) -> bool:
+        markers = getattr(self._orchestrator, "commit_marker_store", None)
+        if markers is None:
+            return False
+        return bool(markers.has_commit(interaction_id=interaction_id, scope=scope))
+
+    def _handle_durable_replay(self, request: HostTurnRequest) -> HostTurnResult:
+        """Replay of an interaction committed in a previous process.
+
+        Only the durable commit marker survives a restart: the original payload
+        and bounded context are gone, so payload equality cannot be verified.
+        Report the turn as already committed and never re-enter the pipeline.
+        """
+        turn_id = f"turn-{request.interaction_id}"
+        self._durable_commits[(request.scope, request.interaction_id)] = turn_id
+        return HostTurnResult(
+            turn_id=turn_id,
+            interaction_id=request.interaction_id,
+            status=HostTurnStatus.ALREADY_PROCESSED,
+            outcome=HostStatus.ALREADY_PROCESSED,
+            bounded_context=None,
+            decision_context_ref=None,
+            expression_ref=None,
+            debug_ref=f"debug-{request.interaction_id}",
+            reason_codes=("replay", "no_reentry", "durable_marker_only", "payload_unverified"),
+        )
+
+    def _durable_commit_turn_id(self, turn_id: str, interaction_id: str) -> str | None:
+        """Turn id if this (turn, interaction) was committed per the durable marker."""
+        if self._current_turn_matches(turn_id=turn_id, interaction_id=interaction_id):
+            return None
+        for (scope, iid), tid in self._durable_commits.items():
+            if iid == interaction_id and tid == turn_id:
+                return tid if self._has_durable_commit(scope, iid) else None
+        return None
 
     def _handle_replay(self, request: HostTurnRequest, terminal: _TerminalRecord) -> HostTurnResult:
         """Handle a replay of a terminal interaction_id.
@@ -584,6 +628,15 @@ class MindRuntimeHostAdapter:
     # ----- commit_turn -------------------------------------------------
 
     def commit_turn(self, request: HostCommitRequest) -> HostCommitReceipt:
+        if self._durable_commit_turn_id(request.turn_id, request.interaction_id) is not None:
+            return HostCommitReceipt(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostStatus.OK,
+                committed_at=datetime.now(UTC),
+                commit_marker_ref=f"commit-marker-{request.interaction_id}",
+                reason_codes=("already_committed", "durable_marker_only"),
+            )
         try:
             terminal = self._bind_turn_operation(
                 turn_id=request.turn_id,
@@ -723,6 +776,15 @@ class MindRuntimeHostAdapter:
     # ----- abort_turn --------------------------------------------------
 
     def abort_turn(self, request: HostAbortRequest) -> HostAbortReceipt:
+        if self._durable_commit_turn_id(request.turn_id, request.interaction_id) is not None:
+            return HostAbortReceipt(
+                turn_id=request.turn_id,
+                interaction_id=request.interaction_id,
+                status=HostStatus.FAILED,
+                aborted_at=datetime.now(UTC),
+                ingested_facts_retained=True,
+                reason_codes=("cannot_abort_committed", "durable_marker_only"),
+            )
         try:
             terminal = self._bind_turn_operation(
                 turn_id=request.turn_id,
