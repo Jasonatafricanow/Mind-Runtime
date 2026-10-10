@@ -1,5 +1,7 @@
 # ADR-0018-R2: C10-B — Production Longitudinal Target Authority
 
+> **SUPERSEDED — 2026-10-11.** This ADR registers numeric longitudinal (slow) dimensions and routes contributions to the `slow_plasticity` writer defined by ADR-0017. Both are replaced by the 2026-10-10 decision: the Body LLM is the first semantic authority; slow state is carried as experience narrative, and numeric values are used only for fast state. Kept as design history; the routing code is still on `main` and has not been removed yet.
+
 **Authority:** C10-B
 **Title:** Production Longitudinal Target — How production manifests register
 longitudinal dimensions, how the upstream pipeline routes contributions to the

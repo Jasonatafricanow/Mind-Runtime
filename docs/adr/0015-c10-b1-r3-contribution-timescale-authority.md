@@ -1,5 +1,7 @@
 # ADR-0015 — C10-B1-R3 Contribution Timescale Authority Contract
 
+> **PARTIALLY SUPERSEDED — 2026-10-11.** The slow / longitudinal half of this contract (numeric contributions routed into slow plasticity) is replaced by the 2026-10-10 decision: the Body LLM is the first semantic authority; slow state is carried as experience narrative, and numeric values are used only for fast state. The fast-state parts are not affected by that decision. Kept as design history.
+
 **Status:** ACCEPTED (pending independent review per C10-B1-R3 §18)
 **Ticket:** C10-B1-R3
 **Author:** ZCode

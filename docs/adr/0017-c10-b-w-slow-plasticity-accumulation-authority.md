@@ -1,5 +1,7 @@
 # ADR-0017 — C10-B-W Slow Plasticity Accumulation Authority
 
+> **SUPERSEDED — 2026-10-11.** The numeric slow-state design in this ADR (per-dimension values in [0, 1], absolute-target window aggregation, `slow_plasticity` writer) is no longer the architecture. Decision by the project owner on 2026-10-10: the Body LLM is the first semantic authority; slow state is carried as experience narrative, and numeric values are used only for fast state. This ADR is kept as design history. The code it governs (`src/mind_runtime/slow_plasticity/`, `src/mind_runtime/homeostasis/`) is still on `main` and has not been removed yet.
+
 > **2026-09-28 authority clarification**
 >
 > The earlier "Step C / future SlowDynamicsPolicy" wording below is retained as
