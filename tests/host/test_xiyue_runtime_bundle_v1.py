@@ -79,7 +79,7 @@ class TestPureReadinessEvaluator:
         assert res.get("core_ready") is False
 
     def test_evaluator_does_not_check_gateway_alive_via_current_process(self):
-        """The 5 MR core components must not contain gateway_alive."""
+        """Enabled MR component readiness must not contain gateway_alive."""
         _, checks, _ = mr_seam.evaluate_mr_core_readiness()
         assert "gateway_alive" not in checks, "gateway_alive must not be in MR core checks!"
         expected_keys = {
@@ -88,6 +88,7 @@ class TestPureReadinessEvaluator:
             "semantic_provider_available",
             "appraisal_provider_available",
             "slow_writer_active",
+            "lce_projection_current",
         }
         assert set(checks.keys()) == expected_keys
 

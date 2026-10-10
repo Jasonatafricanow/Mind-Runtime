@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import xiyue.mr_seam as mr_seam
 from tests.golden.fixtures.common import make_state
 
 from mind_runtime.contracts import Scope, ScopeDomain
@@ -278,3 +279,116 @@ class TestNoSessionCoupling:
         assert markers.has_commit(interaction_id=h1.interaction_id, scope=scope)
         assert markers.has_commit(interaction_id=h2.interaction_id, scope=scope)
         assert markers.has_commit(interaction_id=h3.interaction_id, scope=scope)
+
+
+def test_lce_enabled_readiness_requires_completed_warm_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mr_seam, "_RUNTIME_DIR", tmp_path)
+    monkeypatch.setenv("MR_ENABLED", "true")
+    monkeypatch.setenv("MR_LCE_ENABLED", "true")
+    monkeypatch.setenv("GLM_API_KEY", "test")
+    monkeypatch.setenv("APPRAISAL_API_KEY", "test")
+    monkeypatch.setattr(
+        mr_seam,
+        "_load_production_composition",
+        lambda: {
+            "semantic_provider": object(),
+            "appraisal_producer": object(),
+            "slow_plasticity_window_size": 8,
+        },
+    )
+
+    monkeypatch.setattr(mr_seam, "_lce_startup_current", False)
+    ready, checks, reasons = mr_seam.evaluate_mr_core_readiness(
+        adapter=object(),
+    )
+    assert not ready
+    assert not checks["lce_projection_current"]
+    assert "lce_projection_not_reconciled" in reasons
+
+    monkeypatch.setattr(mr_seam, "_lce_startup_current", True)
+    ready, checks, reasons = mr_seam.evaluate_mr_core_readiness(
+        adapter=object(),
+    )
+    assert ready
+    assert checks["lce_projection_current"]
+    assert "lce_projection_not_reconciled" not in reasons
+
+
+def test_dirty_lce_projection_blocks_xiyue_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MR_ENABLED", "true")
+    monkeypatch.setenv("MR_LCE_ENABLED", "true")
+    monkeypatch.setattr(
+        mr_seam,
+        "_lce_projection_dirty",
+        lambda: True,
+    )
+
+    verdict = mr_seam.check_ingress_admission(
+        profile="xiyue",
+        source_occurred_at=None,
+    )
+
+    assert not verdict.admitted
+    assert verdict.status == "NOT_READY"
+    assert verdict.reason == "lce_projection_pending_reconcile"
+
+
+def test_lce_refresh_repairs_dirty_projection_and_skips_clean_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import mind_runtime.integrations.lce_projection as integration
+
+    binding = object()
+    scope = object()
+    monkeypatch.setattr(
+        mr_seam,
+        "_lce_runtime_required",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        mr_seam,
+        "_lce_binding_scope",
+        lambda *, create_storage: (binding, scope),
+    )
+    monkeypatch.setattr(
+        integration,
+        "lce_projection_reconcile_required",
+        lambda *_args, **_kwargs: True,
+    )
+    calls = []
+
+    def reconciled(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(current=True)
+
+    monkeypatch.setattr(
+        integration,
+        "reconcile_lce_projection",
+        reconciled,
+    )
+    monkeypatch.setattr(mr_seam, "_lce_startup_current", False)
+
+    assert mr_seam._refresh_lce_projection_current()
+    assert mr_seam._lce_startup_current is True
+    assert len(calls) == 1
+
+    monkeypatch.setattr(
+        integration,
+        "lce_projection_reconcile_required",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        integration,
+        "reconcile_lce_projection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("clean projection must not reconcile")
+        ),
+    )
+    assert mr_seam._refresh_lce_projection_current()
