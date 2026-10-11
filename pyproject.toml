@@ -15,6 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+history-sidecar = [
+  "mr-mem @ git+https://github.com/Jasonatafricanow/MR-Mem.git@1711fad7786f8a540899406575684225677ff2ee",
+]
 memory-vector = ["qdrant-client==1.19.0", "fastembed==0.8.0"]
 test = ["pytest>=8.3,<10", "httpx2>=2,<3"]
 dev = [
