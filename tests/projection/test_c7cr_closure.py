@@ -1022,3 +1022,125 @@ def test_mig4_legacy_db_with_known_action_type_backfills_deterministically(
         ).fetchone()
         assert rows[0] == 0
     store.close()
+
+
+# ============================================================================
+# Focused authority-edge contracts migrated from coverage-only suites.
+# ============================================================================
+
+def test_opf_rejects_missing_scope_and_forged_source_id() -> None:
+    from mind_runtime.facts.service import OperationalFactAdmission
+
+    request = _build_request(idempotency_key="opf-edge")
+    receipt = _accepted_receipt(request)
+
+    class _NoScope:
+        action_type = "proactive_message"
+
+    with pytest.raises(ValueError, match="must both carry a scope"):
+        OperationalFactAdmission.validate_scope(
+            evidence_scope=SCOPE,
+            request=_NoScope(),
+            receipt=receipt,
+        )
+
+    evidence = Evidence(
+        id="op-evidence-forged",
+        scope=SCOPE,
+        origin_runtime_id=RUNTIME,
+        source_type=OperationalFactAdmission.ALLOWED_SOURCE_TYPE,
+        source_id="not-the-receipt",
+        authority_level=AuthorityLevel.SYSTEM,
+        authority=Authority(
+            scope=SCOPE,
+            level=AuthorityLevel.SYSTEM,
+            source_id="not-the-receipt",
+        ),
+        occurred_at=NOW,
+        received_at=NOW,
+        payload={"key": "counter.last_proactive_at", "value": "1"},
+        sync=SyncFields(
+            SCOPE, RUNTIME, "op-evidence-forged", 1, "idem-opf-forged"
+        ),
+    )
+    with pytest.raises(ValueError, match="source_id must equal"):
+        OperationalFactAdmission.validate_authority(evidence, request, receipt)
+
+
+def test_operational_fact_requires_settled_timestamp_and_persists_idempotently(
+    tmp_path: Path,
+) -> None:
+    request = _build_request(idempotency_key="opf-persist")
+    receipt = _accepted_receipt(request)
+    missing_timestamp = replace(receipt, delivered_at=None)
+    service = FactIngestService(
+        clock=FakeClock(NOW),
+        backend=SqliteFactBackend(tmp_path / "opf-facts.sqlite"),
+    )
+
+    with pytest.raises(ValueError, match="receipt.delivered_at"):
+        service.admit_operational_fact(
+            key="counter.last_proactive_at",
+            value="1",
+            request=request,
+            receipt=missing_timestamp,
+        )
+
+    store = SqliteProjectionStore(tmp_path / "missing-settled-at.sqlite")
+    projector = SettledActionProjector(
+        fact_service=service,
+        projection_store=store,
+        clock=FakeClock(NOW),
+        runtime_id=RUNTIME,
+    )
+    try:
+        with pytest.raises(ValueError, match="receipt.delivered_at"):
+            projector.project(receipt=missing_timestamp, request=request)
+    finally:
+        store.close()
+
+    first = service.admit_operational_fact(
+        key="counter.last_proactive_at",
+        value="1",
+        request=request,
+        receipt=receipt,
+    )
+    second = service.admit_operational_fact(
+        key="counter.last_proactive_at",
+        value="1",
+        request=request,
+        receipt=receipt,
+    )
+    assert second == first
+    assert len(
+        [obs for obs in service.observations.all() if obs.id == first.id]
+    ) == 1
+
+
+def test_known_action_type_and_projector_unknown_type_fail_closed(
+    tmp_path: Path,
+) -> None:
+    from mind_runtime.facts.service import OperationalFactAdmission
+
+    assert OperationalFactAdmission.is_known_action_type("proactive_message")
+    assert OperationalFactAdmission.is_known_action_type("send_photo")
+    assert not OperationalFactAdmission.is_known_action_type("")
+    assert not OperationalFactAdmission.is_known_action_type("random")
+
+    request = _build_request(
+        idempotency_key="unknown-action",
+        action_type="random",
+    )
+    receipt = _accepted_receipt(request)
+    store = SqliteProjectionStore(tmp_path / "unknown-projection.sqlite")
+    projector = SettledActionProjector(
+        fact_service=FactIngestService(clock=FakeClock(NOW)),
+        projection_store=store,
+        clock=FakeClock(NOW),
+        runtime_id=RUNTIME,
+    )
+    try:
+        with pytest.raises(ValueError, match="not a known typed action"):
+            projector.project(receipt=receipt, request=request)
+    finally:
+        store.close()
