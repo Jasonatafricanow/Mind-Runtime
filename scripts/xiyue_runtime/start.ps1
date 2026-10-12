@@ -27,7 +27,7 @@ Write-Host "=================================================="
 Write-Host "[1/5] Checking operational environment..."
 
 # Try loading keys from User/Machine hive or .env if missing in current process
-$envVars = @("MR_ENABLED", "MR_SEMANTIC_PROVIDER", "GLM_API_KEY", "APPRAISAL_API_KEY")
+$envVars = @("MR_ENABLED", "MR_MEMORY_ENABLED", "MR_LCE_ENABLED", "MR_LCE_INSPIRATION_ENABLED", "MR_SEMANTIC_PROVIDER", "GLM_API_KEY", "APPRAISAL_API_KEY")
 $profileEnv = Join-Path $hermesProfileDir ".env"
 $fileEnv = @{}
 if (Test-Path $profileEnv) {

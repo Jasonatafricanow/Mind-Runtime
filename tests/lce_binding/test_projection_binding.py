@@ -17,8 +17,11 @@ from mind_runtime.integrations.lce import open_lce_thread_handoff
 from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
+    LcePostCommitProjector,
     MrLceCanonicalSourceAdapter,
+    lce_projection_reconcile_required,
     open_lce_projection_binding,
+    reconcile_lce_projection,
 )
 from mind_runtime.memory.product import MemoryProductStore
 from mind_runtime.memory.store import CanonicalMemoryStore
@@ -548,3 +551,281 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.reserve_next("wake-durable") is None
         assert reopened.release_for_wake("wake-durable") is None
 
+
+def test_source_identity_changes_when_interaction_memory_membership_changes(
+    projection_plane,
+) -> None:
+    _, _, paths, memories = projection_plane
+    source = _source(projection_plane)
+    before = source.list_current_valid_evidence()
+    base = memories[0]
+    old = next(
+        item for item in before
+        if base.memory_id in item.provenance["memory_ids"]
+    )
+    assert old.evidence_id.startswith("mr-source:v2:")
+
+    clone_id = "same-interaction-v2-membership"
+    clone = replace(
+        base,
+        memory_id=clone_id,
+        content="second committed Memory in the same interaction",
+        sync=replace(
+            base.sync,
+            object_id=clone_id,
+            idempotency_key=clone_id,
+        ),
+    )
+    store = CanonicalMemoryStore(paths.memory_db)
+    try:
+        store._commit((clone,))
+    finally:
+        store.close()
+
+    after = source.list_current_valid_evidence()
+    new = next(
+        item for item in after
+        if base.memory_id in item.provenance["memory_ids"]
+    )
+    assert new.evidence_id != old.evidence_id
+    assert set(new.provenance["memory_ids"]) == {
+        base.memory_id,
+        clone_id,
+    }
+
+
+def test_warm_reconcile_retires_old_source_identity_and_catches_up(
+    projection_plane,
+) -> None:
+    binding, roots, paths, memories = projection_plane
+    first = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None
+    with first:
+        first.sync_all()
+        old_sources = {
+            item.evidence_id
+            for item in first.core.memory.list_current_valid_evidence()
+        }
+
+    base = memories[0]
+    clone_id = "warm-reconcile-new-member"
+    clone = replace(
+        base,
+        memory_id=clone_id,
+        content="new member changes the grouped source identity",
+        sync=replace(
+            base.sync,
+            object_id=clone_id,
+            idempotency_key=clone_id,
+        ),
+    )
+    store = CanonicalMemoryStore(paths.memory_db)
+    try:
+        store._commit((clone,))
+    finally:
+        store.close()
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        report = reopened.reconcile_canonical(
+            cutoff=max(
+                memory.committed_at for memory in (*memories, clone)
+            ) + timedelta(days=1),
+        )
+        current_sources = {
+            item.evidence_id
+            for item in reopened.core.memory.list_current_valid_evidence()
+        }
+        current_block_sources = {
+            evidence_id
+            for block in reopened.core.memory.list_semantic_blocks(
+                current_valid_only=True
+            )
+            for evidence_id in block.raw_evidence_ids
+        }
+
+    assert report.canonical_sources == 3
+    assert report.processed_sources == 3
+    assert set(report.stale_sources) & old_sources
+    assert current_sources != old_sources
+    assert current_block_sources <= current_sources
+
+
+def test_post_commit_projector_projects_complete_interaction_group(
+    projection_plane,
+) -> None:
+    binding, roots, _, memories = projection_plane
+    projector = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    projected = projector.project_interaction(
+        scope=make_scope(),
+        interaction_id=memories[0].provenance.interaction_id,
+    )
+    assert projected == 1
+
+    reopened = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reopened is not None
+    with reopened:
+        matching = tuple(
+            item
+            for item in reopened.core.memory.list_current_valid_evidence()
+            if memories[0].memory_id in item.provenance["memory_ids"]
+        )
+        assert len(matching) == 1
+        assert (
+            reopened.core.memory.get_pipeline_stage(
+                matching[0].evidence_id
+            )
+            == "complete"
+        )
+
+
+def test_warm_reconcile_wrapper_persists_clean_consumer_state(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    assert lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    first = reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert first is not None
+    assert first.current
+    assert not lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    # Process-local warm-start cache is safe only while the durable dirty bit
+    # remains clear.
+    second = reconcile_lce_projection(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert second == first
+
+
+def test_post_commit_failure_stays_dirty_until_retry_reconciles(
+    projection_plane,
+    monkeypatch,
+) -> None:
+    import mind_runtime.integrations.lce_projection as integration
+
+    binding, roots, _, memories = projection_plane
+    projector = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    original_open = integration.open_lce_projection_binding
+
+    def fail_open(*args, **kwargs):
+        raise RuntimeError("synthetic LCE outage")
+
+    monkeypatch.setattr(
+        integration,
+        "open_lce_projection_binding",
+        fail_open,
+    )
+    with pytest.raises(RuntimeError, match="synthetic LCE outage"):
+        projector.project_interaction(
+            scope=make_scope(),
+            interaction_id=memories[0].provenance.interaction_id,
+        )
+    assert lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+    monkeypatch.setattr(
+        integration,
+        "open_lce_projection_binding",
+        original_open,
+    )
+    assert projector.project_interaction(
+        scope=make_scope(),
+        interaction_id=memories[0].provenance.interaction_id,
+    ) >= 0
+    assert not lce_projection_reconcile_required(
+        binding,
+        make_scope(),
+        **roots,
+    )
+
+
+def test_post_commit_projector_noop_and_identity_validation(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    disabled = LcePostCommitProjector(
+        binding,
+        enabled=False,
+        **roots,
+    )
+    assert disabled.project_interaction(
+        scope=make_scope(),
+        interaction_id="anything",
+    ) == 0
+
+    enabled = LcePostCommitProjector(
+        binding,
+        enabled=True,
+        **roots,
+    )
+    with pytest.raises(ValueError, match="interaction_id"):
+        enabled.project_interaction(
+            scope=make_scope(),
+            interaction_id="",
+        )
+
+    # A terminal turn with no canonical Memory is harmless, but if a previous
+    # projection is dirty this same seam is also allowed to perform recovery.
+    assert enabled.project_interaction(
+        scope=make_scope(),
+        interaction_id="missing-interaction",
+    ) == 0
+
+
+def test_disabled_warm_reconcile_has_no_sync_state_side_effect(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    assert (
+        reconcile_lce_projection(
+            binding,
+            make_scope(),
+            enabled=False,
+            **roots,
+        )
+        is None
+    )

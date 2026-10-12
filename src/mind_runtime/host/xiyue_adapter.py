@@ -383,6 +383,21 @@ def default_adapter(
         )
     validate_storage_namespace(binding.storage_namespace)
     paths = bind_storage(binding)
+    if lce_enabled:
+        from mind_runtime.integrations.lce_projection import (
+            reconcile_lce_projection,
+        )
+        from mind_runtime.memory.store import CanonicalMemoryStore
+
+        # First boot may not have admitted Memory yet. Establish the empty
+        # canonical store, then prove any existing LCE projection is current
+        # before this adapter starts serving turns.
+        CanonicalMemoryStore(paths.memory_db).close()
+        reconcile_lce_projection(
+            binding,
+            Scope(domain=ScopeDomain.USER, user_id="user"),
+            enabled=True,
+        )
     facts_db = str(paths.facts_db)
     state_db = str(paths.state_db)
     intent_db = str(paths.root / "intents.sqlite") if intent_rules is not None else None

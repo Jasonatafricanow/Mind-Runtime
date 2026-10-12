@@ -323,6 +323,7 @@ def build_runtime_stack(
             "LCE inspiration requires both memory_enabled and lce_enabled"
         )
     thread_updates = None
+    memory_post_commit_projection = None
     if memory_enabled:
         from mind_runtime.memory.composition import (
             build_bound_fact_service,
@@ -342,8 +343,15 @@ def build_runtime_stack(
         thread_projection_compiler = None
         if lce_enabled:
             from mind_runtime.integrations.lce import LceThreadProjectionCompiler
+            from mind_runtime.integrations.lce_projection import (
+                LcePostCommitProjector,
+            )
 
             thread_projection_compiler = LceThreadProjectionCompiler(
+                binding=memory_binding,
+                enabled=True,
+            )
+            memory_post_commit_projection = LcePostCommitProjector(
                 binding=memory_binding,
                 enabled=True,
             )
@@ -466,6 +474,7 @@ def build_runtime_stack(
         policy_resources=turn_policy_resources,
         expression_guard=expression_guard,
         thread_updates=thread_updates,
+        memory_post_commit_projection=memory_post_commit_projection,
         # MR-RUNTIME-05: enroll the stack in the process-local, per-namespace
         # canonical admission authority — whole turns on this namespace are
         # serialized and each admitted turn refreshes from the durable base.

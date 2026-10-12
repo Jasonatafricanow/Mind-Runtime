@@ -159,7 +159,7 @@ general-purpose longitudinal cognition is solved.
 ## 2026-09-29 current-LCE implementation addendum
 The original compatibility pin above is preserved as historical binding
 authority. MR now verifies the current LCE revision
-`f6a4bc8164a65e69845444a7b697f8a1af0cd626` in CI.
+`cc72a21bf52f26659db02e6d8f6fcbae052a2a62` in CI.
 
 The factual authority decision is unchanged: MR canonical Memory remains the
 source and LCE remains derived cognition only. The newer LCE external-source
