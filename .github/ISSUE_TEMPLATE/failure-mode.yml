@@ -1,0 +1,82 @@
+name: Long-horizon failure mode
+description: Report a reproducible failure involving memory, authority, replay, restart, or state over time.
+title: "[failure] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep the report concrete. A short event sequence plus one violated invariant is enough.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Failure category
+      options:
+        - Self-authorizing feedback
+        - Replay or duplicate amplification
+        - Pending/canonical leakage
+        - Contradiction or supersession
+        - Restart or model-swap continuity
+        - Retrieval/authority confusion
+        - Semantic extraction false positive
+        - Scope or ownership leakage
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: sequence
+    attributes:
+      label: Minimal event sequence
+      description: List the smallest sequence of turns/events that reproduces the problem.
+      placeholder: |
+        1. User states ...
+        2. Runtime derives ...
+        3. Next turn/restart ...
+        4. Unexpected state ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariant
+    attributes:
+      label: Expected invariant
+      description: State what must remain true.
+      placeholder: "Derived output must not become new independent evidence."
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source_kind
+    attributes:
+      label: Source that first introduced the information
+      options:
+        - User/external evidence
+        - Retrieved memory
+        - Model inference
+        - Assistant expression
+        - Projected/pending runtime state
+        - Tool/provider output
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Test or reproduction
+      description: Link a branch/commit, paste a minimal pytest sketch, or name the existing test that is closest.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
+      description: Include restart/model/provider details only if they materially affect the failure.
