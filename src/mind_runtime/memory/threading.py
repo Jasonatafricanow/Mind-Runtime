@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 
 from mind_runtime.contracts import Scope, SemanticEventCandidate
 from mind_runtime.contracts.common import require_aware_utc
+from mind_runtime.decision import DecisionCapability
 from mind_runtime.memory.contracts import CommittedMemory, MemoryLifecycle
 from mind_runtime.memory.product import (
     MAX_THREAD_CURRENT_SUPPORT,
@@ -26,6 +27,10 @@ from mind_runtime.memory.product import (
 )
 from mind_runtime.memory.providers.bm25 import lexical_tokens
 from mind_runtime.memory.store import CanonicalMemoryStore, scope_json
+from mind_runtime.memory.thread_decision_projection import (
+    ThreadIdentityCandidate,
+    ThreadIdentityDecisionProjection,
+)
 
 
 class ThreadSignalAction(StrEnum):
@@ -138,6 +143,9 @@ class ThreadAutoUpdateService:
         product: MemoryProductStore,
         minimum_match: float = 0.30,
         projection_compiler: ThreadProjectionCompiler | None = None,
+        decision: DecisionCapability | None = None,
+        deterministic_match: float = 0.60,
+        ambiguity_margin: float = 0.15,
     ) -> None:
         if (
             isinstance(minimum_match, bool)
@@ -145,10 +153,31 @@ class ThreadAutoUpdateService:
             or not 0 <= minimum_match <= 1
         ):
             raise ValueError("minimum_match must be in [0, 1]")
+        if (
+            isinstance(deterministic_match, bool)
+            or not isinstance(deterministic_match, (int, float))
+            or not minimum_match <= deterministic_match <= 1
+        ):
+            raise ValueError(
+                "deterministic_match must be in [minimum_match, 1]"
+            )
+        if (
+            isinstance(ambiguity_margin, bool)
+            or not isinstance(ambiguity_margin, (int, float))
+            or not 0 <= ambiguity_margin <= 1
+        ):
+            raise ValueError("ambiguity_margin must be in [0, 1]")
         self._canonical = canonical
         self._product = product
         self._minimum_match = float(minimum_match)
+        self._deterministic_match = float(deterministic_match)
+        self._ambiguity_margin = float(ambiguity_margin)
         self._projection_compiler = projection_compiler
+        self._identity_projection = (
+            ThreadIdentityDecisionProjection(decision)
+            if decision is not None
+            else None
+        )
 
     def close(self) -> None:
         self._product.close()
@@ -366,7 +395,61 @@ class ThreadAutoUpdateService:
                     score = len(query_tokens & candidate_tokens) / smallest
             if score >= self._minimum_match:
                 ranked.append((score, thread.updated_at, thread.thread_id, thread))
-        if not ranked:
-            return None
-        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        return ranked[0][3]
+        ranked.sort(
+            key=lambda item: (item[0], item[1], item[2]),
+            reverse=True,
+        )
+        projection = self._identity_projection
+        if projection is None or not projection.available:
+            return ranked[0][3] if ranked else None
+
+        # Keep exact/strong deterministic identity cheap. Use Decision Plane
+        # only when lexical identity is weak, absent, or genuinely ambiguous.
+        if ranked:
+            top_score = ranked[0][0]
+            second_score = ranked[1][0] if len(ranked) > 1 else None
+            unambiguous = (
+                top_score >= self._deterministic_match
+                and (
+                    second_score is None
+                    or top_score - second_score
+                    >= self._ambiguity_margin
+                )
+            )
+            if unambiguous:
+                return ranked[0][3]
+
+        candidates = tuple(
+            ThreadIdentityCandidate(
+                thread=thread,
+                support_text=" ".join(
+                    memory.content
+                    for memory_id in thread.current_support_ids
+                    if (
+                        memory := self._canonical.get(memory_id)
+                    )
+                    is not None
+                ),
+            )
+            for thread in threads
+        )
+        resolution = projection.choose(
+            question=question,
+            summary=summary,
+            candidates=candidates,
+        )
+        if resolution.decided:
+            if resolution.thread_id is None:
+                return None
+            return next(
+                (
+                    thread
+                    for thread in threads
+                    if thread.thread_id == resolution.thread_id
+                ),
+                None,
+            )
+
+        # Decision compute is optional. Unavailable or low-confidence compute
+        # preserves the pre-existing deterministic result.
+        return ranked[0][3] if ranked else None

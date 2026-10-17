@@ -550,6 +550,7 @@ class LceReadSession:
     _projection_reader: Any | None = None
     _projection_substrate: Any | None = None
     _projection_source: Any | None = None
+    _projection_rejections: Any | None = None
 
     @property
     def db_path(self) -> Path:
@@ -626,6 +627,8 @@ class LceReadSession:
         return tuple(ordered[:limit])
 
     def close(self) -> None:
+        if self._projection_rejections is not None:
+            self._projection_rejections.close()
         if self._projection_substrate is not None:
             self._projection_substrate.close()
         self._store.close()
@@ -775,6 +778,7 @@ def open_lce_read_binding(
     projection_reader = None
     projection_substrate = None
     projection_source = None
+    projection_rejections = None
     projection_db = (
         _scope_lce_root(adapter)
         / "projection_state"
@@ -782,6 +786,9 @@ def open_lce_read_binding(
     )
     if root == current_root and projection_db.exists():
         try:
+            from lce.cognition.rejection import (
+                DerivedProposalRejectionStore,
+            )
             from lce.read_api import AcceptedUnderstandingReadAPI
             from lce.reference_memory.composite import ProjectionSubstrate
             from lce.reference_memory.projection_state import (
@@ -806,9 +813,19 @@ def open_lce_read_binding(
             close_source=False,
             close_state=True,
         )
+        rejection_db = (
+            _scope_lce_root(adapter)
+            / "corrections"
+            / "derived_rejections.sqlite"
+        )
+        if rejection_db.exists():
+            projection_rejections = DerivedProposalRejectionStore(
+                _scope_lce_root(adapter) / "corrections"
+            )
         projection_reader = AcceptedUnderstandingReadAPI(
             memory=projection_substrate,
             baseline_store=store,
+            rejection_store=projection_rejections,
         )
     return LceReadSession(
         adapter,
@@ -816,6 +833,7 @@ def open_lce_read_binding(
         projection_reader,
         projection_substrate,
         projection_source,
+        projection_rejections,
     )
 
 

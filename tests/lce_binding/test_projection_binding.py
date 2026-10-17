@@ -11,9 +11,14 @@ import pytest
 pytest.importorskip("lce", reason="optional current lce-core package is not installed")
 
 from lce.cognition.inspiration import InspirationKind, InspirationPackage
+from lce.contracts.baseline import Baseline, compute_content_hash
+from lce.reference_memory.contracts import AuthorizedSelectedSupport
 
 from mind_runtime.cognition import CognitiveMode
-from mind_runtime.integrations.lce import open_lce_thread_handoff
+from mind_runtime.integrations.lce import (
+    open_lce_read_binding,
+    open_lce_thread_handoff,
+)
 from mind_runtime.integrations.lce_inspiration import LceInspirationBackgroundWorker
 from mind_runtime.integrations.lce_projection import (
     LceInspirationMaterial,
@@ -548,3 +553,75 @@ def test_background_worker_reservation_survives_worker_reopen(
         assert reopened.reserve_next("wake-durable") is None
         assert reopened.release_for_wake("wake-durable") is None
 
+
+
+
+def test_embedded_read_honors_exact_support_rejection(
+    projection_plane,
+) -> None:
+    binding, roots, _, _ = projection_plane
+    projection = open_lce_projection_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert projection is not None
+    with projection:
+        projection.sync_all()
+        block = projection.core.memory.list_semantic_blocks()[0]
+        assert block.state_id is not None
+        content = "Rejected derived cognition about canonical path B facts."
+        projection.core.baselines.save_revision(
+            Baseline(
+                baseline_id="rejection-binding-baseline",
+                region_id="rejection-binding-region",
+                revision_number=1,
+                content=content,
+                content_hash=compute_content_hash(content),
+                supporting_memory_ids=(block.block_id,),
+                supporting_state_ids=(block.state_id,),
+                selected_support=(
+                    AuthorizedSelectedSupport(
+                        block_id=block.block_id,
+                        state_id=block.state_id,
+                    ),
+                ),
+                created_at=block.derived_known_at
+                or block.occurred_end,
+            )
+        )
+        assert any(
+            item.region_id == "rejection-binding-region"
+            for item in projection.accepted_understandings(
+                "Rejected derived cognition",
+                limit=20,
+            )
+        )
+        projection.core.reject_current_understanding(
+            "rejection-binding-region",
+            authority_ref="user-correction-fixture",
+        )
+        assert all(
+            item.region_id != "rejection-binding-region"
+            for item in projection.accepted_understandings(
+                "Rejected derived cognition",
+                limit=20,
+            )
+        )
+
+    reader = open_lce_read_binding(
+        binding,
+        make_scope(),
+        enabled=True,
+        **roots,
+    )
+    assert reader is not None
+    with reader:
+        assert all(
+            item.region_id != "rejection-binding-region"
+            for item in reader.accepted_understandings(
+                "Rejected derived cognition",
+                limit=20,
+            )
+        )
