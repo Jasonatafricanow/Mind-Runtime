@@ -13,8 +13,8 @@ The audit scanned all 265 tracked test modules under `tests` and `xiyue/tests`:
 3,975 cases from 3,060 functions; parameter expansion accounts for 915 extra cases.
 Collection executes no test bodies. `historical/tests` is a separate offline suite.
 
-Removing docstrings and comparing AST bodies found 7 groups with 9 excess
-definitions, unchanged after local-variable normalization. Ignoring literal values
+Removing docstrings and comparing AST bodies found 6 groups with 8 excess
+definitions; local-variable normalization found 7 groups with 9 excess definitions. Ignoring literal values
 as well produced 41 candidate groups containing 91 definitions. These are candidate
 counts, not redundancy counts: imports, fixtures and parameter values can change
 the contract. For example, recipe constants with identical names come from two
