@@ -272,6 +272,7 @@ def get_mr_adapter():
                 lce_enabled = inspiration_enabled or _env_enabled("MR_LCE_ENABLED")
                 memory_enabled = lce_enabled or _env_enabled("MR_MEMORY_ENABLED")
                 mr_mem_db = None
+                mr_mem_line_root = os.environ.get("MR_MEM_LINE_ROOT")
                 if _env_enabled("MR_MEM_READ_ENABLED") or _env_enabled("SEMANTIC_DELTA_V1_ENABLED"):
                     mr_mem_db = os.environ.get("MR_MEM_CANONICAL_DB")
                     if not mr_mem_db:
@@ -296,6 +297,7 @@ def get_mr_adapter():
                     telemetry_sink=get_trace_journal(),
                     memory_enabled=memory_enabled,
                     mr_mem_db=mr_mem_db,
+                    mr_mem_line_root=mr_mem_line_root,
                     lce_enabled=lce_enabled,
                     lce_inspiration_enabled=inspiration_enabled,
                 )

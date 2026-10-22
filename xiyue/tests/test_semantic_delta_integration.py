@@ -377,6 +377,11 @@ def test_native_flag_disconnects_legacy_online_memory_composition(
     monkeypatch.setenv("MR_ENABLED", "true")
     monkeypatch.setenv("MR_MEM_CANONICAL_DB", str(tmp_path / "canonical.sqlite"))
     monkeypatch.setenv("MR_MEM_READ_ENABLED", str(read_flag))
+    line_root = str(tmp_path / "lce_tree") if delta_flag or read_flag else None
+    if line_root is None:
+        monkeypatch.delenv("MR_MEM_LINE_ROOT", raising=False)
+    else:
+        monkeypatch.setenv("MR_MEM_LINE_ROOT", line_root)
     for name, value in [
         ("SEMANTIC_DELTA_V1_ENABLED", delta_flag),
         ("MR_MEMORY_ENABLED", legacy_flag),
@@ -396,6 +401,7 @@ def test_native_flag_disconnects_legacy_online_memory_composition(
         return
     assert mr_seam.get_mr_adapter() is not None
     assert recorded[0]["memory_enabled"] is expected
+    assert recorded[0]["mr_mem_line_root"] == line_root
     assert recorded[0]["mr_mem_db"] == (
         str(tmp_path / "canonical.sqlite") if delta_flag or read_flag else None
     )

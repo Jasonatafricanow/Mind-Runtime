@@ -17,7 +17,8 @@ SCOPE = Scope(ScopeDomain.USER, user_id="u1")
 MEM_SCOPE = MemScope(MemDomain.USER, user_id="u1")
 
 
-def admit(core, *, scope=MEM_SCOPE, known_at=NOW, key="one"):
+def admit(core, *, scope=MEM_SCOPE, known_at=NOW, key="one",
+          content="Daily reports should contain exceptions only."):
     ref = SourceRef("native", "session", key, NOW - timedelta(days=1), revision="1")
     admission = core.semantic_admission(
         sources=SimpleNamespace(current_ref=lambda s, r: ref if s == scope else None),
@@ -25,7 +26,7 @@ def admit(core, *, scope=MEM_SCOPE, known_at=NOW, key="one"):
     )
     # Explicit host-accepted fixture; no claim of automatic semantic correctness.
     return admission.admit(SemanticMemoryCandidate(
-        key, scope, "Daily reports should contain exceptions only.", (ref,), "fixture-v1",
+        key, scope, content, (ref,), "fixture-v1",
     ))
 
 
@@ -78,7 +79,10 @@ def test_missing_enabled_database_is_an_error_and_is_not_created(tmp_path):
     assert not path.exists()
 
 
-def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_graph", [False, True])
+def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(
+    tmp_path, monkeypatch, with_graph,
+):
     from mind_runtime import runtime_binding
     from mind_runtime.host.xiyue_adapter import default_adapter
     from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment
@@ -94,6 +98,7 @@ def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(tmp_
         storage_namespace="production/assembly-test", environment=RuntimeEnvironment.PRODUCTION,
     )
     db = tmp_path / "canonical.sqlite"
+    graph_root = tmp_path / "lce_tree" if with_graph else None
     native = tmp_path / "native.sqlite"
     with sqlite3.connect(native) as conn:
         conn.execute("CREATE TABLE messages(content TEXT)")
@@ -101,7 +106,7 @@ def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(tmp_
     with pytest.raises(sqlite3.OperationalError):
         default_adapter(binding=binding, mr_mem_db=native)
     assert native.read_bytes() == original
-    adapter = default_adapter(binding=binding, mr_mem_db=db)
+    adapter = default_adapter(binding=binding, mr_mem_db=db, mr_mem_line_root=graph_root)
     assert db.exists() and adapter._scope.user_id == "u1"
     host = adapter._port
     # Default deterministic turn ports are plumbing fixtures, not accepted algorithms.
@@ -111,13 +116,32 @@ def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(tmp_
     assert adapter.commit_turn(handle)
     with MemoryCore(db) as core:
         memory = admit(core)
-    restarted = default_adapter(binding=binding, mr_mem_db=db)
+        expected = [memory]
+        if with_graph:
+            from mr_mem.lce.path_a import Attachment, BlockLines, PathATree
+
+            changed = admit(core, key="two", content="Switch to weekly summaries instead.")
+            expected.append(changed)
+            tree = PathATree(graph_root, MEM_SCOPE, canonical=core.canonical,
+                             products=core.products, fingerprint="accepted-fixture")
+            tree.apply([
+                BlockLines(memory.memory_id, (Attachment(None, None, False, None),)),
+                BlockLines(changed.memory_id, (Attachment(None, "b1", True, None),)),
+            ], {}, NOW, open_matters=False)
+            tree.close()
+    restarted = default_adapter(binding=binding, mr_mem_db=db, mr_mem_line_root=graph_root)
     for current, mid in ((adapter, "new"), (restarted, "restart")):
         handle = current.begin_turn(message="Daily reports", channel="test", session_id="s",
                                     message_id=mid, occurred_at=NOW)
         assert handle is not None
         history = current._port.orchestrator._turn.situation.historical_context
-        assert history.episodes[0].external_id == memory.memory_id
+        if with_graph:
+            assert history.episodes[0].kind == "memory.line"
+            assert "Switch to weekly summaries instead." in history.episodes[0].proposition
+            assert "Recorded progression:" in history.episodes[0].proposition
+            assert len(history.source_refs) == 2
+        else:
+            assert history.episodes[0].external_id == memory.memory_id
         assert current.commit_turn(handle)
     # Replayed delivery never re-enters the pipeline or creates duplicate canonical memory.
     previous_turn = host.orchestrator._turn
@@ -126,7 +150,38 @@ def test_default_host_assembly_reads_sidecar_on_each_turn_and_after_restart(tmp_
     assert replay is not None
     assert host.orchestrator._turn is previous_turn
     with MemoryCore(db) as core:
-        assert core.load_all() == (memory,)
+        assert set(m.memory_id for m in core.load_all()) == {m.memory_id for m in expected}
+
+
+@pytest.mark.parametrize("boundary", ["hidden", "future", "other_scope"])
+def test_mr_graph_expansion_cannot_bypass_surface_policy(tmp_path, boundary):
+    from mr_mem.lce.path_a import Attachment, BlockLines, PathATree
+
+    db, root = tmp_path / "canonical.sqlite", tmp_path / "lce_tree"
+    with MemoryCore(db) as core:
+        first = admit(core)
+        second = admit(
+            core, key="two", content="Restricted successor text.",
+            known_at=NOW + timedelta(days=boundary == "future"),
+            scope=MemScope(MemDomain.USER, user_id="other") if boundary == "other_scope"
+            else MEM_SCOPE,
+        )
+        tree = PathATree(root, MEM_SCOPE, canonical=core.canonical,
+                         products=core.products, fingerprint="accepted-fixture")
+        # Even a malformed graph containing another scope must not leak its content.
+        tree.apply([
+            BlockLines(first.memory_id, (Attachment(None, None, False, None),)),
+            BlockLines(second.memory_id, (Attachment(None, "b1", True, None),)),
+        ], {}, NOW, open_matters=False)
+        tree.close()
+        if boundary == "hidden":
+            core.products.set_attention(second.memory_id, dont_surface=True)
+    files = [db, *root.rglob("*.sqlite")]
+    before = {p: p.read_bytes() for p in files}
+    bundle = read(MrMemHistoricalContext(db, line_root=root))
+    assert "Restricted successor" not in str(bundle)
+    assert bundle.source_refs == (first.provenance.source_refs[0].source_key,)
+    assert {p: p.read_bytes() for p in files} == before
 
 
 @pytest.mark.parametrize("options", [

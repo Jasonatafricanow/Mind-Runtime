@@ -41,10 +41,10 @@ Algorithm ports remain `SemanticCandidateProvider` and
 `SemanticAppraisalProducer(model=SemanticAppraisalModelPort)`. Provider configuration
 and a successful turn do not certify algorithm quality. Existing production
 readiness gates remain in force. Deterministic turn defaults are test scaffolding.
-Thread/Path A model semantics are not adopted into MR by this read adapter.
+Model inference quality is not certified by this read adapter.
 
-Verified dependency baseline: MR-Mem `0685a8a2498cc828c8d500be6f4673e53fa6dc24`.
-The assembly test also exercises the current isolated MR-Mem development shell.
+Canonical-only reading supports MR-Mem `0685a8a2498cc828c8d500be6f4673e53fa6dc24`.
+Line reading requires the paired development revision pinned in the host CI workflow.
 Use `xiyue/tests/test_mr_mem_history.py` and the existing semantic host integration
 suite to verify admission → read → commit/replay and failure isolation. No live
 model, personal host deployment or algorithm-quality certification is implied.
@@ -52,3 +52,9 @@ model, personal host deployment or algorithm-quality certification is implied.
 This is an implementation of the existing historical-context boundary, not a new
 external-memory authority gate (ADR-0013). Retrieval never becomes MR Evidence or
 direct canonical-state authority; the sidecar is the sole semantic-memory writer.
+
+To read the existing tree graph, also set the absolute `MR_MEM_LINE_ROOT` to the
+MR-Mem data directory's `lce_tree` folder. The same shared neighbourhood reader
+used by AML supplies `memory.line` historical context. Scope, known-at and MR
+automatic attention/lifecycle rules apply to every expanded step; graphs do not
+bypass suppression. See [the Line integration contract](assembly-line-context.md).

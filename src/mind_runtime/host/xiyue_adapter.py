@@ -320,6 +320,7 @@ def default_adapter(
     *,
     user_id: str | None = None,
     mr_mem_db: str | Path | None = None,
+    mr_mem_line_root: str | Path | None = None,
     persona: PersonaProfile | None = None,
     effect_rules: tuple[EventEffectRule, ...] = (),
     definitions: StateDefinitionRegistry | None = None,
@@ -374,6 +375,8 @@ def default_adapter(
     user_id = user_id if user_id is not None else os.environ.get("MR_USER_ID", "user")
     if not isinstance(user_id, str) or not user_id.strip():
         raise ValueError("MR user_id must be nonempty")
+    if mr_mem_line_root is not None and mr_mem_db is None:
+        raise ValueError("MR-Mem Line root requires its canonical database")
     if mr_mem_db is not None and (
         memory_enabled or lce_enabled or lce_inspiration_enabled or retrieval_provider is not None
     ):
@@ -410,7 +413,7 @@ def default_adapter(
             paths.facts_db.resolve(), paths.state_db.resolve(), paths.memory_db.resolve(),
         }:
             raise ValueError("standalone MR-Mem must use a separate canonical database")
-        history = MrMemHistoricalContext(mr_mem_db)
+        history = MrMemHistoricalContext(mr_mem_db, line_root=mr_mem_line_root)
         # Initialize the sidecar schema before the first MR read. Otherwise an
         # empty installation cannot begin the turn that would create its first memory.
         from mr_mem import MemoryCore
