@@ -33,8 +33,9 @@ legacy LCE flags reject composition instead of reading an incompatible schema.
 
 Every turn opens a fresh read-only MR-Mem snapshot. Scope, active lifecycle,
 attention suppression, known-at cutoff, source provenance and context budget
-are enforced. The host must still propagate source edits/deletions through
-MR-Mem's `invalidate_source`; this reader does not watch native databases.
+are enforced. The optional [native host wiring](assembly-native-memory.md)
+propagates source edits/deletions before reading; standalone consumers must still
+call MR-Mem's `invalidate_source`. The reader itself does not watch native databases.
 An enabled reader's storage failure is an error, not an empty successful result.
 
 Algorithm ports remain `SemanticCandidateProvider` and
