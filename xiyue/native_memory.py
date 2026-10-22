@@ -18,6 +18,10 @@ def enabled():
 def sync_native_memory(agent, source, session_id, adapter, *, compile_pending=False, compiler=None):
     if not enabled():
         return {"status": "disabled"}
+    if os.environ.get("MR_MEM_READ_ENABLED", "false").strip().lower() not in {
+        "true", "1", "on", "yes",
+    }:
+        raise ValueError("native writer requires MR_MEM_READ_ENABLED")
     from mr_mem import Scope, ScopeDomain
     from mr_mem_aml.config import RuntimeConfig
     from mr_mem_aml.native_ingest import NativeMemory

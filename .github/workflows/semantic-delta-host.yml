@@ -1,5 +1,9 @@
 name: semantic-delta-host
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -13,6 +17,6 @@ jobs:
       - run: python -m pip install -e '.[test]' ruff
       - name: Install exact MR-Mem assembly baseline
         # Publish this paired MR-Mem revision before running the remote MR job.
-        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@a73ab444d07d4e4769868183fe07e4b47951ba95'
-      - run: python -m ruff check xiyue/semantic_delta_*.py xiyue/apply_semantic_delta_patch.py xiyue/tests
+        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@3e15beb0c699d7818a5f719cfb94cc08f0a4ced2'
+      - run: python -m ruff check xiyue/semantic_delta_*.py xiyue/apply_semantic_delta_patch.py xiyue/native_memory*.py xiyue/apply_native_memory_patch.py xiyue/tests
       - run: python -m pytest -q xiyue/tests -p no:cacheprovider

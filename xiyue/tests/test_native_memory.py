@@ -63,6 +63,7 @@ def test_host_hooks_queue_compile_read_and_invalidate_other_session(tmp_path, mo
     config.write_text(json.dumps({"data_dir": str(data), "compiler": {"type": "disabled"},
                                   "path_a_engine": "tree", "placement": "points"}))
     for key, value in {"MR_MEM_NATIVE_ENABLED": "true", "MR_MEM_NATIVE_CONFIG": str(config),
+                       "MR_MEM_READ_ENABLED": "true",
                        "MR_MEM_CANONICAL_DB": str(data / "memory.sqlite"),
                        "MR_MEM_LINE_ROOT": str(data / "lce_tree"),
                        "SEMANTIC_DELTA_V1_ENABLED": "false"}.items():
@@ -88,6 +89,9 @@ def test_host_hooks_queue_compile_read_and_invalidate_other_session(tmp_path, mo
         changed = sync_native_memory(agent, source, "s2", adapter)
         assert changed["s1"]["invalidated_memories"] == 2
         assert history.read(port, scope=Scope(ScopeDomain.USER, user_id=SCOPE.user_id)) is None
+        monkeypatch.setenv("MR_MEM_READ_ENABLED", "false")
+        with pytest.raises(ValueError, match="MR_MEM_READ_ENABLED"):
+            sync_native_memory(agent, source, "s2", adapter)
     finally:
         db.conn.close()
 
