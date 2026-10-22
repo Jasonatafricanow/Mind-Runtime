@@ -2,6 +2,9 @@
 
 Mind Runtime is a Python runtime for keeping agent state across turns and process restarts.
 
+Standalone memory wiring and deferred algorithm boundaries: [assembly](docs/assembly.md)
+([中文](docs/assembly.zh-CN.md)).
+
 The repository currently implements persistent facts/state/intents/checkpoints, runtime identity and storage isolation, bounded memory retrieval, turn commit/abort handling, restart validation, telemetry, and a read-only Observation Window.
 
 ## Runtime shape

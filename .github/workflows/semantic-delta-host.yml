@@ -11,7 +11,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[test]' ruff
-      - name: Install exact MR-Mem prerequisite and PR-1 through PR-4
-        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@3f7356cdcc8a4b15ca81c59160e1b15a848015e8'
+      - name: Install exact MR-Mem assembly baseline
+        run: python -m pip install 'git+https://github.com/Jasonatafricanow/MR-Mem.git@0685a8a2498cc828c8d500be6f4673e53fa6dc24'
       - run: python -m ruff check xiyue/semantic_delta_*.py xiyue/apply_semantic_delta_patch.py xiyue/tests
       - run: python -m pytest -q xiyue/tests -p no:cacheprovider

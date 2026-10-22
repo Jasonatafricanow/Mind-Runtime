@@ -59,7 +59,7 @@ warn_unused_configs = true
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["curl_cffi", "curl_cffi.*", "lce", "lce.*"]
+module = ["curl_cffi", "curl_cffi.*", "lce", "lce.*", "mr_mem", "mr_mem.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

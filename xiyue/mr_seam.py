@@ -271,9 +271,13 @@ def get_mr_adapter():
                 inspiration_enabled = _env_enabled("MR_LCE_INSPIRATION_ENABLED")
                 lce_enabled = inspiration_enabled or _env_enabled("MR_LCE_ENABLED")
                 memory_enabled = lce_enabled or _env_enabled("MR_MEMORY_ENABLED")
-                if _env_enabled("SEMANTIC_DELTA_V1_ENABLED"):
-                    # Native Delta admission owns the online memory path in composition.
-                    # Keep the legacy Raw -> extractor -> pair-adapter pipeline disconnected.
+                mr_mem_db = None
+                if _env_enabled("MR_MEM_READ_ENABLED") or _env_enabled("SEMANTIC_DELTA_V1_ENABLED"):
+                    mr_mem_db = os.environ.get("MR_MEM_CANONICAL_DB")
+                    if not mr_mem_db:
+                        raise ValueError("standalone MR-Mem requires MR_MEM_CANONICAL_DB")
+                    if lce_enabled:
+                        raise ValueError("legacy MR LCE cannot read the standalone MR-Mem schema")
                     memory_enabled = False
                 adapter = default_adapter(
                     persona=composition["persona"],
@@ -291,6 +295,7 @@ def get_mr_adapter():
                     expression_guard=composition.get("expression_guard"),
                     telemetry_sink=get_trace_journal(),
                     memory_enabled=memory_enabled,
+                    mr_mem_db=mr_mem_db,
                     lce_enabled=lce_enabled,
                     lce_inspiration_enabled=inspiration_enabled,
                 )
