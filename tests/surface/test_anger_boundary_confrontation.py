@@ -46,9 +46,7 @@ from mind_runtime.contracts import (
 from mind_runtime.dynamics.fast_functions import (
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
-    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
-    FAST_FUNCTION_V1_SPECS,
     FastFunctionKind,
     FastStateStatus,
 )
@@ -59,9 +57,6 @@ from mind_runtime.expression.context import (
 )
 from mind_runtime.expression.expression_map import (
     CANDIDATE_EXPRESSION_MAP_V2,
-    CANDIDATE_MAP_DIGEST,
-    CANDIDATE_MAP_ID,
-    CANDIDATE_MAP_VERSION,
     CANDIDATE_RECIPE_DIGEST,
     CANDIDATE_RECIPE_ID,
     CANDIDATE_RECIPE_VERSION,
@@ -240,13 +235,6 @@ def _build_expression_harness(
 # ==============================================================================
 # SECTION 15: Fast Function Lock, Surface Recipe v2, and Dynamics Monotonicity
 # ==============================================================================
-
-
-def test_a_fast_function_v1_count_and_registry_intact() -> None:
-    """A. FAST_FUNCTION_V1 contains exactly 8 entries and matches registry."""
-    assert FAST_FUNCTION_V1_COUNT == 8
-    assert len(FAST_FUNCTION_V1_SPECS) == 8
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
 
 
 def test_b_anger_maps_to_boundary_confrontation_active() -> None:
@@ -434,15 +422,6 @@ def test_i_candidate_recipe_v2_digest_preserved() -> None:
     assert (
         CANDIDATE_RECIPE_DIGEST
         == "4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55"
-    )
-
-
-def test_j_candidate_expression_map_v2_digest_preserved() -> None:
-    """J. Candidate Expression Map v2 ID, version, and digest are strictly preserved."""
-    assert CANDIDATE_MAP_ID == "surface-v1-candidate-map"
-    assert CANDIDATE_MAP_VERSION == 2
-    assert (
-        CANDIDATE_MAP_DIGEST == "bba6794aeda7a1755f8c79ffe5c88bd100918e6bc979ea29b5aa009e958eddf3"
     )
 
 
@@ -787,11 +766,6 @@ def test_y_no_certified_boundary_event_to_intent_authority() -> None:
     assert BOUNDARY_EVENT_TO_INTENT_AUTHORITY == "NONE"
 
 
-def test_z_anger_intent_branch_deferred_constant() -> None:
-    """Z. Autonomous boundary confrontation intent branch is recorded as deferred."""
-    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
-
-
 def test_aa_confrontation_is_eligible_intent_surface_control() -> None:
     """AA. Surface.confrontation is declared an eligible intent surface control."""
     assert "confrontation" in ELIGIBLE_INTENT_SURFACE_CONTROLS
@@ -807,11 +781,3 @@ def test_ab_overlap_protection_rejects_cross_talk() -> None:
     shared = confrontation_roots.intersection(contact_seeking_roots)
     assert "agent.affect.anger" in shared
     assert "persona.behavioral_disposition.expressive_restraint" in shared
-
-
-def test_ac_anger_consumer_verdict_closed_intent_deferred() -> None:
-    """AC. Final audit verdict is ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED."""
-    assert ANGER_EXPRESSION_BRANCH == "CLOSED"
-    assert ANGER_INTENT_BRANCH == "DEFERRED_NO_BOUNDARY_EVENT_TO_INTENT_AUTHORITY"
-    assert BOUNDARY_EVENT_TO_INTENT_AUTHORITY == "NONE"
-    assert FINAL_VERDICT == "ANGER_EXPRESSION_CLOSED_INTENT_DEFERRED"

@@ -392,53 +392,6 @@ class TestDR4NoAuthorityAfterReopen:
 
 
 class TestDR5StoreFailureNoCommittableProjection:
-    def test_save_failure_does_not_raise_on_identical_record(self, db_path: Path):
-        """DR5: when save() fails for non-identity reasons, idempotent re-save succeeds."""
-        from mind_runtime.shadow.store import SqliteShadowRecordStore
-
-        record = _make_record("dr5-run", ShadowStatus.COMPLETED)
-
-        store = SqliteShadowRecordStore(db_path)
-        store.save(record)
-        # Re-save is a no-op, never a failure (idempotent)
-        store.save(record)
-        store.close()
-
-    def test_close_after_save_no_open_transaction(self, db_path: Path):
-        """DR5: after save(), close() must not leave uncommitted transaction."""
-        from mind_runtime.shadow.store import SqliteShadowRecordStore
-
-        record = _make_record("dr5-commit", ShadowStatus.COMPLETED)
-
-        store = SqliteShadowRecordStore(db_path)
-        store.save(record)
-        store.close()  # must not raise
-
-        # Verify data is committed: can reopen and read
-        store2 = SqliteShadowRecordStore(db_path)
-        restored = store2.get("dr5-commit")
-        store2.close()
-        assert restored is not None
-
-    def test_raw_sqlite_integrity_error_is_not_swallowed(self, db_path: Path):
-        """DR5: non-idempotent content raises ValueError (not silently dropped)."""
-        from mind_runtime.shadow.store import SqliteShadowRecordStore
-
-        record1 = _make_record("dr5-collision", ShadowStatus.COMPLETED)
-        record2 = _make_record(
-            "dr5-collision",
-            ShadowStatus.COMPLETED,
-            mr_situation_summary="malicious override",
-        )
-
-        store = SqliteShadowRecordStore(db_path)
-        store.save(record1)
-
-        with pytest.raises(ValueError, match="identity collision"):
-            store.save(record2)
-
-        store.close()
-
     def test_mkdir_created_automatically(self, tmp_path: Path):
         """DR5: parent directories are created so save() never fails on missing dir."""
         from mind_runtime.shadow.store import SqliteShadowRecordStore

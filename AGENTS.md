@@ -85,6 +85,10 @@ source lines or branch numbers.
   test double solely for coverage.
 - A refactor should not preserve duplicate tests merely to keep the collected-test count
   high. Preserve distinct guarantees, not historical test volume.
+- Assertions against status/verdict literals defined in the same test file are notes,
+  not runtime verification. Keep historical conclusions in documentation.
+- Do not rerun a subset in CI when the full job already covers it with the same relevant
+  dependencies. Separate minimal-install jobs must verify a distinct dependency contract.
 - `research/archive/**` is frozen historical evidence, not an active runtime contract or
   default verification surface. Do not use archived harnesses, red-phase proofs, or old gate
   vocabulary as implementation authority unless an accepted current ADR explicitly revives it.

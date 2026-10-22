@@ -58,9 +58,7 @@ from mind_runtime.contracts import (
     SyncFields,
 )
 from mind_runtime.dynamics.fast_functions import (
-    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
-    FAST_FUNCTION_V1_SPECS,
     FastFunctionKind,
     FastStateStatus,
     validate_sharing_urge_anti_spam_invariant,
@@ -80,12 +78,7 @@ from mind_runtime.intents.policy import (
 from mind_runtime.persona_publication import PersonaConfigPublicationRepository
 from mind_runtime.runtime_binding import RuntimeBinding, RuntimeEnvironment
 from mind_runtime.shadow.runtime_loop import build_runtime_stack, run_cognitive_tick
-from mind_runtime.surface.recipe import (
-    CANDIDATE_RECIPE_DIGEST,
-    CANDIDATE_RECIPE_ID,
-    CANDIDATE_RECIPE_VERSION,
-    MANIFEST,
-)
+from mind_runtime.surface.recipe import MANIFEST
 from tests.support.fake_clock import FakeClock
 from tests.surface.spec_support import sample_candidate
 
@@ -260,13 +253,6 @@ def _build_share_test_stack(
 
 
 # ── SECTION 13: REQUIRED STRUCTURAL TESTS (A - K) ────────────────────────────
-
-
-def test_a_fast_function_v1_registry_has_exactly_eight_entries() -> None:
-    """A. FAST_FUNCTION_V1_REGISTRY still has exactly 8 entries."""
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
-    assert len(FAST_FUNCTION_V1_SPECS) == 8
-    assert FAST_FUNCTION_V1_COUNT == 8
 
 
 def test_b_sharing_urge_maps_to_proactive_share() -> None:
@@ -777,16 +763,6 @@ def test_j_no_new_surface_control_introduced() -> None:
     assert "sharing_drive" not in MANIFEST
     assert "sharing_pressure" not in MANIFEST
     assert "share_seeking" not in MANIFEST
-
-
-def test_k_candidate_surface_recipe_digest_remains_unchanged() -> None:
-    """K. Candidate Surface recipe digest remains unchanged."""
-    assert CANDIDATE_RECIPE_ID == "surface-v1-candidate"
-    assert CANDIDATE_RECIPE_VERSION == 2
-    assert (
-        CANDIDATE_RECIPE_DIGEST
-        == "4f37f46f89f6176fd5fefe0167ec7a81e341839f4fb9b98fa3cc348ddeaf9a55"
-    )
 
 
 # ── SECTION 14: REQUIRED PROACTIVE CHAIN TESTS (L - V) ───────────────────────

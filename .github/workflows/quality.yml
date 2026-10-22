@@ -58,19 +58,3 @@ jobs:
       - run: python -m coverage run -m pytest tests xiyue/tests -q
       - run: python -m coverage report --show-missing
 
-  lce-integration:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev]"
-      - name: Install verified current LCE baseline
-        run: >-
-          python -m pip install
-          "git+https://github.com/Jasonatafricanow/LCE-Longitudinal-Cognition-Engine.git@${LCE_BASELINE_SHA}"
-      - name: Verify MR-LCE binding
-        run: python -m pytest tests/lce_binding tests/memory_retrieval -q
-

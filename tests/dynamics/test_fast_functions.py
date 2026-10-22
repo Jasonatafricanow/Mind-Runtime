@@ -48,12 +48,6 @@ from mind_runtime.dynamics.fast_functions import (
 from mind_runtime.dynamics.kayla_v0 import kayla_v0_profile
 
 
-def test_a_fast_function_v1_contains_exactly_eight_entries() -> None:
-    """A. FAST_FUNCTION_V1 contains exactly 8 entries."""
-    assert len(FAST_FUNCTION_V1_SPECS) == 8
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
-
-
 def test_b_all_eight_canonical_keys_are_unique() -> None:
     """B. All eight canonical keys are unique."""
     keys = [spec.state_key for spec in FAST_FUNCTION_V1_SPECS]

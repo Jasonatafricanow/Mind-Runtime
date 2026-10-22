@@ -997,25 +997,6 @@ def test_v_three_way_competition_under_high_vs_low_sadness() -> None:
 # ==============================================================================
 
 
-def test_w_dedicated_intent_cross_talk_protection_passes() -> None:
-    """W. Dedicated intent cross-talk protection passes (no cross-talk from initiative)."""
-    assert DEDICATED_INTENT_CROSS_TALK_PROTECTION == "PASS"
-
-
-def test_x_initiative_suppression_ineffective_on_dedicated_intents() -> None:
-    """X. Initiative suppression is confirmed ineffective on dedicated proactive intents."""
-    assert INITIATIVE_SUPPRESSION_EFFECTIVE_ON_DEDICATED_INTENTS == "NO"
-
-
-def test_y_sadness_surface_closed_primary_consumer_gap_found() -> None:
-    """Y. Audit verifies surface closed, expression warmth closed, but primary consumer gap found."""
-    assert SADNESS_SURFACE_INITIATIVE_PROJECTION == "PASS"
-    assert SADNESS_EFFECTIVE_INITIATIVE_CONSUMER == "NONE"
-    assert SADNESS_PRIMARY_FUNCTION_RUNTIME_GAP == "FOUND"
-    assert SADNESS_EXPRESSION_BRANCH == "CLOSED"
-    assert FINAL_VERDICT == "SADNESS_SURFACE_CLOSED_PRIMARY_CONSUMER_GAP_FOUND"
-
-
 def test_z_authority_separation_invariant() -> None:
     """Z. Authority separation: sadness modulates initiative pressure, does not grant inaction permission."""
     assert (
