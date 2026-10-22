@@ -24,7 +24,7 @@ The public CI also uses coverage, Ruff and mypy no-regression gates. [Implementa
 
 The standalone [MR-Mem](https://github.com/Jasonatafricanow/MR-Mem) repository develops semantic memory and derived cognition as a sidecar to host-native history. This README describes this repository's committed runtime; newer designs in another repository do not automatically describe this checkout.
 
-Live shadow validation remains incomplete. A short host-integration/restart walkthrough and a current Observation Window screenshot remain documentation work; the historical D7–D11 gate vocabulary stays in research records.
+Try the [host commit and process-restart example](examples/README.md) to see durable replay prevention in two separate processes. Live shadow validation and a current Observation Window screenshot remain incomplete; the historical D7–D11 gate vocabulary stays in research records.
 
 ## Rights
 

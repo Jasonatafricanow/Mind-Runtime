@@ -46,3 +46,5 @@ dist/
 .pytest_cache/
 .coverage
 .coverage-*
+# Dedicated data for the host restart example
+demo-data/
