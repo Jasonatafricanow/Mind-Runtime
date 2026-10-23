@@ -32,7 +32,8 @@ COMMIT_MARKER = "Xiyue MR seam: commit/abort (HI-2)"
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", newline="")
+    with path.open(encoding="utf-8", newline="") as stream:
+        return stream.read()
 
 
 def _write(path: Path, content: str) -> None:

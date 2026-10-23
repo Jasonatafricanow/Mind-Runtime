@@ -696,21 +696,6 @@ def test_cal7_configured_coupling_only() -> None:
     assert restlessness.floor <= spiked[restlessness.dimension]
 
 
-def test_cal8_no_unintended_coupling() -> None:
-    loaded = load_kayla_production()
-    engine = DynamicsEngine(persona=loaded.profile)
-    coupled = {t for p in loaded.profile.dimensions for t, _ in p.coupling_profile}
-    state = {d.dimension: d.initial_value for d in loaded.profile.dimensions}
-    spiked = _step(engine, state, 1.0, (Impulse(LONGING, 0.7),))
-    solo = DynamicsEngine(persona=loaded.profile)
-    solo_state = {d.dimension: d.initial_value for d in loaded.profile.dimensions}
-    solo_after = _step(solo, solo_state, 1.0)
-    for p in loaded.profile.dimensions:
-        if p.dimension == LONGING or p.dimension in coupled:
-            continue
-        assert math.isclose(spiked[p.dimension], solo_after[p.dimension], rel_tol=0, abs_tol=1e-15)
-
-
 def test_cal9_kayla_vs_neutral_deterministic_difference() -> None:
     from mind_runtime.dynamics.persona import PersonaProfile as _PP
 

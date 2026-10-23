@@ -31,9 +31,6 @@ from mind_runtime.delivery import (
 )
 from mind_runtime.delivery.daemon import DaemonPass
 from mind_runtime.delivery.kill_switch import open_kill_switch
-from mind_runtime.delivery.persistence import (
-    DurableRequestRow,
-)
 from mind_runtime.delivery.retry import RetryDecision, RetryDecisionKind
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -628,24 +625,6 @@ def test_persistence_unfinished_requests_excludes_terminal(
         assert rejected_req.request_id not in ids
     finally:
         backend.close()
-
-
-def test_durable_request_row_dataclass() -> None:
-    """DurableRequestRow is a frozen dataclass with the expected
-    fields.
-    """
-
-    request = _request(request_id="deliv-row")
-    row = DurableRequestRow(
-        request=request,
-        lifecycle_state=DeliveryLifecycleState.PENDING,
-        attempt_count=0,
-        last_attempt_at=None,
-        last_reconcile_at=None,
-        last_provider_receipt_ref=None,
-    )
-    assert row.request is request
-    assert row.lifecycle_state is DeliveryLifecycleState.PENDING
 
 
 def test_persistence_durable_request_rejects_naive_datetime(

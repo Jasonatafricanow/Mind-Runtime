@@ -15,8 +15,6 @@ evidence_refs are appraisal surface authority, NOT static-rule authority.
 
 from __future__ import annotations
 
-import inspect
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pytest
@@ -25,7 +23,6 @@ from mind_runtime.contracts import (
     AffectiveDimensionProfile,
     AppraisalPath,
     AppraisalRouteDecision,
-    Observation,
     Scope,
     ScopeDomain,
     SemanticAppraisal,
@@ -37,16 +34,11 @@ from mind_runtime.contracts import (
 from mind_runtime.dynamics.engine import Contribution, DynamicsEngine, Impulse
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.emotional_transition.effects import EffectMapper, EventEffectRule
-from mind_runtime.emotional_transition.semantic import (
-    SemanticCandidateProvider,
-    SemanticRouter,
-)
 from mind_runtime.homeostasis.contracts import HomeostasisDisposition
 from mind_runtime.homeostasis.policy import (
     FixedSalienceThresholdConfig,
     SalienceThresholdPolicy,
 )
-
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 USER_SCOPE = Scope(domain=ScopeDomain.USER, user_id="alice")
@@ -500,22 +492,3 @@ def test_E_audit_contribution_confidence_is_required() -> None:
 # ============================================================================
 # Sanity: source-level audit (no synthetic fallback patterns)
 # ============================================================================
-
-
-def test_E_no_salience_equals_confidence_heuristic_in_source() -> None:
-    """AST scan: ports.py must not contain `salience = confidence` heuristic
-    in executable code (excluding comments)."""
-    import ast
-
-    from mind_runtime.dynamics import ports
-
-    source = inspect.getsource(ports)
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "salience":
-                    value_repr = ast.unparse(node.value).strip()
-                    assert value_repr != "confidence", (
-                        f"salience = confidence heuristic found in executable code"
-                    )

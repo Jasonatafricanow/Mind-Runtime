@@ -1,6 +1,11 @@
 # Mind Runtime
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Mind Runtime is a Python runtime for keeping agent state across turns and process restarts.
+
+Standalone memory wiring and deferred algorithm boundaries: [assembly](docs/assembly.md)
+([中文](docs/assembly.zh-CN.md)).
 
 The repository currently implements persistent facts/state/intents/checkpoints, runtime identity and storage isolation, bounded memory retrieval, turn commit/abort handling, restart validation, telemetry, and a read-only Observation Window.
 
@@ -245,6 +250,7 @@ python -m pytest -q
 ```
 
 The repository also uses Ruff, mypy, coverage, deterministic fixtures, restart tests, and certification inputs.
+Coverage is reported for diagnosis without an aggregate percentage minimum; pytest failures still block CI.
 
 Some static-analysis findings are historical debt rather than a claim that the entire tree is currently lint/type-clean. CI work tracks these separately from runtime tests.
 

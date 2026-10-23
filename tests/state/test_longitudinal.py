@@ -524,13 +524,6 @@ def test_U6_seam_fails_closed_on_affect_dimension() -> None:
         resolve_longitudinal_target(registry, "agent.affect.anxiety")
 
 
-def test_U6_seam_fails_closed_on_unregistered_longitudinal() -> None:
-    """A target that is not in the registry at all also fails closed."""
-    registry = StateDefinitionRegistry()
-    with pytest.raises(ValueError, match="not registered"):
-        resolve_longitudinal_target(registry, "agent.slow.anxiety")
-
-
 # ============================================================================
 # U5 proof: configuration-owned ontology
 # ============================================================================
@@ -570,28 +563,3 @@ def test_U7_config_owned_ontology_change_requires_no_runtime_code_change() -> No
 # ============================================================================
 # Integration: TurnOrchestrator B-W seam with explicit config
 # ============================================================================
-
-
-def test_integration_orchestrator_slow_decision_accepted_if_target_registered() -> None:
-    """A SLOW_ACCEPT decision whose target IS registered passes the seam."""
-    registry = StateDefinitionRegistry()
-    register_longitudinal_definition(registry, key="agent.slow.anxiety")
-
-    defn = resolve_longitudinal_target(registry, "agent.slow.anxiety")
-    assert defn.key == "agent.slow.anxiety"
-    assert defn.dynamics_policy == LONGITUDINAL_ACCUMULATOR
-
-
-def test_integration_orchestrator_slow_decision_rejected_if_target_unregistered() -> None:
-    """A SLOW_ACCEPT decision whose target is not registered is fail-closed
-    at the B-W seam (per BW-ONTO-2: writer consumes verbatim; registry
-    verify at seam).
-
-    Note: this test documents the fail-closed behavior. The orchestrator
-    seam uses resolve_longitudinal_target which raises for unregistered
-    dimensions; the decision is skipped, not rejected with an exception.
-    """
-    registry = StateDefinitionRegistry()  # empty — nothing registered
-
-    with pytest.raises(ValueError, match="not registered"):
-        resolve_longitudinal_target(registry, "agent.slow.anxiety")

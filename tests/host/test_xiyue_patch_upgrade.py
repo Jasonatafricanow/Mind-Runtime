@@ -2,7 +2,17 @@
 
 from pathlib import Path
 
-from xiyue.apply_mr_patch import _upgrade_legacy
+from xiyue.apply_mr_patch import _read, _upgrade_legacy, _write
+
+
+def test_patch_file_io_preserves_gateway_newlines(tmp_path: Path) -> None:
+    path = tmp_path / "gateway.py"
+    original = b"# gateway\r\nprint('ready')\r\n"
+    path.write_bytes(original)
+    source = _read(path)  # Must also run on the declared Python 3.12 minimum.
+    assert source.encode() == original
+    _write(path, source)
+    assert path.read_bytes() == original
 
 
 def test_legacy_patch_upgrade_moves_epoch_to_locked_gateway(tmp_path: Path) -> None:

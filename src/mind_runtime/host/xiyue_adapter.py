@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from mind_runtime.expression.context import DecisionContextConfig
     from mind_runtime.homeostasis.contracts import HomeostasisGate
     from mind_runtime.memory.retrieval import RetrievalProvider
+    from mind_runtime.pipeline.ports import HistoricalContextPort
     from mind_runtime.runtime_binding import RuntimeBinding
     from mind_runtime.situation.builder import SituationBuilder
     from mind_runtime.state.definitions import StateDefinitionRegistry
@@ -317,6 +318,9 @@ class XiyueMRAdapter:
 
 def default_adapter(
     *,
+    user_id: str | None = None,
+    mr_mem_db: str | Path | None = None,
+    mr_mem_line_root: str | Path | None = None,
     persona: PersonaProfile | None = None,
     effect_rules: tuple[EventEffectRule, ...] = (),
     definitions: StateDefinitionRegistry | None = None,
@@ -368,6 +372,16 @@ def default_adapter(
     )
     from mind_runtime.shadow.runtime_loop import build_runtime_stack
 
+    user_id = user_id if user_id is not None else os.environ.get("MR_USER_ID", "user")
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ValueError("MR user_id must be nonempty")
+    if mr_mem_line_root is not None and mr_mem_db is None:
+        raise ValueError("MR-Mem Line root requires its canonical database")
+    if mr_mem_db is not None and (
+        memory_enabled or lce_enabled or lce_inspiration_enabled or retrieval_provider is not None
+    ):
+        raise ValueError("standalone MR-Mem cannot share the legacy Memory/LCE composition")
+
     class _UtcClock:
         def now(self) -> datetime:
             return datetime.now(UTC)
@@ -391,12 +405,39 @@ def default_adapter(
 
     from mind_runtime.memory.retrieval_composition import build_memory_history
 
+    history: HistoricalContextPort
+    if mr_mem_db is not None:
+        from mind_runtime.integrations.mr_mem_history import MrMemHistoricalContext
+
+        if Path(mr_mem_db).resolve() in {
+            paths.facts_db.resolve(), paths.state_db.resolve(), paths.memory_db.resolve(),
+        }:
+            raise ValueError("standalone MR-Mem must use a separate canonical database")
+        history = MrMemHistoricalContext(mr_mem_db, line_root=mr_mem_line_root)
+        # Initialize the sidecar schema before the first MR read. Otherwise an
+        # empty installation cannot begin the turn that would create its first memory.
+        from mr_mem import MemoryCore
+
+        if history.path.exists():
+            # Existing files must already be MR-Mem, never migrate an unrelated
+            # native host database merely because a path was misconfigured.
+            with MemoryCore(history.path, read_only=True) as core:
+                core.load_all()
+        else:
+            with MemoryCore(history.path):
+                pass
+    else:
+        history = build_memory_history(
+            binding, provider=retrieval_provider, lce_enabled=lce_enabled,
+            thread_enabled=memory_enabled,
+        )
+
     orchestrator, _bridge = build_runtime_stack(
         clock=_UtcClock(),
         facts_db=facts_db,
         state_db=state_db,
         origin_runtime_id=binding.runtime_id,
-        user_id="user",
+        user_id=user_id,
         persona=persona,
         effect_rules=effect_rules,
         definitions=definitions,
@@ -411,12 +452,7 @@ def default_adapter(
         memory_binding=binding,
         lce_enabled=lce_enabled,
         lce_inspiration_enabled=lce_inspiration_enabled,
-        historical_context=build_memory_history(
-            binding,
-            provider=retrieval_provider,
-            lce_enabled=lce_enabled,
-            thread_enabled=memory_enabled,
-        ),
+        historical_context=history,
         intent_rules=intent_rules,
         action_policy_config=action_policy_config,
         policy_resources=policy_resources,
@@ -425,4 +461,4 @@ def default_adapter(
         expression_guard=expression_guard,
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)
-    return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id="user")
+    return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id=user_id)

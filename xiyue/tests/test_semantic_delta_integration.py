@@ -340,16 +340,18 @@ def test_flag_default_off_and_missing_setup_preserve_normal_body(tmp_path, monke
 
 
 @pytest.mark.parametrize(
-    "delta_flag,legacy_flag,lce_flag,expected",
+    "delta_flag,read_flag,legacy_flag,lce_flag,expected",
     [
-        (False, False, False, False),
-        (False, True, False, True),
-        (False, False, True, True),
-        (True, True, True, False),
+        (False, False, False, False, False),
+        (False, False, True, False, True),
+        (False, False, False, True, True),
+        (True, False, True, False, False),
+        (True, False, True, True, None),
+        (False, True, True, False, False),
     ],
 )
 def test_native_flag_disconnects_legacy_online_memory_composition(
-    monkeypatch, delta_flag, legacy_flag, lce_flag, expected
+    tmp_path, monkeypatch, delta_flag, read_flag, legacy_flag, lce_flag, expected
 ):
     from xiyue import mr_seam
 
@@ -373,6 +375,13 @@ def test_native_flag_disconnects_legacy_online_memory_composition(
         return SimpleNamespace()
 
     monkeypatch.setenv("MR_ENABLED", "true")
+    monkeypatch.setenv("MR_MEM_CANONICAL_DB", str(tmp_path / "canonical.sqlite"))
+    monkeypatch.setenv("MR_MEM_READ_ENABLED", str(read_flag))
+    line_root = str(tmp_path / "lce_tree") if delta_flag or read_flag else None
+    if line_root is None:
+        monkeypatch.delenv("MR_MEM_LINE_ROOT", raising=False)
+    else:
+        monkeypatch.setenv("MR_MEM_LINE_ROOT", line_root)
     for name, value in [
         ("SEMANTIC_DELTA_V1_ENABLED", delta_flag),
         ("MR_MEMORY_ENABLED", legacy_flag),
@@ -386,8 +395,16 @@ def test_native_flag_disconnects_legacy_online_memory_composition(
     monkeypatch.setattr(mr_seam, "get_trace_journal", lambda: None)
     monkeypatch.setattr(mr_seam, "load_readiness", lambda: {})
     monkeypatch.setattr("mind_runtime.host.xiyue_adapter.default_adapter", adapter_factory)
+    if expected is None:
+        assert mr_seam.get_mr_adapter() is None
+        assert not recorded
+        return
     assert mr_seam.get_mr_adapter() is not None
     assert recorded[0]["memory_enabled"] is expected
+    assert recorded[0]["mr_mem_line_root"] == line_root
+    assert recorded[0]["mr_mem_db"] == (
+        str(tmp_path / "canonical.sqlite") if delta_flag or read_flag else None
+    )
 
 
 def test_gateway_factory_supplies_real_source_and_guard(tmp_path, monkeypatch):

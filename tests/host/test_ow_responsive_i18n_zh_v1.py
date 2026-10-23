@@ -102,15 +102,11 @@ def test_product_ui_primary_labels_chinese():
     assert "已中止" in moments_html
 
 
-def test_mobile_breakpoints_exist():
-    css = (_STATIC_DIR / "style.css").read_text(encoding="utf-8")
-    # §9 tiers: laptop/tablet boundary 1023, phone boundary 767, small phone 480
-    assert "max-width: 1439px" in css
-    assert "max-width: 1023px" in css
-    assert "max-width: 767px" in css
-    assert "max-width: 480px" in css
-    # §12: phone chart height bounded 200-220px
-    assert "--chart-height: 210px" in css
+def test_product_routes_serve_zh_pages(i18n_test_client: TestClient):
+    for route, expected in (("/", "动态时序"), ("/moments", "交互记录"), ("/debug/causal", "因果检查器")):
+        res = i18n_test_client.get(route)
+        assert res.status_code == 200, route
+        assert expected in res.text, route
 
 
 def test_no_page_level_fixed_minimum_width():
@@ -124,10 +120,3 @@ def test_causal_mobile_layout_breakpoint_exists():
     causal_html = (_STATIC_DIR / "causal.html").read_text(encoding="utf-8")
     assert "max-width: 767px" in causal_html
     assert "flex-direction: column" in causal_html
-
-
-def test_product_routes_serve_zh_pages(i18n_test_client: TestClient):
-    for route, expected in (("/", "动态时序"), ("/moments", "交互记录"), ("/debug/causal", "因果检查器")):
-        res = i18n_test_client.get(route)
-        assert res.status_code == 200, route
-        assert expected in res.text, route

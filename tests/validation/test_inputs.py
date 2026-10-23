@@ -106,6 +106,10 @@ def test_runtime_manifest_decodes_named_executable_fixture() -> None:
     assert isinstance(intent, subject.IntentEngineConfig)
     assert intent.runtime_id == "runtime-1"
     assert tuple(rule.kind for rule in intent.rules) == ("respond", "scheduled_follow_up")
+    assert intent.rules[0].event_kind is None
+    for rule in intent.rules:
+        assert "agent.affect.anger" not in dict(rule.dimension_weights)
+        assert not {"confrontation", "initiative"}.intersection(dict(rule.surface_control_weights))
     assert intent.rules[1].event_kind == "follow_up_due"
     assert intent.rules[1].expires_after == timedelta(hours=4)
     assert intent.rules[1].reconsideration_policy is ReconsiderationPolicy.ON_DUE
@@ -117,6 +121,8 @@ def test_runtime_manifest_decodes_named_executable_fixture() -> None:
         "scheduled_follow_up",
     )
     assert policy.proactive_cooldown == timedelta(minutes=30)
+    assert all(not rule.proactive for rule in policy.rules)
+    assert tuple(rule.action_type for rule in policy.rules) == ("text_message", "text_message")
     resources = decoded.policy_resources
     assert resources.available_actions == ("text_message",)
 

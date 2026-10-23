@@ -146,6 +146,13 @@ def test_gate_allows_supported_spontaneous_motives(kind: str, root: str) -> None
     assert result.traces[0].surface_controls_ref is not None
     assert all(c.source_kind != "surface" for c in result.traces[0].contributions)
 
+    # The same supported motive remains ungated when the optional gate is absent.
+    legacy = _rule(kind=kind, root=root, minimum_initiative=None)
+    low_sadness = _evaluate(legacy, sharing_urge=0.4, curiosity=0.4, sadness=0.0)
+    high_sadness = _evaluate(legacy, sharing_urge=0.4, curiosity=0.4, sadness=1.0)
+    assert [candidate.kind for candidate in high_sadness.candidates] == [kind]
+    assert high_sadness.traces[0].final_strength == low_sadness.traces[0].final_strength == 0.4
+
 
 def test_low_initiative_suppresses_candidate_without_changing_domain_strength() -> None:
     result = _evaluate(

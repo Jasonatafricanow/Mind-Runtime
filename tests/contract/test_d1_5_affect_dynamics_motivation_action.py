@@ -117,10 +117,6 @@ def test_profile_requires_non_empty_dimension() -> None:
 # --- DynamicsPolicy ---
 
 
-def test_dynamics_policy_is_runtime_checkable_protocol() -> None:
-    assert DynamicsPolicy is not None
-
-
 def test_dynamics_policy_accepts_conforming_implementation() -> None:
     class LinearPolicy:
         def apply(
