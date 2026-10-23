@@ -61,7 +61,7 @@ Before proposing a merge, run the narrow tests for the changed surface and the r
 quality gate that applies to it. The public CI currently covers:
 
 - clean installation and runtime dependency imports;
-- pytest/coverage;
+- pytest failures and diagnostic coverage reporting (no aggregate minimum);
 - Ruff no-regression baseline;
 - mypy no-regression baseline.
 
@@ -70,14 +70,17 @@ that was not performed.
 
 ## Test design discipline
 
-Coverage is a regression signal, not an instruction to manufacture tests for individual
-source lines or branch numbers.
+Coverage is a diagnostic signal. There is no required aggregate percentage. Test
+necessity must be justified by a failure it detects, not by line/branch counts or a
+target test/source ratio. Removing an assertion can lose a guarantee without changing
+coverage at all.
 
 - Test externally meaningful behavior, contracts, persistence, restart/replay, authority,
   isolation, idempotency, and fail-closed boundaries.
 - Before adding a test, search the nearest suite for the same contract. Extend an existing
   table or fixture instead of restating the setup in a new test.
-- Give each shared behavior one owning suite. Feature suites should test their actual
+- Give each shared behavior a primary owning suite. This does not replace a consumer's
+  distinct configuration or conditional path. Feature suites should test their actual
   configuration and integration seam, not repeat the shared scoring, host lifecycle,
   renderer-isolation, and permission matrix with a different emotion or intent label.
 - State the distinct failure a new case detects that existing cases cannot. A renamed
@@ -86,7 +89,9 @@ source lines or branch numbers.
   them into a larger parameter table.
 - Prefer assertions on the result of a real operation over constructor-input echoes,
   source-text searches, or CSS-value checklists. Static checks do not establish rendered
-  usability, permission enforcement, or runtime data flow.
+  usability, permission enforcement, or runtime data flow, but can guard an explicit
+  source/configuration constraint. Do not delete them without checking what failure
+  they detect and whether another assertion or a deliberate contract retirement covers it.
 - Prefer `pytest.mark.parametrize`, small builders, and shared fixtures for symmetric
   environments, invalid-input matrices, thresholds, and fault-injection matrices.
 - Do not add `test_*_coverage_gaps.py` cases whose only purpose is to hit an implementation

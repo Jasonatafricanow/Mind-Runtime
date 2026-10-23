@@ -62,6 +62,8 @@ from tests.surface.spec_support import (
     STATIC_BASELINE_EXPRESSION_BUNDLE,
     STATIC_COUNTERFACTUAL_EXPRESSION_BUNDLE,
     sample_candidate,
+    state,
+    trait,
 )
 
 
@@ -72,6 +74,7 @@ def _build_test_harness(
     max_items: int = 20,
     include_affect_rules: bool = True,
     include_slow_state: bool = True,
+    candidate: Any = None,
 ) -> tuple[
     DecisionContextCompiler,
     DecisionContextCompilerInput,
@@ -82,7 +85,7 @@ def _build_test_harness(
     scope = Scope(domain=ScopeDomain.AGENT, agent_id="fixture-persona", persona_id=persona_name)
     runtime_id = "fixture-runtime"
 
-    x = sample_candidate(persona_name)
+    x = sample_candidate(persona_name) if candidate is None else candidate
     surface = SurfaceProductionAdapter().project(x)
 
     states = tuple(
@@ -350,6 +353,29 @@ def test_surface_qualitative_bundle_visible_at_actual_provider_bytes(
 
     bundle_b = renderer.render_surface_bundle(ctx_b)
     assert bundle_b == STATIC_COUNTERFACTUAL_EXPRESSION_BUNDLE
+
+    # Scalar band tests do not prove the mapping/compiler/renderer preserve extremes.
+    for level, expected in ((0.0, "low"), (1.0, "high")):
+        candidate = sample_candidate()
+        state(candidate, "anger")["value"] = level
+        state(candidate, "closeness_craving")["value"] = level
+        state(candidate, "sadness")["value"] = 0.0
+        trait(candidate, "confrontation_readiness", level)
+        trait(candidate, "expressive_warmth_bias", level)
+        trait(candidate, "expressive_restraint", 0.0)
+        comp, inp, extreme_renderer, _ = _build_test_harness(candidate=candidate)
+        ctx, _ = comp.compile(inp)
+        guidance = {
+            it.key: it.value for it in ctx.expression_context
+            if it.kind.value == "surface_guidance"
+        }
+        assert guidance["directness"] == guidance["warmth"] == expected
+        bundle = extreme_renderer.render_surface_bundle(ctx)
+        assert bundle["directness"] == bundle["warmth"] == expected
+        rendered = extreme_renderer.render(ctx).text
+        assert f"directness: {expected}" in rendered
+        assert f"warmth: {expected}" in rendered
+        assert extreme_renderer.verify_provider_information_isolation(rendered)
 
     # Formatter output
     formatted = renderer.format_surface_guidance(bundle_a)

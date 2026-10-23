@@ -23,7 +23,7 @@ python -m pytest -q
 ```
 
 宿主集成测试需要工作流固定版本的 MR-Mem，入口为 `xiyue/tests`。公开 CI 包括干净安装、
-覆盖率、Ruff 与 mypy 无回归门禁。开发约束见 [AGENTS.md](AGENTS.md)，历史来源见
+覆盖率诊断报告、Ruff 与 mypy 无回归门禁。覆盖率没有全局百分比硬门槛；pytest 失败仍阻断 CI。开发约束见 [AGENTS.md](AGENTS.md)，历史来源见
 [PROJECT-HISTORY.md](PROJECT-HISTORY.md)。
 
 ## 完成度边界

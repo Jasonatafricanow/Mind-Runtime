@@ -1017,6 +1017,8 @@ def test_successful_proactive_turn_lifecycle(tmp_path: Path):
     turn_res = adapter.begin_proactive_turn(wake)
     assert turn_res.status == HostTurnStatus.PROCESSING
     assert isinstance(turn_res.bounded_context, HostDecisionContext)
+    assert turn_res.bounded_context.action_taken == wake.action_type
+    assert turn_res.bounded_context.intent_summary == f"proactive:{wake.action_type}"
     envelope = turn_res.bounded_context.provider_envelope_text
     assert envelope
     from mind_runtime.expression.renderer import DeterministicContextRenderer

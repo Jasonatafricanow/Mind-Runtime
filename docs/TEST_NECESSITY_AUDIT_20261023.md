@@ -1,88 +1,98 @@
-# Test necessity and consolidation — 2026-10-23
+# Test necessity audit — corrected 2026-10-23
 
-Baseline: `857c3f4cded80522644784aafd21e26da007c01e`.
+The earlier conclusion that all 171 deletions were redundant was wrong. Unchanged
+coverage did not show that assertions preserved their failure-detection angles.
+This revision restores ten checks and adds missing assertions to existing owners.
+It supersedes the necessity claims in `eae2680`, `1a3f613`, and `4c3fa79`.
 
-The earlier AST-copy audit answered too narrow a question. Different source text,
-fixture names, emotion labels, and historical task IDs do not establish independent
-product guarantees. The suite has accumulated repeated feature matrices and checks
-that never exercise the behavior described by their names.
+## Coverage policy
 
-## Size and denominator
+No risk-based justification for 94% was found in the available public baseline or
+audited migration records. Public history is a cleaned baseline; this does not prove
+that no earlier justification ever existed. The old comment called 94% the current
+baseline and required it to rise. That is a ratchet, not a demonstration of adequacy.
 
-Tracked active Python tests include helpers in `tests/` and `xiyue/tests/`.
-Production Python is `src/`; host tools are separately identified. Effective lines
-exclude blanks, standalone comments, and AST docstrings. Physical lines include them.
-Research, historical tools/tests, documentation and data fixtures are excluded.
+The B2 Surface migration audit records 93.0651%, then 43 additional boundary tests
+and 93.5195% displayed as 94%. The B3 fast-function audit records 93.4998%, then six
+additional tests and 93.5410%. The September 26 re-expansion audit explicitly
+identifies coverage-driven additions, including both real failure paths and
+coverage-only checks. Threshold pressure is evidenced; it does not make every such
+test useless. See those dated documents in `docs/audits/`.
 
-| Measure | Before | After |
-| --- | ---: | ---: |
-| Active test Python files | 310 | 306 |
-| Active test physical lines | 95,354 | 89,952 |
-| Active test effective Python lines | 74,846 | 70,712 |
-| Production `src/` effective Python lines | 48,027 | 48,027 |
-| Test / production effective Python lines | 155.8% | 147.2% |
-| Test share of test + production effective Python lines | 60.9% | 59.6% |
-| All production physical source lines, including frontend and host tools | 70,399 | 70,399 |
-| Test / all production physical source lines | 135.4% | 127.8% |
-| Test share of combined physical source | 57.5% | 56.1% |
-| Selected pytest cases with optional integrations available | 3,956 | 3,785 |
+`fail_under = 94` is removed. Coverage measurement and missing-line reports remain;
+pytest failures, installation checks, Ruff and mypy gates remain. The explicit cost
+is that an aggregate coverage drop no longer fails CI by itself. No replacement
+percentage, test count or test/source ratio is prescribed. This policy change is
+separate from judging individual deletions and is not a cure for weak assertions.
 
-Frontend physical lines: HTML 3,936, JavaScript 1,320, CSS 811. Host Python:
-2,006. Production Python physical lines: 62,326. Ratios use matching units;
-the Python-only ratio must not be presented as the whole repository's proportion.
+## Corrections and retained deletions
 
-This change removes 171 test functions/cases and a net 5,402 physical lines
-(4,134 effective Python lines). It does not add parameter-expanded replacement
-cases. Selected-case reduction is 4.3%; physical test-code reduction is 5.7%.
-These are measured reductions, not an estimate of all remaining redundancy.
-
-## Decisions by behavior, rather than textual similarity
-
-| Removed or consolidated family | Retained owner / distinct guarantee |
+| Boundary | Correction / decision |
 | --- | --- |
-| Curiosity and sharing repeat hand-written generic weight, threshold, and unconfigured-dimension rules | `tests/intents/test_engine.py` owns scoring. Feature suites retain actual wake/action selection, cooldown semantics, isolation configuration, competition, and completed begin/guard/commit chains. |
-| Longing, curiosity, sharing repeat stages of the same host lifecycle | Longing retains host authority/rejection, explicit commit, abort, recovery and replay cases. Curiosity/sharing each retain a full chain; its assertions now include the selected action, nonempty host context, renderer isolation, and ALLOWED until explicit commit. |
-| Anger and sadness duplicate surface interpretation and generic intent-engine matrices | `tests/dynamics/test_fast_functions.py`, `tests/surface/test_candidate_conformance.py`, `test_expression_provider_boundary.py`, and `test_intent_surface_boundary.py` own mappings, counterfactual isolation, exact bands, renderer payload restrictions, denied dispatch, and scoring boundaries. Two duplicated feature files are removed. |
-| Constructing DENY or a helper-created Situation and asserting the supplied value | Removed: these cases do not invoke authorization, ticking, or observation generation. Real policy denial and pipeline behavior tests remain. |
-| Historical SHA, source spelling, compiler-private-field and numeric-default regex checks | Removed: current runtime propagation, rejection and compatibility contracts remain. Historical conclusions belong in documents. |
-| CSS numbers, breakpoints, HTML class spellings | Removed two checklist files and three isolated checks. Route, language and projection contracts remain. No claim that this constitutes rendered visual acceptance. |
-| Longitudinal resolver checks repeated in lineage and authority suites | U5/U6 resolver cases own unregistered targets and affect rejection; actual salience propagation and veto chains remain. |
-| Ticker construction repeated with identical missing resources; construction-only ticker and durable-row checks | Existing missing-resource rejection, behavioral ticker execution, and persistence readback/lifecycle tests own these guarantees. |
+| Actual certified configuration | Extend `test_runtime_manifest_decodes_named_executable_fixture` to assert non-proactive policy flags and action types, and absence of anger/confrontation/initiative wiring. The existing exact intent-kind tuple and complete `DecisionContextConfig` equality already cover their respective fields. |
+| Host return metadata | Add `HostDecisionContext.action_taken` and `intent_summary` assertions to the existing longing lifecycle. An envelope action assertion did not cover these separately assembled fields. |
+| Optional initiative admission | Extend the existing sharing/inquiry cases to verify that sadness does not suppress the motive when the optional minimum-initiative gate is absent. |
+| Surface compiler and provider | Extend the existing provider test through projection, compilation and rendering for low/high directness and warmth, including compiled guidance items. Scalar partition tests alone did not cover that path. |
+| Chart and mobile contracts | Restore eight scoped checks: focus/compare, selected guide, fixed Y range, bounded requests, stable viewBox, individual non-scaling strokes, minimum widths and causal mobile layout. These are source guards, not rendered visual acceptance. |
+| Retired external-memory wiring | Restore two `run()` source guards and assert actual default compatibility fields are `None`. Constructor signature and injected sentinels did not prove the default/run behavior. |
+| Repeated formulas | Keep baseline/persona vectors and per-root counterfactuals in `test_candidate_conformance.py`. These exercise the actual adapter, including sadness and anger coefficients; do not restore a second feature harness for another arbitrary numeric point. |
+| Test-local status strings | Keep their assertions deleted. Comparing a constant defined in the same test file with its own literal does not validate production activation or calibration. |
+| UI detail and construction echoes | Seven removed pixel/density/duplicate-route checks remain removed as a deliberate maintenance tradeoff. Keep removal of constructor-input echoes and repeated missing-resource tests; this is not proof that every source-text check is useless. |
 
-The September 26 re-expansion audit proposed reductions but was read-only. Its
-classification of a case as a unique guarantee is not accepted merely because the
-case name says “isolation”: the actual call and observable assertion decide that.
-See `audits/MR_POST_MIGRATION_TEST_REEXPANSION_AUDIT_2026-09-26.md` for history.
+The restored API guard also counts direct `fetch` calls when `runtimeFetch` is
+present. Stroke checks bind each relevant SVG element, so an unrelated placeholder
+cannot compensate for a missing attribute. One-off source counterexamples confirmed
+detection of an added direct request and each of three removed stroke attributes.
+These experiments did not modify production files and are not new permanent suites.
 
-## Why retain substantial testing at all?
+## Review and disagreement
 
-MR has durable state, scoped authority, explicit admission and commit, crash/replay
-recovery, external payload validation, and independent host/renderer boundaries.
-Deleting a restart test because a normal save passed would lose a distinct failure
-mode. Conversely, repeating a shared linear scoring formula for every emotion
-does not establish a different algorithm. Shared behaviors get an owning suite;
-feature tests justify themselves through their real configuration or integration seam.
+Fresh-context internal reviews examined intent, Surface, UI/wiring and policy
+deletions. A subsequent patch review found the two weak UI assertions above; a
+bounded re-review confirmed those repairs. Reviewer agreement is not a correctness
+proof.
 
-There is no target test/source ratio or target test count. This audit does not
-certify the remaining 3,785 selected cases as independently necessary. The whole
-tree was inventoried; semantic consolidation concentrated on the repeated proactive,
-surface, UI-checklist, longitudinal, wiring and construction families above.
-Additional large suites contain real fault-injection and compatibility contracts
-as well as possible further consolidation; they are not deleted by filename or size.
+At the user's request, Grok Build (`grok-4.7-build`) reviewed a 437-line source
+packet covering four seams plus the coverage policy. It completed with
+`stopReason=end_turn`, with tools disabled and read-only settings. Earlier CLI
+attempts stopped without a review; they are not counted as approvals. This was a
+packet review, not a whole-repository inspection or executed mutation analysis.
 
-## Verification and limits
+Its actionable config/UI/retired-wiring/compiler findings are addressed above.
+Several conditional concerns were resolved by reading omitted source: both manifest
+paths identify the same file; `DecisionContextConfig` is a dataclass whose equality
+includes `mode`, defaulting to `LEGACY`; curiosity status constants are test-local;
+actual recipe coefficients have retained baseline and per-root vector checks.
+Thus the requested restoration of those duplicate assertions was not adopted.
 
-The changed areas passed three bounded local regressions: 158, 75, and 99 cases.
-These are execution results, not new independent guarantees. Collection confirms
-3,785 selected / 3,789 collected, with the same four live cases deselected.
-The final submitted revision must pass the existing full remote quality workflow,
-including the unchanged 94% coverage gate, plus host and historical-tool workflows.
-Consult the PR checks for that revision's result; this document records no future pass.
+Grok recommended retaining a failing coverage floor. Its concrete concern — losing
+an aggregate alarm — is accepted and documented. Retaining an arbitrary floor or
+changing its decimal precision does not establish its risk basis. The policy
+decision remains to report coverage without a global acceptance percentage. No
+claim is made that the reviewer endorsed that choice.
 
-No production code, algorithm, dependency, coverage threshold, skip or xfail policy
-was changed. Tests still do not certify SemanticBlock compilation or appraisal
-quality, real-model effectiveness, or production deployment.
+## Size, verification and limits
 
-Consolidation review preserved post-completion begin replay and conflicting-payload
-rejection inside the existing duplicate-completion test. A repeated commit alone
-does not cover that entry point; the feature-specific duplicate stacks stay removed.
+Historical baseline `857c3f4`: 3,956 selected cases, 95,354 active-test physical
+lines and 74,846 effective Python lines. The superseded `4c3fa79` state had 3,785
+selected cases and 89,952 / 70,712 lines. This repair restores ten test functions;
+it does not reinstate the duplicate feature harnesses. Current source totals and
+the final exact-commit CI result accompany the delivery evidence and PR.
+
+Production source remains 48,027 effective Python lines in `src/`, or 70,399 physical
+lines including frontend and host tools. Active-test measurements include helpers
+in `tests/` and `xiyue/tests/`, exclude research/historical code, and exclude blanks,
+standalone comments and docstrings only from the effective-line measure. These
+denominators must not be mixed to exaggerate a percentage.
+
+The initial repair passed 45 focused cases. The final UI/compiler revision passed
+18 focused cases; those overlap and must not be summed as independent guarantees.
+Full verification is performed once in remote CI on the submitted revision. A green
+run establishes observed compatibility, not necessity of all remaining tests.
+
+MR has distinct persistence, restart/replay, scope/authority, admission/commit and
+external-input failure modes. Those justify substantial testing but not a chosen
+number of tests. This audit covers the named deletion families; it does not certify
+every remaining case as necessary or assign a whole-repository redundancy rate.
+No production algorithm, dependency, skip or xfail policy is changed. Tests still
+do not certify SemanticBlock/appraisal quality, real-model effectiveness or deployment.

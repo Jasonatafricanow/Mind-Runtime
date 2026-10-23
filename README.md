@@ -250,6 +250,7 @@ python -m pytest -q
 ```
 
 The repository also uses Ruff, mypy, coverage, deterministic fixtures, restart tests, and certification inputs.
+Coverage is reported for diagnosis without an aggregate percentage minimum; pytest failures still block CI.
 
 Some static-analysis findings are historical debt rather than a claim that the entire tree is currently lint/type-clean. CI work tracks these separately from runtime tests.
 

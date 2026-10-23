@@ -12,6 +12,7 @@ Chinese display layer + multi-screen responsive contracts:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -106,3 +107,16 @@ def test_product_routes_serve_zh_pages(i18n_test_client: TestClient):
         res = i18n_test_client.get(route)
         assert res.status_code == 200, route
         assert expected in res.text, route
+
+
+def test_no_page_level_fixed_minimum_width():
+    css = (_STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    # Any min-width at or above ~700px would force a desktop layout on phone.
+    for match in re.finditer(r"min-width:\s*(\d+)px", css):
+        assert int(match.group(1)) < 700, match.group(0)
+
+
+def test_causal_mobile_layout_breakpoint_exists():
+    causal_html = (_STATIC_DIR / "causal.html").read_text(encoding="utf-8")
+    assert "max-width: 767px" in causal_html
+    assert "flex-direction: column" in causal_html

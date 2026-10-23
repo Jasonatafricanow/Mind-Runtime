@@ -31,6 +31,8 @@ def test_orchestrator_constructs_without_untracked_memory_files():
 
     orch = TurnOrchestrator(clock=_FakeClock(), trace=_FakeTrace())
     assert orch is not None
+    assert orch._em_authority is None
+    assert orch._em_reference_store is None
 
 
 # Test B — no retired default construction
@@ -140,3 +142,27 @@ def test_constructor_signature_preserves_compatibility_params():
     # Defaults must be None (no automatic construction)
     assert sig.parameters["external_memory_authority"].default is None
     assert sig.parameters["external_memory_reference_store"].default is None
+
+
+def test_orchestrator_run_does_not_call_gate_external_memory():
+    """Production orchestrator must not call gate_external_memory."""
+    import inspect
+
+    from mind_runtime.pipeline import orchestrator
+
+    src = inspect.getsource(orchestrator.TurnOrchestrator.run)
+    assert "gate_external_memory" not in src, (
+        "TurnOrchestrator.run still calls retired gate_external_memory"
+    )
+
+
+def test_run_path_does_not_pass_authorized_external_items():
+    """Orchestrator's run() path does not pass a stale authorized_external_items field."""
+    import inspect
+
+    from mind_runtime.pipeline import orchestrator
+
+    src = inspect.getsource(orchestrator.TurnOrchestrator.run)
+    assert "authorized_external_items" not in src, (
+        "TurnOrchestrator.run still passes retired authorized_external_items"
+    )
