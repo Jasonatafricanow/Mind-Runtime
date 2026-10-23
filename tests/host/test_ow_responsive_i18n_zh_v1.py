@@ -12,7 +12,6 @@ Chinese display layer + multi-screen responsive contracts:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -100,30 +99,6 @@ def test_product_ui_primary_labels_chinese():
     moments_html = (_STATIC_DIR / "moments.html").read_text(encoding="utf-8")
     assert "交互记录" in moments_html
     assert "已中止" in moments_html
-
-
-def test_mobile_breakpoints_exist():
-    css = (_STATIC_DIR / "style.css").read_text(encoding="utf-8")
-    # §9 tiers: laptop/tablet boundary 1023, phone boundary 767, small phone 480
-    assert "max-width: 1439px" in css
-    assert "max-width: 1023px" in css
-    assert "max-width: 767px" in css
-    assert "max-width: 480px" in css
-    # §12: phone chart height bounded 200-220px
-    assert "--chart-height: 210px" in css
-
-
-def test_no_page_level_fixed_minimum_width():
-    css = (_STATIC_DIR / "style.css").read_text(encoding="utf-8")
-    # Any min-width at or above ~700px would force a desktop layout on phone.
-    for match in re.finditer(r"min-width:\s*(\d+)px", css):
-        assert int(match.group(1)) < 700, match.group(0)
-
-
-def test_causal_mobile_layout_breakpoint_exists():
-    causal_html = (_STATIC_DIR / "causal.html").read_text(encoding="utf-8")
-    assert "max-width: 767px" in causal_html
-    assert "flex-direction: column" in causal_html
 
 
 def test_product_routes_serve_zh_pages(i18n_test_client: TestClient):

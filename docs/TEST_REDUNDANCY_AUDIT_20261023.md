@@ -1,5 +1,9 @@
 # Test redundancy audit — 2026-10-23
 
+Scope note: this was a textual-copy audit, not a necessity assessment. See
+[the subsequent behavior-level consolidation](TEST_NECESSITY_AUDIT_20261023.md)
+for code-size measurements and removal of repeated testing angles.
+
 Baseline: `70a88547b0fc9186465a96b7128de327ec3fc3da`.
 
 The baseline CI reported 3,967 passed, 7 skipped, 1 xfailed and 4 deselected,

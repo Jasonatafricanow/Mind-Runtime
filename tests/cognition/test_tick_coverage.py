@@ -1094,30 +1094,6 @@ def test_reader_known_rank_tie_falls_back_to_evidence_ref(tmp_path: Path) -> Non
     assert facts == (("counter.tie", "2"),)
 
 
-def test_build_components_accepts_stub_turn_engine_with_rules(tmp_path: Path) -> None:
-    """The stub-engine notice branch (pass) executes during normal wiring."""
-    clock = FakeClock(BASE)
-    orchestrator = TurnOrchestrator(
-        clock=clock,
-        trace=TraceRecorder(),
-        runtime_id="runtime-1",
-        fact_ingest=FactIngestService(
-            clock=clock, backend=SqliteFactBackend(tmp_path / "f.sqlite")
-        ),
-        persona=_persona(),
-        state_backend=SqliteStateBackend(tmp_path / "s.sqlite"),
-    )
-    components = runtime_loop.build_cognitive_components(
-        orchestrator=orchestrator,
-        origin_runtime_id="runtime-1",
-        intent_rules=_rules(),
-        action_policy_config=_policy_config(),
-        policy_resources=("proactive_message", "respond"),
-        intent_db=tmp_path / "i.sqlite",
-    )
-    assert "ticker" in components
-
-
 def test_reader_lower_ref_row_does_not_replace(tmp_path: Path) -> None:
     """Second observation with LOWER ref rank leaves the earlier value intact."""
     from mind_runtime.contracts import Authority, AuthorityLevel, Evidence, SyncFields
@@ -1151,27 +1127,3 @@ def test_reader_lower_ref_row_does_not_replace(tmp_path: Path) -> None:
     _admit("ev-aaa", "1")  # lower ref -> must NOT replace
     reader = observation_fact_reader(SimpleNamespace(fact_ingest=service))  # type: ignore[arg-type]
     assert reader.facts(scope) == (("counter.lower", "7"),)
-
-
-def test_build_components_resources_none_after_policy_ok(tmp_path: Path) -> None:
-    """policy config present + resources None -> resources raise (fail-closed)."""
-    clock = FakeClock(BASE)
-    orchestrator = TurnOrchestrator(
-        clock=clock,
-        trace=TraceRecorder(),
-        runtime_id="runtime-1",
-        fact_ingest=FactIngestService(
-            clock=clock, backend=SqliteFactBackend(tmp_path / "f.sqlite")
-        ),
-        persona=_persona(),
-        state_backend=SqliteStateBackend(tmp_path / "s.sqlite"),
-    )
-    with pytest.raises(ValueError, match="policy resources"):
-        runtime_loop.build_cognitive_components(
-            orchestrator=orchestrator,
-            origin_runtime_id="runtime-1",
-            intent_rules=_rules(),
-            action_policy_config=_policy_config(),
-            policy_resources=None,
-            intent_db=tmp_path / "i.sqlite",
-        )

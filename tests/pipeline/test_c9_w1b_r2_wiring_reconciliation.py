@@ -34,33 +34,7 @@ def test_orchestrator_constructs_without_untracked_memory_files():
 
 
 # Test B — no retired default construction
-def test_constructor_does_not_require_default_external_memory_authority():
-    """Source/runtime proof: DefaultExternalMemoryAuthority default path is gone."""
-    import inspect
-
-    from mind_runtime.pipeline import orchestrator
-
-    src = inspect.getsource(orchestrator.TurnOrchestrator.__init__)
-    # The retired default construction path is removed:
-    #   self._em_authority = external_memory_authority or DefaultExternalMemoryAuthority()
-    assert "DefaultExternalMemoryAuthority()" not in src, (
-        "Constructor still references retired DefaultExternalMemoryAuthority default"
-    )
-
-
 # Test C — no retired gate call
-def test_orchestrator_run_does_not_call_gate_external_memory():
-    """Production orchestrator must not call gate_external_memory."""
-    import inspect
-
-    from mind_runtime.pipeline import orchestrator
-
-    src = inspect.getsource(orchestrator.TurnOrchestrator.run)
-    assert "gate_external_memory" not in src, (
-        "TurnOrchestrator.run still calls retired gate_external_memory"
-    )
-
-
 # Test D — pending path survives (write/read path is DEFERRED per d0d5f4f)
 def test_pending_overlay_lifecycle_intact():
     """C9-W1B pending overlay write/read lifecycle is preserved unchanged."""
@@ -151,18 +125,6 @@ def test_external_memory_compatibility_slots_are_inert():
 
 
 # Test G — run path does not pass authorized_external_items
-def test_run_path_does_not_pass_authorized_external_items():
-    """Orchestrator's run() path does not pass a stale authorized_external_items field."""
-    import inspect
-
-    from mind_runtime.pipeline import orchestrator
-
-    src = inspect.getsource(orchestrator.TurnOrchestrator.run)
-    assert "authorized_external_items" not in src, (
-        "TurnOrchestrator.run still passes retired authorized_external_items"
-    )
-
-
 # Test H — constructor signature preserves compatibility params (no signature churn)
 def test_constructor_signature_preserves_compatibility_params():
     """external_memory_authority and external_memory_reference_store

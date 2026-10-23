@@ -24,9 +24,7 @@ NOT:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
 
 import pytest
 
@@ -34,7 +32,6 @@ from mind_runtime.contracts import (
     AffectiveDimensionProfile,
     AppraisalPath,
     AppraisalRouteDecision,
-    RuntimeState,
     Scope,
     ScopeDomain,
     SemanticAppraisal,
@@ -43,13 +40,12 @@ from mind_runtime.contracts import (
     Situation,
     SyncFields,
 )
-from mind_runtime.dynamics.engine import DynamicsEngine, Impulse
+from mind_runtime.dynamics.engine import DynamicsEngine
 from mind_runtime.dynamics.persona import PersonaProfile
 from mind_runtime.dynamics.ports import EngineEmotionalTransitionPort
-from mind_runtime.emotional_transition.effects import EventEffectRule, EffectMapper
+from mind_runtime.emotional_transition.effects import EffectMapper, EventEffectRule
 from mind_runtime.emotional_transition.semantic import SemanticRouter
 from mind_runtime.homeostasis.contracts import (
-    HomeostasisDecision,
     HomeostasisDisposition,
 )
 from mind_runtime.homeostasis.policy import (
@@ -57,8 +53,6 @@ from mind_runtime.homeostasis.policy import (
     SalienceThresholdPolicy,
 )
 from mind_runtime.state.definitions import StateDefinitionRegistry
-from mind_runtime.state.longitudinal import register_longitudinal_definition
-
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -243,7 +237,6 @@ def _run(
 # L7 dependency: EmotionalTransitionOutcome is defined in dynamics.ports
 from mind_runtime.dynamics.ports import EmotionalTransitionOutcome  # noqa: E402
 
-
 # ============================================================================
 # L1 — Explicit target: longitudinal contribution carries configured target
 # ============================================================================
@@ -306,16 +299,6 @@ def test_L2_no_longitudinal_target_means_no_longitudinal_impulse() -> None:
 # ============================================================================
 
 
-def test_L3_unregistered_longitudinal_target_resolves_fails_closed() -> None:
-    """resolve_longitudinal_target_target raises when the dimension is not
-    registered as a longitudinal StateDefinition."""
-    from mind_runtime.state.longitudinal import resolve_longitudinal_target
-
-    registry = StateDefinitionRegistry()
-    with pytest.raises(ValueError, match="not registered"):
-        resolve_longitudinal_target(registry, "agent.slow.anxiety")
-
-
 def test_L3_longitudinal_decision_target_unregistered_skipped_at_seam() -> None:
     """An orchestrator seam routing logic skips a SLOW_ACCEPT decision whose
     target is unregistered. The decision's disposition is not consumed by
@@ -334,19 +317,6 @@ def test_L3_longitudinal_decision_target_unregistered_skipped_at_seam() -> None:
 # ============================================================================
 # L4 — No implicit mapping: agent.affect.X never resolves to longitudinal
 # ============================================================================
-
-
-def test_L4_affect_dimension_never_resolves_to_longitudinal() -> None:
-    """resolve_longitudinal_target_target raised when the input is an affect
-    dimension. No prefix-strip, no suffix reuse, no fallback."""
-    from mind_runtime.state.longitudinal import resolve_longitudinal_target
-
-    registry = StateDefinitionRegistry()
-    register_longitudinal_definition(registry, key="agent.slow.anxiety")
-
-    # An affect-form dimension must NOT resolve to the slow-form
-    with pytest.raises(ValueError, match="not registered"):
-        resolve_longitudinal_target(registry, "agent.affect.anxiety")
 
 
 # ============================================================================
@@ -445,60 +415,6 @@ def test_L6_empty_evidence_refs_causes_h6_fail_closed_at_seam() -> None:
 # ============================================================================
 
 
-def test_L7_no_impulse_key_evidence_fallback_in_source() -> None:
-    """Verify the ports.py source has no `impulse_key,)` evidence fallback."""
-    import inspect
-
-    from mind_runtime.dynamics import ports
-
-    source = inspect.getsource(ports)
-    # Forbidden pattern: tuple like (impulse_key,) used as evidence fallback
-    forbidden = re.compile(
-        r"\(\s*impulse_key\s*,\s*\)",
-    )
-    matches = forbidden.findall(source)
-    assert not matches, (
-        f"L7: ports.py still has (impulse_key,) fallback. "
-        f"Found {len(matches)} match(es)."
-    )
-
-
-def test_L7_no_salience_estimator_in_source() -> None:
-    """Verify ports.py has no `salience = confidence` assignment in executable
-    code (AST scan). Docstrings and comments are excluded."""
-    import ast
-    import inspect
-
-    from mind_runtime.dynamics import ports
-
-    source = inspect.getsource(ports)
-    tree = ast.parse(source)
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "salience":
-                    value_repr = ast.unparse(node.value).strip()
-                    assert value_repr != "confidence", (
-                        f"L7: ports.py has `salience = {value_repr}` in "
-                        f"executable code. The salience estimator was removed."
-                    )
-
-
-def test_L7_no_default_1_0_confidence_in_source() -> None:
-    """Verify ports.py has no `1.0` defaults for confidence."""
-    import inspect
-
-    from mind_runtime.dynamics import ports
-
-    source = inspect.getsource(ports)
-    # Look for `.get(key, 1.0)` or `= 1.0` patterns
-    forbidden = re.compile(r"\.get\([^,]+,\s*1\.0\)")
-    assert not forbidden.search(source), (
-        "L7: ports.py still has `.get(..., 1.0)` default for confidence"
-    )
-
-
 # ============================================================================
 # L8 — Missing salience: fail closed at gate; writer not invoked
 # ============================================================================
@@ -525,21 +441,3 @@ def test_L8_missing_salience_vetoes_slow_accept() -> None:
     decisions = outcome.slow_decisions
     for d in decisions:
         assert d.decision != HomeostasisDisposition.SLOW_ACCEPT
-
-
-def test_L8_missing_salience_does_not_raise_unexpectedly() -> None:
-    """Missing salience with valid evidence_refs raises ONLY the gate's
-    fail-closed decision, not an exception in the seam. The longitudinal
-    candidate can exist; Homeostasis must not SLOW_ACCEPT."""
-    rule = EventEffectRule(
-        event_kind="plan_cancelled",
-        dimension="agent.affect.anxiety",
-        base_amount=0.2,
-        longitudinal_target_dimension="agent.slow.anxiety",
-        longitudinal_proposed_value=0.8,
-    )
-    # Appraisal: no salience, but has evidence
-    candidate, appr = _candidate(salience=None, evidence_refs=("ev-bw-1",))
-    # Should NOT raise — seam tolerates missing salience; gate handles it
-    outcome, _ = _run(rule, candidate=candidate, appraisals=appr)
-    assert outcome.slow_decisions is not None

@@ -77,6 +77,16 @@ source lines or branch numbers.
   isolation, idempotency, and fail-closed boundaries.
 - Before adding a test, search the nearest suite for the same contract. Extend an existing
   table or fixture instead of restating the setup in a new test.
+- Give each shared behavior one owning suite. Feature suites should test their actual
+  configuration and integration seam, not repeat the shared scoring, host lifecycle,
+  renderer-isolation, and permission matrix with a different emotion or intent label.
+- State the distinct failure a new case detects that existing cases cannot. A renamed
+  fixture, different arbitrary number, extra parameter row, or historical task ID does
+  not establish a new testing angle. Delete redundant cases instead of merely folding
+  them into a larger parameter table.
+- Prefer assertions on the result of a real operation over constructor-input echoes,
+  source-text searches, or CSS-value checklists. Static checks do not establish rendered
+  usability, permission enforcement, or runtime data flow.
 - Prefer `pytest.mark.parametrize`, small builders, and shared fixtures for symmetric
   environments, invalid-input matrices, thresholds, and fault-injection matrices.
 - Do not add `test_*_coverage_gaps.py` cases whose only purpose is to hit an implementation
