@@ -646,6 +646,13 @@ def test_z_duplicate_completion_is_idempotent(tmp_path: Path):
     assert res2.status == HostTurnStatus.ALREADY_PROCESSED
     assert res2.outcome == HostStatus.ALREADY_PROCESSED
 
+    # Completed wake replay must not start a new turn, including a forged payload.
+    replay = adapter.begin_proactive_turn(wake)
+    assert replay.status == HostTurnStatus.ALREADY_PROCESSED
+    conflict = adapter.begin_proactive_turn(replace(wake, action_type="conflicting_action"))
+    assert conflict.status == HostTurnStatus.FAILED
+    assert conflict.reason_codes == ("wake_conflict", "conflicting_wake_payload")
+
 
 def test_aa_conflicting_replay_fails_closed(tmp_path: Path):
     """Test AA: conflicting replay fails closed."""

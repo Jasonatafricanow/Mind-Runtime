@@ -17,8 +17,8 @@ Research, historical tools/tests, documentation and data fixtures are excluded.
 | Measure | Before | After |
 | --- | ---: | ---: |
 | Active test Python files | 310 | 306 |
-| Active test physical lines | 95,354 | 89,945 |
-| Active test effective Python lines | 74,846 | 70,707 |
+| Active test physical lines | 95,354 | 89,952 |
+| Active test effective Python lines | 74,846 | 70,712 |
 | Production `src/` effective Python lines | 48,027 | 48,027 |
 | Test / production effective Python lines | 155.8% | 147.2% |
 | Test share of test + production effective Python lines | 60.9% | 59.6% |
@@ -31,8 +31,8 @@ Frontend physical lines: HTML 3,936, JavaScript 1,320, CSS 811. Host Python:
 2,006. Production Python physical lines: 62,326. Ratios use matching units;
 the Python-only ratio must not be presented as the whole repository's proportion.
 
-This change removes 171 test functions/cases and a net 5,409 physical lines
-(4,139 effective Python lines). It does not add parameter-expanded replacement
+This change removes 171 test functions/cases and a net 5,402 physical lines
+(4,134 effective Python lines). It does not add parameter-expanded replacement
 cases. Selected-case reduction is 4.3%; physical test-code reduction is 5.7%.
 These are measured reductions, not an estimate of all remaining redundancy.
 
@@ -82,3 +82,7 @@ Consult the PR checks for that revision's result; this document records no futur
 No production code, algorithm, dependency, coverage threshold, skip or xfail policy
 was changed. Tests still do not certify SemanticBlock compilation or appraisal
 quality, real-model effectiveness, or production deployment.
+
+Consolidation review preserved post-completion begin replay and conflicting-payload
+rejection inside the existing duplicate-completion test. A repeated commit alone
+does not cover that entry point; the feature-specific duplicate stacks stay removed.
