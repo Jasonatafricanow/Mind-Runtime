@@ -58,6 +58,9 @@ Bindings are checked before use rather than inferred from arbitrary paths. Multi
 
 ### Memory and retrieval
 
+The current MR-Mem core can supply full Search readout through the existing historical-context port.
+See [core integration and native incremental delivery](docs/mr-mem-core.md).
+
 The memory layer separates stored records from retrieval.
 
 ```text

@@ -71,3 +71,21 @@ jobs:
       - name: Verify MR-LCE binding
         run: python -m pytest tests/lce_binding tests/memory_retrieval -q
 
+
+  mrmem-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - name: Install paired current MR-Mem core
+        run: >-
+          python -m pip install
+          "mr-mem[aml] @ git+https://github.com/Jasonatafricanow/MR-Mem.git@bb0d296dfa60718740e7cbb3f99002f360c66b00"
+      - name: Verify core contract and native delivery without external models
+        run: >-
+          python -m pytest tests/host/test_mr_mem_core.py
+          tests/host/test_mr_mem_core_history.py tests/host/test_mr_mem_delivery.py
+          xiyue/tests/test_current_mr_mem_core.py -q
