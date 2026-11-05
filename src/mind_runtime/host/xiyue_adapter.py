@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from mind_runtime.emotional_transition.semantic import SemanticCandidateProvider
     from mind_runtime.expression.context import DecisionContextConfig
     from mind_runtime.homeostasis.contracts import HomeostasisGate
+    from mind_runtime.integrations.mr_mem_core import MrMemClient
     from mind_runtime.memory.retrieval import RetrievalProvider
     from mind_runtime.runtime_binding import RuntimeBinding
     from mind_runtime.situation.builder import SituationBuilder
@@ -156,7 +157,11 @@ class XiyueMRAdapter:
         runtime_id: str = "xiyue",
         user_id: str = "user",
         persona_id: str | None = None,
+        memory: MrMemClient | None = None,
     ) -> None:
+        if memory is not None and memory.user_id != user_id:
+            raise ValueError("MR-Mem client and MR adapter must share user_id")
+        self.memory = memory
         self._port = port
         self._runtime_id = runtime_id
         self._user_id = user_id
@@ -317,6 +322,8 @@ class XiyueMRAdapter:
 
 def default_adapter(
     *,
+    user_id: str | None = None,
+    mr_mem: MrMemClient | None = None,
     persona: PersonaProfile | None = None,
     effect_rules: tuple[EventEffectRule, ...] = (),
     definitions: StateDefinitionRegistry | None = None,
@@ -368,6 +375,16 @@ def default_adapter(
     )
     from mind_runtime.shadow.runtime_loop import build_runtime_stack
 
+    user_id = user_id if user_id is not None else os.environ.get("MR_USER_ID", "user")
+    if not isinstance(user_id, str) or not user_id.strip() or user_id != user_id.strip():
+        raise ValueError("MR user_id must be nonempty and normalized")
+    if mr_mem is not None:
+        if mr_mem.user_id != user_id:
+            raise ValueError("MR-Mem client and MR must share user_id")
+        if (memory_enabled or lce_enabled or lce_inspiration_enabled
+                or retrieval_provider is not None):
+            raise ValueError("MR-Mem core cannot share the legacy Memory/LCE composition")
+
     class _UtcClock:
         def now(self) -> datetime:
             return datetime.now(UTC)
@@ -391,12 +408,21 @@ def default_adapter(
 
     from mind_runtime.memory.retrieval_composition import build_memory_history
 
+    history = build_memory_history(
+        binding, provider=retrieval_provider, lce_enabled=lce_enabled,
+        thread_enabled=memory_enabled,
+    ) if mr_mem is None else None
+    if mr_mem is not None:
+        from mind_runtime.integrations.mr_mem_core_history import MrMemCoreHistory
+
+        history = MrMemCoreHistory(mr_mem)
+
     orchestrator, _bridge = build_runtime_stack(
         clock=_UtcClock(),
         facts_db=facts_db,
         state_db=state_db,
         origin_runtime_id=binding.runtime_id,
-        user_id="user",
+        user_id=user_id,
         persona=persona,
         effect_rules=effect_rules,
         definitions=definitions,
@@ -411,12 +437,7 @@ def default_adapter(
         memory_binding=binding,
         lce_enabled=lce_enabled,
         lce_inspiration_enabled=lce_inspiration_enabled,
-        historical_context=build_memory_history(
-            binding,
-            provider=retrieval_provider,
-            lce_enabled=lce_enabled,
-            thread_enabled=memory_enabled,
-        ),
+        historical_context=history,
         intent_rules=intent_rules,
         action_policy_config=action_policy_config,
         policy_resources=policy_resources,
@@ -425,4 +446,4 @@ def default_adapter(
         expression_guard=expression_guard,
     )
     port = MindRuntimeHostAdapter(orchestrator=orchestrator)
-    return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id="user")
+    return XiyueMRAdapter(port, runtime_id=binding.runtime_id, user_id=user_id, memory=mr_mem)

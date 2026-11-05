@@ -86,7 +86,8 @@ class MrMemClient:
         return result
 
     def search(self, query: str, *, top_k: int = 20) -> dict[str, Any]:
-        if not query.strip() or len(query) > 4096 or type(top_k) is not int or not 1 <= top_k <= 100:
+        if (not query.strip() or len(query) > 4096
+                or type(top_k) is not int or not 1 <= top_k <= 100):
             raise ValueError("MR-Mem query needs 1..4096 characters and top_k in 1..100")
         result = self._request("/search", {"user_id": self.user_id, "query": query,
                                          "top_k": top_k})

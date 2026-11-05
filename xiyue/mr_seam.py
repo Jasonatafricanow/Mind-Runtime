@@ -271,11 +271,24 @@ def get_mr_adapter():
                 inspiration_enabled = _env_enabled("MR_LCE_INSPIRATION_ENABLED")
                 lce_enabled = inspiration_enabled or _env_enabled("MR_LCE_ENABLED")
                 memory_enabled = lce_enabled or _env_enabled("MR_MEMORY_ENABLED")
+                mr_mem = None
+                if _env_enabled("MR_MEM_CORE_ENABLED"):
+                    from mind_runtime.integrations.mr_mem_core import MrMemClient
+
+                    if _env_enabled("SEMANTIC_DELTA_V1_ENABLED") or memory_enabled:
+                        raise ValueError("MR-Mem core requires the legacy memory writers disabled")
+                    mr_mem = MrMemClient(
+                        os.environ["MR_MEM_URL"], os.environ["MR_USER_ID"],
+                        token_env=os.environ.get("MR_MEM_TOKEN_ENV"),
+                        timeout=float(os.environ.get("MR_MEM_TIMEOUT", "120")),
+                        exclusive_instance=_env_enabled("MR_MEM_EXCLUSIVE_INSTANCE"),
+                    )
                 if _env_enabled("SEMANTIC_DELTA_V1_ENABLED"):
                     # Native Delta admission owns the online memory path in composition.
                     # Keep the legacy Raw -> extractor -> pair-adapter pipeline disconnected.
                     memory_enabled = False
                 adapter = default_adapter(
+                    mr_mem=mr_mem,
                     persona=composition["persona"],
                     situation=composition["situation"],
                     decision_context_config=composition["decision_context_config"],
