@@ -35,13 +35,14 @@ class MrMemCoreHistory:
             return None
         result = self.client.search(text, top_k=min(self.budget.max_items, 100))
         remaining, seen, selected = self.budget.max_characters, set(), []
-        for row in result["data"]:
+        for rank, row in enumerate(result["data"]):
             key, content = row["id"], row["content"]
             if key in seen or not content.strip() or len(content) > remaining:
                 continue
             locator = self.prefix + quote(key, safe="")
             selected.append(HistoricalContextItem(
-                item_id=locator, scope=scope, external_id=key,
+                item_id=self.prefix + f"{rank:03d}:" + quote(key, safe=""),
+                scope=scope, external_id=key,
                 kind="memory.mr_mem_projection", proposition=content,
                 source_refs=(locator,), confidence=None, relevance_hint=None,
             ))

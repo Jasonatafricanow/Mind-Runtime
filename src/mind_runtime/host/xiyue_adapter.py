@@ -384,6 +384,9 @@ def default_adapter(
         if (memory_enabled or lce_enabled or lce_inspiration_enabled
                 or retrieval_provider is not None):
             raise ValueError("MR-Mem core cannot share the legacy Memory/LCE composition")
+        if (decision_context_config is not None and "memory.mr_mem_projection"
+                not in decision_context_config.allowed_history_kinds):
+            raise ValueError("DecisionContext must allow memory.mr_mem_projection for MR-Mem core")
 
     class _UtcClock:
         def now(self) -> datetime:

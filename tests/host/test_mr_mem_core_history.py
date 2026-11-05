@@ -73,3 +73,34 @@ def test_default_composition_consumes_core_across_restart_and_replay(tmp_path, m
     assert replay is not None and len(calls) == before
     with pytest.raises(ValueError, match="legacy"):
         default_adapter(binding=binding, user_id="u1", mr_mem=client, memory_enabled=True)
+
+
+def test_core_history_reaches_existing_body_context_compiler_without_reordering(monkeypatch):
+    from dataclasses import replace
+
+    from tests.expression.test_context import make_compiler, make_compiler_input
+
+    from mind_runtime.expression.renderer import DeterministicContextRenderer
+
+    # Deliberately opposite lexical IDs: the core's returned order is authoritative
+    # for this derived projection, even through the existing context budget/sort.
+    monkeypatch.setattr(MrMemClient, "search", lambda *a, **k: {"data": [
+        {"id": "line:z", "content": "FIRST core line"},
+        {"id": "raw:a", "content": "SECOND original snippet"},
+    ]})
+    bundle = read(MrMemCoreHistory(MrMemClient("http://localhost:8765", "u1")))
+    from mind_runtime.host.xiyue_adapter import default_adapter
+
+    with pytest.raises(ValueError, match="must allow"):
+        default_adapter(user_id="u1", mr_mem=MrMemClient("http://localhost:8765", "u1"),
+                        decision_context_config=make_compiler()._config)
+    compiler = make_compiler(allowed_history_kinds=("memory.mr_mem_projection",))
+    prepared = make_compiler_input(scope=SCOPE)
+    situation = replace(prepared.situation, historical_context=replace(
+        bundle, origin_runtime_id=prepared.origin_runtime_id,
+    ))
+    context, _ = compiler.compile(replace(prepared, situation=situation))
+    rendered = DeterministicContextRenderer(compiler._config).render(context)
+    text = str(rendered)
+    assert "FIRST core line" in text and "SECOND original snippet" in text
+    assert text.index("FIRST core line") < text.index("SECOND original snippet")

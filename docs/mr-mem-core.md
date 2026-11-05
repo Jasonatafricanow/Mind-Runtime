@@ -12,6 +12,11 @@ set `MR_MEM_TOKEN_ENV` to the name of the environment variable holding its token
 `MR_MEM_TIMEOUT` defaults to 120 seconds. Keep `MR_MEMORY_ENABLED`,
 `MR_LCE_ENABLED`, `MR_LCE_INSPIRATION_ENABLED` and `SEMANTIC_DELTA_V1_ENABLED` off.
 The new reader and the legacy writers are mutually exclusive.
+If a DecisionContext configuration is supplied, its `allowed_history_kinds` must
+explicitly include `memory.mr_mem_projection`; composition rejects a missing
+allowlist entry rather than silently dropping the new history. Its existing
+history/render budgets still apply. The production SURFACE_V1 renderer carries
+admitted history to Body; legacy HI-2 summary rendering is not full memory text.
 
 Programmatic composition uses the same interface:
 
