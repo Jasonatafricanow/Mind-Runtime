@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,23 +40,6 @@ from observation_window.web.wiring import (
 
 
 log = logging.getLogger("observation_window.web.runtime")
-
-
-def _patch_sqlite_for_threading() -> None:
-    """Allow sqlite3 connections across uvicorn worker threads.
-
-    MR's durable backends use ``check_same_thread=True`` (the safe
-    default).  The Web API is read-only, so this relaxation is
-    safe for the OW API process.  MR's own durability (writes from
-    the orchestrator process) is unaffected.
-    """
-    real_connect = sqlite3.connect
-
-    def _loose_connect(*a, **kw):
-        kw.setdefault("check_same_thread", False)
-        return real_connect(*a, **kw)
-
-    sqlite3.connect = _loose_connect
 
 
 def build_ow_app_from_db_dir(
@@ -94,7 +76,6 @@ def build_ow_app_from_db_dir(
     state_db = str(db_dir / "cognition_state.sqlite")
     facts_db = str(db_dir / "facts.sqlite")
 
-    _patch_sqlite_for_threading()
 
     from mind_runtime.facts.persistence import SqliteFactBackend
     from mind_runtime.state.persistence import (
@@ -109,9 +90,9 @@ def build_ow_app_from_db_dir(
     )
     from observation_window.live_trace import OWLiveTraceSource
 
-    state_be = SqliteStateBackend(state_db)
-    fact_be = SqliteFactBackend(facts_db)
-    cm_be = SqliteCommitMarkerStore(state_db)
+    state_be = SqliteStateBackend(state_db, check_same_thread=False)
+    fact_be = SqliteFactBackend(facts_db, check_same_thread=False)
+    cm_be = SqliteCommitMarkerStore(state_db, check_same_thread=False)
 
     cache = LiveTraceCache(maxlen=maxlen)
     live_source = OWLiveTraceSource()
@@ -189,7 +170,6 @@ def compose_ow_app(
     authoritative binding (no paths, no heuristics at this boundary — the
     resolved context already carries the source handles).
     """
-    _patch_sqlite_for_threading()
 
     from mind_runtime.facts.persistence import SqliteFactBackend
     from mind_runtime.state.persistence import (
@@ -199,9 +179,9 @@ def compose_ow_app(
     from observation_window.binding import ObservationContext
     from observation_window.live_trace import OWLiveTraceSource
 
-    state_be = SqliteStateBackend(str(resolved.state_db))
-    fact_be = SqliteFactBackend(str(resolved.facts_db))
-    cm_be = SqliteCommitMarkerStore(str(resolved.state_db))
+    state_be = SqliteStateBackend(str(resolved.state_db), check_same_thread=False)
+    fact_be = SqliteFactBackend(str(resolved.facts_db), check_same_thread=False)
+    cm_be = SqliteCommitMarkerStore(str(resolved.state_db), check_same_thread=False)
 
     cache = LiveTraceCache(maxlen=maxlen)
     live_source = OWLiveTraceSource()

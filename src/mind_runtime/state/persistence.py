@@ -318,13 +318,14 @@ class SqliteStateBackend:
         path: str | Path,
         *,
         connection: sqlite3.Connection | None = None,
+        check_same_thread: bool = True,
     ) -> None:
         self._path = str(path)
         if connection is not None:
             self._conn = connection
             self._owns_conn = False
         else:
-            self._conn = sqlite3.connect(self._path)
+            self._conn = sqlite3.connect(self._path, check_same_thread=check_same_thread)
             self._owns_conn = True
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
@@ -801,13 +802,14 @@ class SqliteCommitMarkerStore:
         path: str | Path,
         *,
         connection: sqlite3.Connection | None = None,
+        check_same_thread: bool = True,
     ) -> None:
         self._path = str(path)
         if connection is not None:
             self._conn = connection
             self._owns_conn = False
         else:
-            self._conn = sqlite3.connect(self._path)
+            self._conn = sqlite3.connect(self._path, check_same_thread=check_same_thread)
             self._owns_conn = True
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_MARKER_SCHEMA)

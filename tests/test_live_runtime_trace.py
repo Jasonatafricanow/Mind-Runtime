@@ -451,3 +451,20 @@ def test_ingress_strip_host_system_note_preserves_user_text():
     # 4. Non-string input: returns unchanged.
     assert _strip_host_system_note(None) is None
     assert _strip_host_system_note(42) == 42
+
+
+def test_observation_window_does_not_replace_process_sqlite_connect(tmp_path):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    original_connect = sqlite3.connect
+    build_ow_app_from_db_dir(tmp_path)
+    assert sqlite3.connect is original_connect
+    connection = sqlite3.connect(":memory:")
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(connection.execute, "SELECT 1")
+            with pytest.raises(sqlite3.ProgrammingError):
+                result.result()
+    finally:
+        connection.close()

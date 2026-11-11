@@ -453,9 +453,9 @@ class FactBackend(Protocol):
 class SqliteFactBackend:
     """SQLite-backed ``FactBackend`` keeping the exact first-batch tables."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, check_same_thread: bool = True) -> None:
         self._path = str(path)
-        self._conn = sqlite3.connect(self._path)
+        self._conn = sqlite3.connect(self._path, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._migrate_observations()
