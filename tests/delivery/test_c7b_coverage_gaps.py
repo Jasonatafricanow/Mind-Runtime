@@ -1476,7 +1476,9 @@ def test_kill_switch_close_no_op_when_connection_not_owned(
         # The switch here is owned by the backend; .close() is a
         # no-op.
         backend.kill_switch().close()
-        # The backend's connection is still usable.
-        backend.kill_switch().state()
+        # The backend's connection is still usable: a write after close()
+        # lands and reads back through a fresh switch handle.
+        backend.kill_switch().set_global(on=False, updated_at=datetime.now(tz=UTC))
+        assert backend.kill_switch().state() == "off"
     finally:
         backend.close()
