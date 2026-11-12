@@ -542,4 +542,5 @@ def test_L8_missing_salience_does_not_raise_unexpectedly() -> None:
     candidate, appr = _candidate(salience=None, evidence_refs=("ev-bw-1",))
     # Should NOT raise — seam tolerates missing salience; gate handles it
     outcome, _ = _run(rule, candidate=candidate, appraisals=appr)
-    assert outcome.slow_decisions is not None
+    # The docstring's contract: no exception, and the gate never SLOW_ACCEPTs.
+    assert all(d.decision != HomeostasisDisposition.SLOW_ACCEPT for d in outcome.slow_decisions)

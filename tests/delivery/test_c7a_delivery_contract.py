@@ -249,7 +249,8 @@ def test_request_store_duplicate_record_is_idempotent() -> None:
     store.record(request)
     # The same record is a no-op (immutable bytes: same id + same fields).
     store.record(request)
-    assert store.get(request.request_id) is not None
+    assert store.all() == (request,)
+    assert store.get(request.request_id) == request
 
 
 def test_request_sync_fields_returns_typed_identity() -> None:
