@@ -58,9 +58,7 @@ from mind_runtime.contracts import (
     SyncFields,
 )
 from mind_runtime.dynamics.fast_functions import (
-    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
-    FAST_FUNCTION_V1_SPECS,
     FastFunctionKind,
     FastStateStatus,
     validate_sharing_urge_anti_spam_invariant,
@@ -260,13 +258,6 @@ def _build_share_test_stack(
 
 
 # ── SECTION 13: REQUIRED STRUCTURAL TESTS (A - K) ────────────────────────────
-
-
-def test_a_fast_function_v1_registry_has_exactly_eight_entries() -> None:
-    """A. FAST_FUNCTION_V1_REGISTRY still has exactly 8 entries."""
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
-    assert len(FAST_FUNCTION_V1_SPECS) == 8
-    assert FAST_FUNCTION_V1_COUNT == 8
 
 
 def test_b_sharing_urge_maps_to_proactive_share() -> None:

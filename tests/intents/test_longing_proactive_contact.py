@@ -1632,9 +1632,8 @@ def test_wake_does_not_synthesize_host_turn_request(tmp_path: Path):
 # ── INVARIANTS & TYPING TESTS ────────────────────────────────────────────────
 
 
-def test_fast_function_v1_registry_count_remains_eight():
-    """FAST_FUNCTION_V1_REGISTRY count remains exactly 8."""
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
+def test_fast_function_v1_registry_keeps_longing_contact():
+    """Longing stays registered as proactive contact (registry size: tests/dynamics/test_fast_functions.py)."""
     longing_spec = FAST_FUNCTION_V1_REGISTRY.get("agent.affect.longing")
     assert longing_spec is not None
     assert longing_spec.function_kind == FastFunctionKind.PROACTIVE_CONTACT

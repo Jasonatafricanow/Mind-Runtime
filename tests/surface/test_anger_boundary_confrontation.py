@@ -46,9 +46,7 @@ from mind_runtime.contracts import (
 from mind_runtime.dynamics.fast_functions import (
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION,
     ANGER_CONTROLS_BOUNDARY_PRESSURE_NOT_PERMISSION_INVARIANT,
-    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
-    FAST_FUNCTION_V1_SPECS,
     FastFunctionKind,
     FastStateStatus,
 )
@@ -240,13 +238,6 @@ def _build_expression_harness(
 # ==============================================================================
 # SECTION 15: Fast Function Lock, Surface Recipe v2, and Dynamics Monotonicity
 # ==============================================================================
-
-
-def test_a_fast_function_v1_count_and_registry_intact() -> None:
-    """A. FAST_FUNCTION_V1 contains exactly 8 entries and matches registry."""
-    assert FAST_FUNCTION_V1_COUNT == 8
-    assert len(FAST_FUNCTION_V1_SPECS) == 8
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
 
 
 def test_b_anger_maps_to_boundary_confrontation_active() -> None:

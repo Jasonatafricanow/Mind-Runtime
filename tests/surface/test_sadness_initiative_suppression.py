@@ -51,7 +51,6 @@ from mind_runtime.contracts import (
     SyncFields,
 )
 from mind_runtime.dynamics.fast_functions import (
-    FAST_FUNCTION_V1_COUNT,
     FAST_FUNCTION_V1_REGISTRY,
     SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION,
     SADNESS_SUPPRESSES_INITIATIVE_PRESSURE_NOT_PERMISSION_INVARIANT,
@@ -267,10 +266,8 @@ def _build_expression_harness(
 # ==============================================================================
 
 
-def test_a_fast_function_v1_count_and_registry_intact() -> None:
-    """A. FAST_FUNCTION_V1 contains exactly 8 entries and sadness is present."""
-    assert FAST_FUNCTION_V1_COUNT == 8
-    assert len(FAST_FUNCTION_V1_REGISTRY) == 8
+def test_a_sadness_is_registered() -> None:
+    """A. sadness is present (the registry size is owned by tests/dynamics/test_fast_functions.py)."""
     assert FAST_STATE_KEY in FAST_FUNCTION_V1_REGISTRY
 
 
