@@ -341,11 +341,3 @@ class TestBundleConjunctionAndTurnFailClosed:
         assert "503" in verdict.reason
         assert "temporarily unavailable" in (verdict.error_message or "") or "failed" in (verdict.error_message or "")
 
-
-class TestRequiredRuntimeFailureSeam:
-    """TEST 7: Full gateway seam execution under required provider failure vs valid abstention control."""
-
-    def test_required_provider_failure_fails_closed_and_aborts_cleanly(
-        self, tmp_path, monkeypatch
-    ):
-        """Prove all 9 points of TEST 7 with actual Xiyue adapter and TurnOrchestrator."""

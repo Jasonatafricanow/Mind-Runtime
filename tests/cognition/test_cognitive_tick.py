@@ -412,7 +412,8 @@ def test_ct6_pending_reply_defers_proactive(tmp_path: Path) -> None:
     assert report.policy_deferred == 1
     current = stack["intent_backend"].current(scope)
     assert current[0].status is IntentStatus.DEFERRED
-    assert "pending_reply" in current[0].cause_refs or True
+    transitions = stack["intent_backend"].transitions(scope, current[0].intent_id)
+    assert transitions[-1].reason_codes == ("pending_reply",)
 
 
 # ── CT7: cooldown active -> defer; expired -> allow ─────────────────────────

@@ -250,8 +250,9 @@ def test_factual_payloads_and_values_are_deeply_immutable_and_hashable() -> None
     evidence = make_evidence()
     observation = make_observation()
     state = make_state()
-    for mapping in (evidence.payload, observation.value, state.value):
-        assert hash(mapping) == hash(mapping)
+    for mapping, rebuilt in zip((evidence.payload, observation.value, state.value), (make_evidence().payload, make_observation().value, make_state().value), strict=True):
+        assert mapping == rebuilt
+        assert {mapping: "stored"}[rebuilt] == "stored"
     assert as_mapping(evidence.payload)["labels"] == ("food",)
     assert as_mapping(observation.value)["sources"] == ("evidence-1",)
     assert as_mapping(state.value)["history"] == ("observed",)
@@ -273,7 +274,9 @@ def test_nested_mapping_and_set_values_are_deeply_immutable_and_hashable() -> No
     )
     nested = as_mapping(observation.value)["nested"]
     assert as_mapping(nested)["labels"] == frozenset({"food"})
-    assert hash(nested) == hash(nested)
+    rebuilt = freeze_mapping({"labels": {"food"}}, "nested")
+    assert nested == rebuilt
+    assert {nested: "stored"}[rebuilt] == "stored"
 
 
 def test_syncability_is_limited_to_facts_and_committed_transitions() -> None:
@@ -553,8 +556,8 @@ def test_observation_and_runtime_state_allow_immutable_scalar_values(value: obje
 
     assert observation.value == value
     assert state.value == value
-    assert hash(observation.value) == hash(observation.value)
-    assert hash(state.value) == hash(state.value)
+    assert hash(observation.value) == hash(value)
+    assert hash(state.value) == hash(value)
 
 
 @pytest.mark.parametrize("value", [bytearray(b"mutable"), object()])
@@ -573,8 +576,9 @@ def test_contracts_and_structured_values_have_stable_hashes() -> None:
     state = make_state()
     transition = make_transition()
 
-    for value in (evidence, observation, state, transition, evidence.payload, observation.value):
-        assert hash(value) == hash(value)
+    for value, rebuilt in zip((evidence, observation, state, transition, evidence.payload, observation.value), (make_evidence(), make_observation(), make_state(), make_transition(), make_evidence().payload, make_observation().value), strict=True):
+        assert value == rebuilt
+        assert {value: "stored"}[rebuilt] == "stored"
 
 
 def test_frozen_mapping_rejects_non_mapping_and_has_mapping_behavior() -> None:
@@ -625,7 +629,8 @@ def test_state_definition_is_declarative_and_has_only_approved_value_types() -> 
         bounds={"minimum": 0, "maximum": 1},
     )
     assert as_mapping(definition.bounds)["minimum"] == 0
-    assert hash(definition) == hash(definition)
+    rebuilt = StateDefinition(**{field.name: getattr(definition, field.name) for field in fields(definition)})
+    assert {definition: "stored"}[rebuilt] == "stored"
     assert {member.value for member in StateValueType} == {
         "categorical",
         "boolean",

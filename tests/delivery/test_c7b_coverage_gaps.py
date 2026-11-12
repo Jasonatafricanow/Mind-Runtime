@@ -1007,6 +1007,7 @@ def test_kill_switch_unblock_target_no_op_when_not_blocked(
         backend.kill_switch().unblock_target(
             "user-1", updated_at=datetime.now(tz=UTC),
         )
+        assert backend.kill_switch().target_blocks() == {}
     finally:
         backend.close()
 
@@ -1274,7 +1275,7 @@ def test_persistence_kill_switch_corrupt_channel_blocks_bad_json(
     backend = SqliteDeliveryBackend(db_path)
     try:
         with pytest.raises(ValueError, match="must be a JSON object"):
-            backend.kill_switch().state()
+            assert backend.kill_switch().state() == "on"
     finally:
         backend.close()
 

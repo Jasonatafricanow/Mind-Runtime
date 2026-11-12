@@ -777,15 +777,13 @@ def test_openai_adapter_happy_path_parses_chat_envelope() -> None:
 
 
 def test_guarded_egress_observations_non_mapping_payload_untouched() -> None:
-    from collections.abc import Mapping as _M
-
     guarded = _guarded(EgressMode.SANITIZED, names=("嘉森",))
     obs = _obs(value=("tuple", "payload"))
     out = guarded.egress_observations((obs,))
     value = out[0].value
     assert not isinstance(value, str)
-    mapping_value = obs.value if isinstance(obs.value, _M) else None
-    assert mapping_value is not None or True
+    assert out == (obs,)
+    assert value == ("tuple", "payload")
 
 
 def test_commit_marker_store_idempotent_and_queryable(tmp_path: Path) -> None:
