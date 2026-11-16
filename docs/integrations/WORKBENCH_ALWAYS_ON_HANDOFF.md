@@ -61,6 +61,8 @@ LLM inference and not a perpetual MR tool-execution loop.
 
 ## Human participation and progressive responsibility transfer
 
+Normative WorkBench business contract: [ADR-0003 — Progressive Delegation](https://github.com/Jasonatafricanow/Agent-WorkBench/blob/feat/modular-backend-20261116/docs/ADR-0003-PROGRESSIVE-DELEGATION.md).
+
 The human is a first-class participant in the WorkBench business loop, not a
 mandatory trigger for every Agent Run. WorkBench owns the accountable owner,
 current executor, work-class delegation profile, autonomy level, Human Action
