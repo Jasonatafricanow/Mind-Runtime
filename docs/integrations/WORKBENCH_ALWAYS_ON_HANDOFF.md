@@ -59,6 +59,33 @@ LLM inference and not a perpetual MR tool-execution loop.
 - `MR Observation Window`: read-only MR state inspection; not the
   WorkBench dashboard nor a path to write MR state.
 
+## Human participation and progressive responsibility transfer
+
+The human is a first-class participant in the WorkBench business loop, not a
+mandatory trigger for every Agent Run. WorkBench owns the accountable owner,
+current executor, work-class delegation profile, autonomy level, Human Action
+Inbox, and auditable transfer/override history. Authorized independent work
+continues while the human is offline; genuinely human-dependent work remains
+pending with an explicit due/escalation policy.
+
+This is a WorkBench business responsibility, not a new MR scheduler or
+permission system. MR can provide cognitive context, relationship-aware
+interpretation, intent tendency or a WakeSignal that suggests attention.
+It cannot assign a WorkBench executor, promote an autonomy level, approve a
+business action, or grant a Host tool capability. The Body/Agent Host still
+owns final tool policy and revalidates permission at every call/resume.
+
+MR-Mem may inform how the Agent understands prior experience and preferences,
+but it is not the authority for current delegation or consent. A semantic
+memory or successful prior Run never changes a WorkBench policy by itself.
+Only a current authenticated human decision or a pre-approved, evidence-gated
+WorkBench policy may change responsibility. Human override/revocation must
+take effect immediately for future dispatch; independent work should not be
+blocked by unrelated pending human requests.
+
+The four dimensions remain separate: WorkBench task state, WorkBench
+responsibility/autonomy, MR cognitive wake/intent, and Host Run/Session state.
+
 ## Required negative tests at system integration
 
 - WorkBench task WAITING persists when Host Run finished or process died.
