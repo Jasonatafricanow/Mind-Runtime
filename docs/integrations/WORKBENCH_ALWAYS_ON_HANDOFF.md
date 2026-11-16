@@ -1,5 +1,7 @@
 # Integration note — Always-on Host / WorkBench / MR / MR-Mem separation
 
+> Complete design reasoning, topology, cognitive-vs-business wake and status: [WORKBENCH_DESIGN_RATIONALE.md](WORKBENCH_DESIGN_RATIONALE.md).
+
 - Date: 2026-11-16
 - Status: **PROPOSED / non-normative integration clarification**; the accepted
   [MR architecture lock](../architecture/MR_ARCHITECTURE_LOCK_v1_1.md)
