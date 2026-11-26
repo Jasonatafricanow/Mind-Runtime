@@ -8,8 +8,7 @@
   remains authoritative.
 - External design reference: [Anthropic, Building always-on agents
   (2026-11-13)](https://claude.com/resources/articles/building-always-on-agents).
-- Consumer: [Agent-WorkBench](https://github.com/Jasonatafricanow/Agent-WorkBench),
-  feature branch `feat/modular-backend-20261116`.
+- Consumer: [Agent-WorkBench](https://github.com/Jasonatafricanow/Agent-WorkBench) (`main`).
 
 ## Distinct clocks and authority
 
@@ -43,9 +42,11 @@ LLM inference and not a perpetual MR tool-execution loop.
 6. Host checks current tool permission and scope again *at resume time*.
 7. WorkBench task completion requires business evidence; a completed
    Host Run, message send receipt or internal ShadowRun is insufficient.
-8. MR-Mem accepts only eligible host-accepted semantics with exact
-   `SourceRef`; operational receipts alone are not new user preference,
-   emotion, relationship or commitment evidence.
+8. MR-Mem offers the Agent two tools, `write` and `search`. The Agent doing
+   the work writes what it understood in that turn, with an exact `SourceRef`
+   pointer; there is no memory outbox and no second model re-judging it.
+   Operational receipts alone are not new user preference, emotion,
+   relationship or commitment evidence, so the Agent does not write them as such.
 
 ## Naming safeguards
 
@@ -61,7 +62,7 @@ LLM inference and not a perpetual MR tool-execution loop.
 
 ## Human participation and progressive responsibility transfer
 
-Normative WorkBench business contract: [ADR-0003 — Progressive Delegation](https://github.com/Jasonatafricanow/Agent-WorkBench/blob/feat/modular-backend-20261116/docs/ADR-0003-PROGRESSIVE-DELEGATION.md).
+Normative WorkBench business contract: [ADR-0003 — Progressive Delegation](https://github.com/Jasonatafricanow/Agent-WorkBench/blob/main/docs/ADR-0003-PROGRESSIVE-DELEGATION.md).
 
 The human is a first-class participant in the WorkBench business loop, not a
 mandatory trigger for every Agent Run. WorkBench owns the accountable owner,

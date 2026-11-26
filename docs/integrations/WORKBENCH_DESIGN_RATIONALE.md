@@ -133,7 +133,7 @@ Retrieved semantic Memory ≠ new Evidence or fresh user commitment
 1. 让 WorkBench 与现有 Host 建立受信的 `wake_event -> Run` 协议；不碰 MR 代码；
 2. 从 WorkBench SQL 只读事实与来源，按受信 Host adapter 提供给 Body；Body 决定是否调用 MR；
 3. MR 在不增加执行权限的条件下输出认知建议/唤醒语义，且可以被 Body 拒绝；
-4. MR-Mem 从来源事件过滤合格语义，保留审计引用；不存在从 Outbox receipt 直接增强认知的旁路；
+4. MR-Mem 对 Agent 只有 `write` 和 `search`：干活的 Agent 当轮写下自己的理解并附 SourceRef 指针，不另设事后筛选；操作回执（含 Outbox receipt）不作为认知证据写入；
 5. 用反事实与故障注入证明：相同业务事件的可执行性不取决于 MR 情绪波动；同一 MR WakeSignal 不越权执行工具；Host 重启不丢 WorkBench 任务；真实用户反应与操作回执不会混用。
 
 ### 当前状态与未完成部分
@@ -143,7 +143,7 @@ Retrieved semantic Memory ≠ new Evidence or fresh user commitment
 相关文件：
 - [原跨仓交接说明](WORKBENCH_ALWAYS_ON_HANDOFF.md)
 - [冻结的 MR_ARCHITECTURE_LOCK v1.1](../architecture/MR_ARCHITECTURE_LOCK_v1_1.md)
-- [WorkBench 项目总蓝图](https://github.com/Jasonatafricanow/Agent-WorkBench/blob/feat/modular-backend-20261116/docs/PROJECT_BLUEPRINT.md)
-- [MR-Mem 的接入设计逻辑](https://github.com/Jasonatafricanow/MR-Mem/blob/feat/workbench-user-context-20261116/docs/WORKBENCH_DESIGN_RATIONALE.md)
+- [WorkBench 项目总蓝图](https://github.com/Jasonatafricanow/Agent-WorkBench/blob/main/docs/PROJECT_BLUEPRINT.md)
+- [MR-Mem 的接入设计逻辑](https://github.com/Jasonatafricanow/MR-Mem/blob/main/docs/WORKBENCH_DESIGN_RATIONALE.md)
 
 **架构结论：** WorkBench 让现实工作保持连续；Host 让具体执行能够继续；MR 让内在认知和经历造成的变化跨时间连续；MR-Mem 让这些经历的语义支持和历史结构可回溯。只有如此，Always-on 才不会演变成另一套相互抢权威的 Agent OS。
