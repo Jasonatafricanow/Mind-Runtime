@@ -278,3 +278,7 @@ Python 3.12+ · SQLite · FastAPI · pytest · mypy · Ruff · optional Qdrant/F
 ## Project history
 
 The public Git history is a cleaned publication baseline rather than the complete local development history. See [PROJECT-HISTORY.md](PROJECT-HISTORY.md) for the project sequence and the code/ADR/test artifacts that record it.
+
+## Integration boundary: always-on workbench (proposal, 2026-11-16)
+
+The [WorkBench design rationale and complete architecture](docs/integrations/WORKBENCH_DESIGN_RATIONALE.md) and [integration note](docs/integrations/WORKBENCH_ALWAYS_ON_HANDOFF.md) clarifies that an existing Agent Host owns Runs, Sessions and suspended tool calls; WorkBench owns business tasks, event inbox and timers; MR retains cognitive WakeSignals/DecisionContext, while MR-Mem owns semantic memory. This is **not** a new MR planner or carrier. The note is provisional and does not alter the frozen v1.1 architecture.
