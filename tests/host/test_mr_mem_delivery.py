@@ -51,7 +51,7 @@ def test_incremental_native_retry_replays_frozen_batch_after_restart(native, tmp
     delivery.close()
 
 
-@pytest.mark.parametrize("change", ["edit", "delete", "hidden", "foreign"])
+@pytest.mark.parametrize("change", ["edit", "delete", "hidden", "foreign", "session_removed"])
 def test_source_change_in_old_session_blocks_next_read(native, tmp_path, change):
     client = SimpleNamespace(base_url="http://localhost:8765", user_id="u1", add=lambda **kw: {})
     delivery = NativeMemoryDelivery(native, tmp_path / "journal.sqlite", client,
@@ -64,6 +64,8 @@ def test_source_change_in_old_session_blocks_next_read(native, tmp_path, change)
             db.execute("DELETE FROM messages WHERE id=2")
         elif change == "hidden":
             db.execute("UPDATE messages SET active=0 WHERE id=2")
+        elif change == "session_removed":
+            db.execute("DELETE FROM sessions WHERE id='s1'")
         else:
             db.execute("UPDATE sessions SET user_id='foreign' WHERE id='s1'")
         db.execute("INSERT INTO sessions VALUES('s2','native-user')")
@@ -130,3 +132,15 @@ def test_failed_memory_delivery_cannot_reverse_successful_host_commit(
     assert sync_core_memory(agent, source, "s1", adapter)["status"] == "validated"
     assert sync_core_memory(agent, source, "s1", adapter, after_commit=True)["status"] == "accepted"
     assert calls[0] == calls[1]
+
+
+def test_journal_refuses_rebinding_to_another_core_user(native, tmp_path):
+    def client(user):
+        return SimpleNamespace(base_url="http://localhost:8765", user_id=user,
+                               add=lambda **kw: {})
+    journal = tmp_path / "journal.sqlite"
+    NativeMemoryDelivery(native, journal, client("u1"), native_user="native-user",
+                         runtime_id="mr", baseline=1).close()
+    with pytest.raises(ValueError, match="binding changed"):
+        NativeMemoryDelivery(native, journal, client("u2"), native_user="native-user",
+                             runtime_id="mr", baseline=1)
