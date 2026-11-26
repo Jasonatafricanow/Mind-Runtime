@@ -104,3 +104,13 @@ def test_core_history_reaches_existing_body_context_compiler_without_reordering(
     text = str(rendered)
     assert "FIRST core line" in text and "SECOND original snippet" in text
     assert text.index("FIRST core line") < text.index("SECOND original snippet")
+
+
+def test_core_client_for_another_user_cannot_be_composed():
+    from mind_runtime.host.xiyue_adapter import XiyueMRAdapter, default_adapter
+
+    foreign = MrMemClient("http://localhost:8765", "u2")
+    with pytest.raises(ValueError, match="share user_id"):
+        default_adapter(user_id="u1", mr_mem=foreign)
+    with pytest.raises(ValueError, match="share user_id"):
+        XiyueMRAdapter(object(), user_id="u1", memory=foreign)

@@ -250,7 +250,11 @@ def test_factual_payloads_and_values_are_deeply_immutable_and_hashable() -> None
     evidence = make_evidence()
     observation = make_observation()
     state = make_state()
-    for mapping, rebuilt in zip((evidence.payload, observation.value, state.value), (make_evidence().payload, make_observation().value, make_state().value), strict=True):
+    for mapping, rebuilt in zip(
+        (evidence.payload, observation.value, state.value),
+        (make_evidence().payload, make_observation().value, make_state().value),
+        strict=True,
+    ):
         assert mapping == rebuilt
         assert {mapping: "stored"}[rebuilt] == "stored"
     assert as_mapping(evidence.payload)["labels"] == ("food",)
@@ -576,7 +580,18 @@ def test_contracts_and_structured_values_have_stable_hashes() -> None:
     state = make_state()
     transition = make_transition()
 
-    for value, rebuilt in zip((evidence, observation, state, transition, evidence.payload, observation.value), (make_evidence(), make_observation(), make_state(), make_transition(), make_evidence().payload, make_observation().value), strict=True):
+    for value, rebuilt in zip(
+        (evidence, observation, state, transition, evidence.payload, observation.value),
+        (
+            make_evidence(),
+            make_observation(),
+            make_state(),
+            make_transition(),
+            make_evidence().payload,
+            make_observation().value,
+        ),
+        strict=True,
+    ):
         assert value == rebuilt
         assert {value: "stored"}[rebuilt] == "stored"
 
@@ -629,7 +644,9 @@ def test_state_definition_is_declarative_and_has_only_approved_value_types() -> 
         bounds={"minimum": 0, "maximum": 1},
     )
     assert as_mapping(definition.bounds)["minimum"] == 0
-    rebuilt = StateDefinition(**{field.name: getattr(definition, field.name) for field in fields(definition)})
+    rebuilt = StateDefinition(
+        **{field.name: getattr(definition, field.name) for field in fields(definition)}
+    )
     assert {definition: "stored"}[rebuilt] == "stored"
     assert {member.value for member in StateValueType} == {
         "categorical",
